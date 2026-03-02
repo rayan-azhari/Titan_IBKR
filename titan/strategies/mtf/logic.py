@@ -276,7 +276,7 @@ def main() -> None:
                 missing.append("D")
             print(
                 f"  ⚠️  Missing data: {', '.join(missing)}. "
-                "Run download_oanda_data.py for all timeframes.\n"
+                "Run download_ibkr_data.py for all timeframes.\n"
             )
             continue
 

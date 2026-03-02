@@ -37,7 +37,7 @@ except ImportError:
 
 from titan.models.spread import build_spread_series  # noqa: E402
 
-# Mapping OANDA granularity codes to pandas frequency strings.
+# Mapping IBKR granularity codes to pandas frequency strings.
 # VBT needs this to calculate annualised Sharpe ratios.
 GRAN_TO_FREQ: dict[str, str] = {
     "M1": "1min",

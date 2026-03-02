@@ -36,7 +36,7 @@ def send_slack_message(message: str, severity: str = "warning") -> bool:
     emoji = emoji_map.get(severity, "📢")
 
     payload = {
-        "text": f"{emoji} *Titan-Oanda-Algo Alert*\n*Severity:* {severity.upper()}\n\n{message}",
+        "text": f"{emoji} *Titan-IBKR-Algo Alert*\n*Severity:* {severity.upper()}\n\n{message}",
     }
 
     data = json.dumps(payload).encode("utf-8")
@@ -65,7 +65,7 @@ def main() -> None:
         message = " ".join(sys.argv[1:])
         severity = "warning"
     else:
-        message = "This is a test notification from the Titan-Oanda-Algo Guardian agent."
+        message = "This is a test notification from the Titan-IBKR-Algo Guardian agent."
         severity = "info"
 
     print("📢 Sending Slack notification...\n")

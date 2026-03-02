@@ -22,7 +22,7 @@ def generate_dockerfile() -> str:
     Returns:
         Dockerfile content as a string.
     """
-    return """# Titan-Oanda-Algo — Production Container
+    return """# Titan-IBKR-Algo — Production Container
 FROM python:3.11-slim
 
 # System dependencies
@@ -62,7 +62,7 @@ CMD ["uv", "run", "python", "scripts/run_live_ml.py"]
 
 def main() -> None:
     """Generate Dockerfile and build the Docker image."""
-    print("🐳 Building Docker image for Titan-Oanda-Algo\n")
+    print("🐳 Building Docker image for Titan-IBKR-Algo\n")
 
     # Generate Dockerfile
     dockerfile_content = generate_dockerfile()
@@ -80,23 +80,23 @@ def main() -> None:
         print(f"  Docker: {result.stdout.strip()}")
     except (FileNotFoundError, subprocess.CalledProcessError):
         print("  ⚠️  Docker not found. Dockerfile generated but image not built.")
-        print("  Install Docker and run: docker build -t titan-oanda-algo .")
+        print("  Install Docker and run: docker build -t titan-ibkr-algo .")
         return
 
     # Build image
     print("\n  Building image (this may take a few minutes)...")
     result = subprocess.run(
-        ["docker", "build", "-t", "titan-oanda-algo", "."],
+        ["docker", "build", "-t", "titan-ibkr-algo", "."],
         cwd=str(PROJECT_ROOT),
         capture_output=True,
         text=True,
     )
 
     if result.returncode == 0:
-        print("  ✓ Image built: titan-oanda-algo")
+        print("  ✓ Image built: titan-ibkr-algo")
         print("\n  Deploy to GCE (europe-west2):")
-        print("    docker tag titan-oanda-algo gcr.io/<PROJECT_ID>/titan-oanda-algo")
-        print("    docker push gcr.io/<PROJECT_ID>/titan-oanda-algo")
+        print("    docker tag titan-ibkr-algo gcr.io/<PROJECT_ID>/titan-ibkr-algo")
+        print("    docker push gcr.io/<PROJECT_ID>/titan-ibkr-algo")
     else:
         print(f"  ✗ Build failed:\n{result.stderr}")
 

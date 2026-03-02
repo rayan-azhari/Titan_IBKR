@@ -209,7 +209,7 @@ def build_features(
     momentum = cfg.get("momentum", _DEFAULT_CFG["momentum"])
     volatility = cfg.get("volatility", _DEFAULT_CFG["volatility"])
     # Fallback to features.toml mtf settings if mtf.toml is empty/missing
-    mtf_cfg = cfg.get("mtf_confluence", _DEFAULT_CFG["mtf_confluence"])
+    _ = cfg.get("mtf_confluence", _DEFAULT_CFG["mtf_confluence"])
 
     # ── Lagged returns ──
     for lag in [1, 2, 3, 5, 10, 20]:
@@ -313,10 +313,10 @@ def build_features(
             # If we are running on M15, and M15 is not in context_data (it's 'df'),
             # we should use 'close' (base close).
             # But we don't know for sure if 'df' corresponds to 'tf' unless we pass base_tf name.
-            # A simple heuristic: if we can't find it in context, check if we want to calc it on base?
+            # A simple heuristic: if we can't find it in context, check if we want to calc it on base?  # noqa: E501
             # For now, let's only calculate for TFs we have in context_data,
             # PLUS we can try to infer if 'df' is the missing one if there's only one missing?
-            # Actually, `run_pipeline` passes `context_data`. It doesn't pass base TF *name* to `build_features`.
+            # Actually, `run_pipeline` passes `context_data`. It doesn't pass base TF *name* to `build_features`.  # noqa: E501
             # We'll rely on context_data for Higher TFs.
             # If a required TF from `mtf.toml` is missing, we can't accurately calc score.
             continue

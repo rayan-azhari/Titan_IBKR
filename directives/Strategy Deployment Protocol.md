@@ -1,6 +1,6 @@
 # Strategy Deployment Protocol
 
-This document outlines the systematic process for moving a strategy from the **Research Phase** (VectorBT/Backtesting) to **Live Deployment** (NautilusTrader/OANDA).
+This document outlines the systematic process for moving a strategy from the **Research Phase** (VectorBT/Backtesting) to **Live Deployment** (NautilusTrader/IBKR).
 
 ## 1. Prerequisites (Research Completion)
 Before deployment, a strategy must pass the **Optimization Protocol**:
@@ -42,7 +42,7 @@ Research code (often vectorized, typically `research/`) needs to be ported to th
 
 ### A. The Data Source
 - **Script**: `scripts/download_data.py`
-- **Function**: Downloads OHLCV data from OANDA and saves it as Parquet files in `data/`.
+- **Function**: Downloads OHLCV data from IBKR and saves it as Parquet files in `data/`.
 - **Naming Convention**: `data/{SYMBOL}_{GRANULARITY}.parquet` (e.g., `EUR_USD_M5.parquet`).
     - *Note*: The strategy looks for these **exact** filenames.
 
@@ -66,11 +66,11 @@ Research code (often vectorized, typically `research/`) needs to be ported to th
     - **Logging**: Configure specific file logging to capture strategy signals.
     - **Data Warmup**: Include a step to download/verify historical data (`scripts/download_data.py`) to ensure the strategy has context on startup.
     - **Instrument Loading**: Fetch tradable instruments from the live provider.
-    - **Node Configuration**: Set up `TradingNode` with `OandaDataClient` and `OandaExecutionClient`.
+    - **Node Configuration**: Set up `TradingNode` with `IBKRDataClient` and `IBKRExecutionClient`.
 
 ### B. Environment
-- **Credentials**: Ensure `.env` has valid `OANDA_ACCOUNT_ID` and `OANDA_ACCESS_TOKEN`.
-- **Mode**: Set `OANDA_ENVIRONMENT=practice` for initial testing.
+- **Credentials**: Ensure `.env` has valid `IBKR_ACCOUNT_ID` and `IBKR_ACCESS_TOKEN`.
+- **Mode**: Set `IBKR_ENVIRONMENT=practice` for initial testing.
 
 ---
 
@@ -125,20 +125,20 @@ After=network.target
 Type=simple
 User=youruser
 Group=youruser
-WorkingDirectory=/path/to/Titan-Oanda
+WorkingDirectory=/path/to/Titan-IBKR
 
 # Virtual Environment Path
-ExecStart=/path/to/Titan-Oanda/.venv/bin/python scripts/run_live_mtf_5m.py
+ExecStart=/path/to/Titan-IBKR/.venv/bin/python scripts/run_live_mtf_5m.py
 
 # Auto-Restart Logic
 Restart=always
 RestartSec=15
 
 # Security/Environment (Mandatory check)
-Environment="PYTHONPATH=/path/to/Titan-Oanda"
-Environment="OANDA_ACCOUNT_ID=YOUR_ID"
-Environment="OANDA_ACCESS_TOKEN=YOUR_TOKEN"
-Environment="OANDA_ENVIRONMENT=practice"
+Environment="PYTHONPATH=/path/to/Titan-IBKR"
+Environment="IBKR_ACCOUNT_ID=YOUR_ID"
+Environment="IBKR_ACCESS_TOKEN=YOUR_TOKEN"
+Environment="IBKR_ENVIRONMENT=practice"
 
 # Resource Limits (Optional)
 CPUQuota=50%
@@ -171,7 +171,7 @@ Once live on a VPS, use these "Quick Checks" to ensure your strategy hasn't stal
 
 1.  **Process Check**: `ps aux | grep python` (Ensure the `run_live_mtf_5m.py` process is visible).
 2.  **Log Heartbeat**: Check if new log lines are appearing every 5 minutes (on bar close).
-3.  **OANDA Dashboard**: Occasionally cross-reference your "Signal: LONG" in logs with your actual OANDA web account to verify the position exists.
+3.  **IBKR Dashboard**: Occasionally cross-reference your "Signal: LONG" in logs with your actual IBKR web account to verify the position exists.
 4.  **CPU/Memory**: Use `htop` to ensure the strategy isn't leaking memory or hitting 100% CPU (which might indicate an infinite loop).
 
 ---

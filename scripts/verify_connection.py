@@ -58,7 +58,7 @@ class VerifyApp(EWrapper, EClient):
 
 def main() -> None:
     print(
-        f"Connecting to IBKR Gateway/TWS on {IBKR_HOST}:{IBKR_PORT} (Client ID: {IBKR_CLIENT_ID})..."
+        f"Connecting to IBKR Gateway/TWS on {IBKR_HOST}:{IBKR_PORT} (Client ID: {IBKR_CLIENT_ID})..."  # noqa: E501
     )
 
     app = VerifyApp()
@@ -81,7 +81,7 @@ def main() -> None:
     if not app.success:
         print("\n❌ ERROR: Connection timed out.")
         print(
-            "Ensure TWS or IB Gateway is running and configured to accept socket connections on the configured port."
+            "Ensure TWS or IB Gateway is running and configured to accept socket connections on the configured port."  # noqa: E501
         )
         sys.exit(1)
 

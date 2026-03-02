@@ -1,11 +1,11 @@
-# Titan-Oanda Adapter Guide
+# Titan-IBKR Adapter Guide
 
 ## 1. Overview
 
-The **Titan-Oanda Adapter** is a custom `nautilus_trader` integration designed to trade effectively on the OANDA v20 API. It uses a **Hybrid Wrapper Architecture** to bridge the high-performance, event-driven world of NautilusTrader with the HTTP/REST and Streaming APIs of OANDA.
+The **Titan-IBKR Adapter** is a custom `nautilus_trader` integration designed to trade effectively on the IBKR v20 API. It uses a **Hybrid Wrapper Architecture** to bridge the high-performance, event-driven world of NautilusTrader with the HTTP/REST and Streaming APIs of IBKR.
 
 ### Key Features
-*   **Event-Driven:** Converts OANDA stream events (`ORDER_FILL`, `ORDER_CANCEL`) into internal Nautilus events.
+*   **Event-Driven:** Converts IBKR stream events (`ORDER_FILL`, `ORDER_CANCEL`) into internal Nautilus events.
 *   **Resilient:** Handles network interruptions and automatically reconciles order/position state on reconnection.
 *   **Production-Ready:** Support for Market, Limit, Stop, and Market-If-Touched orders.
 *   **Stateless Mapping:** Maps orders 1:1 using `ClientOrderId`, avoiding complex local databases.
@@ -46,7 +46,7 @@ The adapter is currently verified for the following functionality:
 | **Stop Orders** | ✅ Supported | Triggers market order when price is hit. |
 | **Market-If-Touched** | ✅ Supported | Like a Limit, but triggers Market order (slippage possible). |
 | **Stop Loss / Take Profit** | 🚧 Partial | Can be attached to orders, but standalone management via Nautilus is limited. |
-| **Trailing Stop** | ❌ Unsupported | **Reason:** OANDA requires Trailing Stops to be linked to a specific `tradeID`. The current adapter is stateless and doesn't track individual trade IDs locally. |
+| **Trailing Stop** | ❌ Unsupported | **Reason:** IBKR requires Trailing Stops to be linked to a specific `tradeID`. The current adapter is stateless and doesn't track individual trade IDs locally. |
 | **GSLO** | ❌ Unsupported | Guaranteed Stop Loss Orders are not currently mapped. |
 
 ---
@@ -101,7 +101,7 @@ This tests the `ibapi` connectivity to the local socket server.
 ### Common Errors
 
 **1. "Order Not Found" during Cancellation**
-*   **Cause:** The OANDA stream event for `ORDER_CREATE` arrived *after* the strategy tried to cancel the order.
+*   **Cause:** The IBKR stream event for `ORDER_CREATE` arrived *after* the strategy tried to cancel the order.
 *   **Fix:** The adapter now captures the Order ID immediately from the REST response. if you see this, check your network latency.
 
 **2. `NotImplementedError: generate_order_status_report`**
@@ -110,15 +110,15 @@ This tests the `ibapi` connectivity to the local socket server.
 
 **3. "Trade ID Unspecified" (Trailing Stop)**
 *   **Cause:** Trying to place a Trailing Stop without linking it to an open trade.
-*   **Fix:** Use standard Stop Loss orders managed primarily by the strategy logic, rather than OANDA-side trailing stops, until stateful tracking is implemented.
+*   **Fix:** Use standard Stop Loss orders managed primarily by the strategy logic, rather than IBKR-side trailing stops, until stateful tracking is implemented.
 
 ---
 
 ## 7. Future Roadmap
 
 ### **1. Trailing Stop Support (High Priority)**
-To support OANDA's native Trailing Stops, the adapter must be upgraded to be **Stateful**.
-*   **Requirement:** Maintain a local mapping of `ClientOrderId` -> `OandaTradeId`.
+To support IBKR's native Trailing Stops, the adapter must be upgraded to be **Stateful**.
+*   **Requirement:** Maintain a local mapping of `ClientOrderId` -> `IBKRTradeId`.
 *   **Implementation:** When an `ORDER_FILL` event is received, extract the `tradeOpened.id` or `tradeReduced.id` and store it in a local SQLite DB or in-memory cache.
 *   **Usage:** When sending a Trailing Stop, look up the `tradeID` for the corresponding position and attach it to the API request.
 

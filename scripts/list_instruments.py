@@ -1,4 +1,4 @@
-"""list_instruments.py — List available currency pairs from OANDA.
+"""list_instruments.py — List available currency pairs from IBKR.
 
 Usage:
     uv run python scripts/list_instruments.py
@@ -16,21 +16,21 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-import oandapyV20
-import oandapyV20.endpoints.accounts as accounts
+import ibkrpyV20
+import ibkrpyV20.endpoints.accounts as accounts
 
 
 def main():
-    account_id = os.getenv("OANDA_ACCOUNT_ID")
-    access_token = os.getenv("OANDA_ACCESS_TOKEN")
-    environment = os.getenv("OANDA_ENVIRONMENT", "practice")
+    account_id = os.getenv("IBKR_ACCOUNT_ID")
+    access_token = os.getenv("IBKR_ACCESS_TOKEN")
+    environment = os.getenv("IBKR_ENVIRONMENT", "practice")
 
     if not access_token:
-        print("ERROR: OANDA_ACCESS_TOKEN not found in .env")
+        print("ERROR: IBKR_ACCESS_TOKEN not found in .env")
         sys.exit(1)
 
-    print(f"Connecting to OANDA ({environment})...")
-    client = oandapyV20.API(access_token=access_token, environment=environment)
+    print(f"Connecting to IBKR ({environment})...")
+    client = ibkrpyV20.API(access_token=access_token, environment=environment)
 
     if not account_id:
         # Fetch the first account ID if not provided

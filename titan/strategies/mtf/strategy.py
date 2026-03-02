@@ -450,8 +450,8 @@ class MTFConfluenceStrategy(Strategy):
         else:
             units = 0
 
-        # Round to integer (Oanda requirement usually, or lots?)
-        # Oanda accepts units (int).
+        # Round to integer (IBKR requirement usually, or lots?)
+        # IBKR accepts units (int).
         qty = Quantity.from_int(int(units))
 
         if int(units) <= 0:

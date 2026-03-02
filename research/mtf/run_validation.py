@@ -51,7 +51,7 @@ def load_parquet_for_backtesting(pair: str, granularity: str) -> pd.DataFrame:
     """
     path = RAW_DATA_DIR / f"{pair}_{granularity}.parquet"
     if not path.exists():
-        print(f"ERROR: {path} not found. Run download_oanda_data.py first.")
+        print(f"ERROR: {path} not found. Run download_ibkr_data.py first.")
         sys.exit(1)
 
     df = pd.read_parquet(path)

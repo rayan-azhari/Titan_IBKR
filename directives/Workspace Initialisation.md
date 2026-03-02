@@ -2,11 +2,11 @@
 
 ## Goal
 
-Establish the "Mission Control" environment in Google Antigravity for the **Titan-Oanda-Algo** project.
+Establish the "Mission Control" environment in Google Antigravity for the **Titan-IBKR-Algo** project.
 
 ## Inputs
 
-- **Project Name:** Titan-Oanda-Algo
+- **Project Name:** Titan-IBKR-Algo
 - **Global Rules:** `.antigravity/rules.md`
 
 ## Steps
@@ -28,4 +28,4 @@ Launch the Antigravity Agent Manager and create the workspace.
 ## Outputs
 
 - Active Antigravity Workspace
-- Validated `.env` file with OANDA API credentials
+- Validated `.env` file with IBKR API credentials

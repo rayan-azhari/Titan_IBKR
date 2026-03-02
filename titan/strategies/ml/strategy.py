@@ -73,7 +73,7 @@ class MLSignalStrategy(Strategy):
         gran = self.bar_type.specifier.split("-")[-1] if "-" in self.bar_type.specifier else "H4"
 
         # Determine project root relative to this file
-        # titan/strategies/ml/strategy.py -> .../Titan-Oanda
+        # titan/strategies/ml/strategy.py -> .../Titan-IBKR
         project_root = Path(__file__).resolve().parents[3]
         parquet_path = project_root / "data" / f"{pair}_{gran}.parquet"
 
@@ -226,7 +226,7 @@ class MLSignalStrategy(Strategy):
             instrument_id=instrument_id,
             order_side=OrderSide.BUY,
             quantity=quantity,
-            time_in_force=TimeInForce.FOK,  # Fill or Kill for OANDA usually
+            time_in_force=TimeInForce.FOK,  # Fill or Kill for IBKR usually
         )
         self.submit_order(order)
         self.log.info(f"Submitted BUY {quantity} {instrument_id}")

@@ -17,22 +17,21 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-import oandapyV20
-
+import ibkrpyV20
 import titan.utils.ops
 
 # Load environment variables
-ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID")
-ACCESS_TOKEN = os.getenv("OANDA_ACCESS_TOKEN")
-ENVIRONMENT = os.getenv("OANDA_ENVIRONMENT", "practice")
+ACCOUNT_ID = os.getenv("IBKR_ACCOUNT_ID")
+ACCESS_TOKEN = os.getenv("IBKR_ACCESS_TOKEN")
+ENVIRONMENT = os.getenv("IBKR_ENVIRONMENT", "practice")
 
 
 def main():
     if not all([ACCOUNT_ID, ACCESS_TOKEN]):
-        print("ERROR: OANDA_ACCOUNT_ID and OANDA_ACCESS_TOKEN must be set in .env")
+        print("ERROR: IBKR_ACCOUNT_ID and IBKR_ACCESS_TOKEN must be set in .env")
         sys.exit(1)
 
-    client = oandapyV20.API(access_token=ACCESS_TOKEN, environment=ENVIRONMENT)
+    client = ibkrpyV20.API(access_token=ACCESS_TOKEN, environment=ENVIRONMENT)
 
     print("=" * 40)
     print("🚨 Initiating emergency kill switch...")

@@ -1,6 +1,6 @@
-# Titan-Oanda Workspace Structure
+# Titan-IBKR Workspace Structure
 
-This document outlines the file organization of the Titan-Oanda project.
+This document outlines the file organization of the Titan-IBKR project.
 
 ## 📦 Root Directory
 
@@ -25,10 +25,10 @@ This document outlines the file organization of the Titan-Oanda project.
 ```text
 titan/
 ├── adapters/
-│   └── oanda/          # NautilusTrader OANDA Adapter
+│   └── ibkr/          # NautilusTrader IBKR Adapter
 ├── config/             # Config loading utilities
 ├── data/
-│   ├── oanda.py        # OANDA API fetching logic
+│   ├── ibkr.py        # IBKR API fetching logic
 │   └── validation.py   # Data integrity checks
 ├── indicators/         # High-performance indicators (Numba)
 ├── models/             # Quant models (Spread, Slippage)

@@ -2,7 +2,7 @@
 -----------------
 
 Live trading runner for the Multi-Timeframe Confluence Strategy.
-Connects to OANDA (Practice/Live), loads instruments, and launches the strategy.
+Connects to IBKR (Practice/Live), loads instruments, and launches the strategy.
 """
 
 import logging

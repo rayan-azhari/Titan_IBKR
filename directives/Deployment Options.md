@@ -21,7 +21,7 @@ For a long-term, profitable trading operation, stability is paramount. The recom
 
 ### 1. Infrastructure: Cloud VPS (Compute Engine)
 *   **Provider**: Google Cloud Platform (GCE) or AWS EC2.
-*   **Region**: `europe-west2` (London) or `us-east1` (New York). **Crucial**: Choose the region closest to OANDA's matching engine (usually New York or London) to minimize latency.
+*   **Region**: `europe-west2` (London) or `us-east1` (New York). **Crucial**: Choose the region closest to IBKR's matching engine (usually New York or London) to minimize latency.
 *   **Spec**: 2 vCPU, 4GB RAM (minimum for ML models).
 
 ### 2. Deployment Method: Docker 🐳
@@ -61,7 +61,7 @@ Docker ensures the strategy runs in the *exact* same environment on your server 
       --env-file .env \
       -v $(pwd)/data:/app/data \
       -v $(pwd)/.tmp/logs:/app/.tmp/logs \
-      titan-oanda-algo
+      titan-ibkr-algo
     ```
 
 ---
@@ -80,11 +80,11 @@ After=network.target
 
 [Service]
 User=root
-WorkingDirectory=/root/Titan-Oanda
+WorkingDirectory=/root/Titan-IBKR
 ExecStart=/root/.local/bin/uv run python scripts/run_live_mtf.py
 Restart=always
 RestartSec=5
-EnvironmentFile=/root/Titan-Oanda/.env
+EnvironmentFile=/root/Titan-IBKR/.env
 
 [Install]
 WantedBy=multi-user.target
@@ -104,7 +104,7 @@ Tmux allows you to detach from a terminal session without killing the processes 
 *   **Do I need a VPS?** **YES.**
     *   *Why:* A VPS (Virtual Private Server) runs 24/7 in a datacenter with redundant power and internet.
     *   *Cost:* ~$5-10/mo (DigitalOcean, Vultr, Hetzner).
-    *   *Latency:* VPS servers are often physically closer to OANDA's servers (NY/London), executing trades faster than your home PC.
+    *   *Latency:* VPS servers are often physically closer to IBKR's servers (NY/London), executing trades faster than your home PC.
 
 ### 🛑 Detailed Tmux Workflow on VPS
 
@@ -119,7 +119,7 @@ Tmux allows you to detach from a terminal session without killing the processes 
     *You are now inside a "virtual" terminal.*
 3.  **Run the Strategy**:
     ```bash
-    cd Titan-Oanda
+    cd Titan-IBKR
     uv run python scripts/run_live_mtf.py
     ```
     *You will see the strategy logs and dashboard updating in real-time.*

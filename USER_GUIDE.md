@@ -305,7 +305,7 @@ uv run python scripts/run_live_mtf.py
 
 **What it does:**
 1.  **Auto-Download:** Runs `scripts/download_data.py` to get latest candles.
-2.  **Connects:** Authenticates with OANDA (Practice).
+2.  **Connects:** Authenticates with IBKR (Practice).
 3.  **Loads Instruments:** Fetches available pairs.
 4.  **Warms Up:** Loads local Parquet data (`data/raw/`) to calculate moving averages immediately.
 5.  **Trades:** Executes Long/Short positions based on the H1/H4/D/W confluence score.

@@ -22,7 +22,7 @@ Before deploying to the cloud, verify the strategy in the local **Practice Envir
 ### 1. Configuration
 Ensure `.env` is set to practice mode:
 ```ini
-OANDA_ENVIRONMENT=practice
+IBKR_ENVIRONMENT=practice
 ```
 
 ### 2. Execution
@@ -40,9 +40,9 @@ uv run python scripts/run_live_ml.py
 
 ### 3. Validation
 - Check console for `[INFO] Strategy Started`.
-- Verify subscriptions (e.g., `EUR/USD.OANDA-1-HOUR...`).
+- Verify subscriptions (e.g., `EUR/USD.IBKR-1-HOUR...`).
 - Wait for "Warmup complete".
-- Monitor via OANDA mobile app or web dashboard.
+- Monitor via IBKR mobile app or web dashboard.
 
 ## Cloud Execution Steps (GCE)
 
@@ -56,7 +56,7 @@ uv run python scripts/run_live_ml.py
 
 ### 2. Infrastructure
 
-- Deploy to `europe-west2` (London) for OANDA proximity.
+- Deploy to `europe-west2` (London) for IBKR proximity.
 - Use `e2-standard-2` instance type.
 
 ### 3. Headless Monitoring (The Guardian)

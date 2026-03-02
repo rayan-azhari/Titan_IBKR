@@ -4,7 +4,7 @@
 
 ## Goal
 
-Translate the "Gaussian Channel" logic from Pine Script to a high-performance VectorBT indicator and validate its profitability on OANDA data.
+Translate the "Gaussian Channel" logic from Pine Script to a high-performance VectorBT indicator and validate its profitability on IBKR data.
 
 ## Inputs
 

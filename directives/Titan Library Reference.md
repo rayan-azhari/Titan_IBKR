@@ -1,10 +1,10 @@
 # Titan Library Reference
 
-**Package Name:** `titan-oanda-algo`
+**Package Name:** `titan-ibkr-algo`
 **Import Name:** `titan`
 **Version:** 0.1.0
 
-The `titan` package is the core library powering the Titan OANDA Algo system. It contains reusable business logic, quantitative models, and infrastructure adapters, completely decoupled from execution scripts.
+The `titan` package is the core library powering the Titan IBKR Algo system. It contains reusable business logic, quantitative models, and infrastructure adapters, completely decoupled from execution scripts.
 
 ---
 
@@ -32,22 +32,22 @@ To keep the library testable:
 
 ## 📚 Modules Reference
 
-### 1. `titan.adapters` (Nautilus-Oanda Adapter)
+### 1. `titan.adapters` (Nautilus-IBKR Adapter)
 
-This module implements the custom **OANDA V20 Adapter** built for the Titan-Oanda-Algo project. It serves as the bridge between the event-driven **NautilusTrader** engine and **OANDA's REST/Streaming APIs**.
+This module implements the custom **IBKR V20 Adapter** built for the Titan-IBKR-Algo project. It serves as the bridge between the event-driven **NautilusTrader** engine and **IBKR's REST/Streaming APIs**.
 
-> **📘 Full Documentation:** See the [Titan-Oanda Adapter Guide](Titan-Oanda%20Adapter%20Guide.md) for detailed architecture, usage, and troubleshooting.
+> **📘 Full Documentation:** See the [Titan-IBKR Adapter Guide](Titan-IBKR%20Adapter%20Guide.md) for detailed architecture, usage, and troubleshooting.
 
 #### Key Components
-*   **DataClient (`titan/adapters/oanda/data.py`):** Streams real-time price ticks.
-*   **ExecutionClient (`titan/adapters/oanda/execution.py`):** Handles order submission and reconciliation.
-*   **Instruments (`titan/adapters/oanda/instruments.py`):** Maps OANDA symbols to Nautilus instruments.
+*   **DataClient (`titan/adapters/ibkr/data.py`):** Streams real-time price ticks.
+*   **ExecutionClient (`titan/adapters/ibkr/execution.py`):** Handles order submission and reconciliation.
+*   **Instruments (`titan/adapters/ibkr/instruments.py`):** Maps IBKR symbols to Nautilus instruments.
 
 ---
 
 ### 2. `titan.data`
 Utilities for fetching, validating, and managing historical data.
-*   **`titan.data.oanda`**: primitives for OANDA API data requests (candles, instruments).
+*   **`titan.data.ibkr`**: primitives for IBKR API data requests (candles, instruments).
     *   *Usage:* Used by `scripts/download_data.py` (which runs automatically in live strategies) to sync history.
     *   `fetch_candles(client, instrument, granularity, ...)`: Robust pagination for history.
 *   **`titan.data.validation`**: Data integrity checks.
@@ -95,10 +95,10 @@ pip install -e .
 
 ### Fetching Data
 ```python
-from titan.data.oanda import fetch_candles, candles_to_dataframe
-import oandapyV20
+from titan.data.ibkr import fetch_candles, candles_to_dataframe
+import ibkrpyV20
 
-client = oandapyV20.API(access_token="...")
+client = ibkrpyV20.API(access_token="...")
 candles = fetch_candles(client, "EUR_USD", "H1", count=500)
 df = candles_to_dataframe(candles)
 print(df.head())

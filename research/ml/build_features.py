@@ -253,7 +253,7 @@ def main() -> None:
 
     raw_files = list(RAW_DATA_DIR.glob("*.parquet"))
     if not raw_files:
-        print("ERROR: No raw data in .tmp/data/raw/. Run download_oanda_data.py first.")
+        print("ERROR: No raw data in .tmp/data/raw/. Run download_ibkr_data.py first.")
         sys.exit(1)
 
     print(f"🔧 Building ML features for {len(raw_files)} dataset(s)\n")

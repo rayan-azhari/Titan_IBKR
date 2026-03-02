@@ -83,11 +83,11 @@ Settings are stored in `config/mtf.toml`. This file is automatically updated by 
 
 ## Live Execution (Practice Mode)
 
-To deploy this strategy to the **OANDA Practice Environment**:
+To deploy this strategy to the **IBKR Practice Environment**:
 
 ### 1. Prerequisites
-- `OANDA_ACCOUNT_ID` and `OANDA_ACCESS_TOKEN` set in `.env`.
-- `OANDA_ENVIRONMENT=practice` in `.env`.
+- `IBKR_ACCOUNT_ID` and `IBKR_ACCESS_TOKEN` set in `.env`.
+- `IBKR_ENVIRONMENT=practice` in `.env`.
 
 ### 2. Run Command
 ```bash
@@ -97,7 +97,7 @@ uv run python scripts/run_live_mtf.py
 ### 3. Implementation Details
 - **Runner:** `scripts/run_live_mtf.py`
 - **Strategy Class:** `titan.strategies.mtf.strategy` (`MTFConfluenceStrategy`).
-- **Bar Types:** Requires explicit OANDA-specific BarType strings (e.g., `EUR/USD.OANDA-1-HOUR-MID-INTERNAL`) to ensure correct subscription.
+- **Bar Types:** Requires explicit IBKR-specific BarType strings (e.g., `EUR/USD.IBKR-1-HOUR-MID-INTERNAL`) to ensure correct subscription.
 - **Warmup:** The strategy automatically loads historical data from `data/` (parquet) to warm up the indicators instantly. No waiting for live bars required.
 
 ## Troubleshooting & Implementation Notes

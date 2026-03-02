@@ -14,7 +14,7 @@ exit = 70                                # Sell when RSI > exit
 
 [costs]
 spread = 0.0003                          # ~3 pips (swing trading, realistic)
-commission_per_lot = 0.0                 # OANDA has no separate commission
+commission_per_lot = 0.0                 # IBKR has no separate commission
 
 [execution]
 position_size_units = 5000

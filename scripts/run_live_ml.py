@@ -1,8 +1,8 @@
 """run_nautilus_live.py
 --------------------
 
-Live trading entry point using NautilusTrader and the OANDA adapter.
-Authenticates, configures the trading node, registers custom OANDA components,
+Live trading entry point using NautilusTrader and the IBKR adapter.
+Authenticates, configures the trading node, registers custom IBKR components,
 loads instruments, and starts the event loop.
 """
 

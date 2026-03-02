@@ -51,11 +51,11 @@ class IBKRHistoricalDataApp(EWrapper, EClient):
         self.data_store.append(
             {
                 "timestamp": bar.date,
-                "open": bar.open,
-                "high": bar.high,
-                "low": bar.low,
-                "close": bar.close,
-                "volume": bar.volume,
+                "open": float(bar.open),
+                "high": float(bar.high),
+                "low": float(bar.low),
+                "close": float(bar.close),
+                "volume": float(bar.volume),
             }
         )
 
@@ -138,7 +138,7 @@ def main() -> None:
             sys.exit(1)
 
     print(
-        f"📥 Downloading data for {len(pairs)} pairs × {len(granularities)} granularities from IBKR\n"
+        f"📥 Downloading data for {len(pairs)} pairs × {len(granularities)} granularities from IBKR\n"  # noqa: E501
     )
 
     app = IBKRHistoricalDataApp()
@@ -198,10 +198,13 @@ def main() -> None:
 
             df = pd.DataFrame(app.data_store)
 
-            # IBKR times can be "YYYYMMDD" or "YYYYMMDD HH:mm:ss" depending on bar size
+            # IBKR times can be "YYYYMMDD" or "YYYYMMDD HH:mm:ss" or "YYYYMMDD HH:mm:ss Timezone" depending on bar size  # noqa: E501
+            df["timestamp"] = df["timestamp"].astype(str).str.split(" ").apply(
+                lambda x: f"{x[0]} {x[1]}" if len(x) > 1 else x[0]
+            )
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             if df["timestamp"].dt.tz is None:
-                # Assume UTC or local depending on TWS setting. Usually returned in local timezone if not specified,
+                # Assume UTC or local depending on TWS setting. Usually returned in local timezone if not specified,  # noqa: E501
                 # but let's localize standardizing to UTC for simplicity.
                 df["timestamp"] = df["timestamp"].dt.tz_localize("UTC")
 
@@ -222,7 +225,7 @@ def main() -> None:
 
             df.to_parquet(output_path, index=False)
             print(
-                f"    → Saved {len(app.data_store)} new rows. Total File Rows: {len(df)}. Last TS: {df['timestamp'].max()}"
+                f"    → Saved {len(app.data_store)} new rows. Total File Rows: {len(df)}. Last TS: {df['timestamp'].max()}"  # noqa: E501
             )
 
             req_id += 1

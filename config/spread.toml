@@ -5,7 +5,7 @@
 # "off_hours" covers low-liquidity periods (weekends, holidays).
 #
 # To refine: run `uv run python execution/spread_model.py`
-# with actual bid-ask data from download_oanda_data.py.
+# with actual bid-ask data from download_ibkr_data.py.
 
 [EUR_USD]
 london    = 0.00012        # ~1.2 pips (tightest — EU/US overlap)
