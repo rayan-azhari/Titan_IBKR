@@ -19,7 +19,6 @@ from nautilus_trader.live.factories import LiveDataClientFactory, LiveExecClient
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.enums import AccountType, OmsType
 from nautilus_trader.model.identifiers import ClientId, Venue
-
 from titan.adapters.oanda.config import (
     OandaDataClientConfig,
     OandaExecutionClientConfig,

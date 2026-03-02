@@ -5,7 +5,7 @@ description = "Quantitative swing trading system for OANDA — ML-driven strateg
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "oandapyV20>=0.7.2",
+    "ibapi>=10.19.1",
     "pandas>=2.2",
     "numpy>=1.26",
     "scikit-learn>=1.5",

@@ -1,4 +1,4 @@
-"""download_data.py — Pull historical OHLC data from OANDA.
+"""download_data.py — Pull historical OHLC data from Interactive Brokers.
 
 Downloads candlestick data for the instruments and granularities
 specified in config/instruments.toml. Stores output as Parquet
@@ -7,6 +7,8 @@ files in data/.
 
 import argparse
 import sys
+import threading
+import time
 import tomllib
 from datetime import timezone
 from pathlib import Path
@@ -21,18 +23,51 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 import os
 
-import oandapyV20
 import pandas as pd
-
-from titan.data.oanda import candles_to_dataframe, fetch_candles
+from ibapi.client import EClient
+from ibapi.contract import Contract
+from ibapi.wrapper import EWrapper
 
 # Config
-ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID")
-ACCESS_TOKEN = os.getenv("OANDA_ACCESS_TOKEN")
-ENVIRONMENT = os.getenv("OANDA_ENVIRONMENT", "practice")
+IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
+IBKR_PORT = int(os.getenv("IBKR_PORT", 4002))
+IBKR_CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", 10))
 
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+class IBKRHistoricalDataApp(EWrapper, EClient):
+    def __init__(self):
+        EClient.__init__(self, self)
+        self.data_store = []
+        self.req_complete = False
+        self.error_received = False
+        self.error_msg = ""
+
+    def historicalData(self, reqId, bar):
+        # bar.date format depends on resolution.
+        # Usually "YYYYMMDD HH:mm:ss" for intraday, "YYYYMMDD" for daily
+        self.data_store.append(
+            {
+                "timestamp": bar.date,
+                "open": bar.open,
+                "high": bar.high,
+                "low": bar.low,
+                "close": bar.close,
+                "volume": bar.volume,
+            }
+        )
+
+    def historicalDataEnd(self, reqId, start, end):
+        self.req_complete = True
+
+    def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=""):
+        if errorCode not in [2104, 2106, 2158]:  # ignore simple info messages
+            self.error_received = True
+            self.error_msg = f"[{errorCode}] {errorString}"
+            if reqId > -1:
+                self.req_complete = True
 
 
 def load_instruments_config() -> dict:
@@ -44,18 +79,47 @@ def load_instruments_config() -> dict:
         return tomllib.load(f)
 
 
-def main() -> None:
-    if not ACCESS_TOKEN:
-        print("ERROR: OANDA_ACCESS_TOKEN not found in .env")
-        sys.exit(1)
+def get_ib_contract(symbol: str) -> Contract:
+    contract = Contract()
+    contract.symbol = symbol[:3]  # e.g. EUR from EUR_USD
+    contract.secType = "CASH"
+    contract.currency = symbol[4:]  # e.g. USD from EUR_USD
+    contract.exchange = "IDEALPRO"
+    return contract
 
+
+def map_granularity(gran: str) -> str:
+    # IBKR format: "1 min", "5 mins", "1 hour", "1 day", "1 week"
+    mapping = {
+        "M1": "1 min",
+        "M5": "5 mins",
+        "M15": "15 mins",
+        "H1": "1 hour",
+        "H4": "4 hours",
+        "D": "1 day",
+        "W": "1 week",
+    }
+    return mapping.get(gran, "1 hour")
+
+
+def map_duration(gran: str) -> str:
+    # For a simple download script, how much data to request per batch
+    # Can be adjusted based on needs. Max for intraday is usually "1 M" at a time, sometimes "1 W".
+    if gran in ["D", "W"]:
+        return "5 Y"
+    elif gran in ["H1", "H4"]:
+        return "1 Y"
+    else:
+        return "1 M"
+
+
+def main() -> None:
     config = load_instruments_config()
-    client = oandapyV20.API(access_token=ACCESS_TOKEN, environment=ENVIRONMENT)
 
     pairs = config.get("instruments", {}).get("pairs", [])
     granularities = config.get("instruments", {}).get("granularities", ["M5"])
 
-    parser = argparse.ArgumentParser(description="Download OANDA data")
+    parser = argparse.ArgumentParser(description="Download IBKR data")
     parser.add_argument("-i", "--instrument", help="Filter by instrument (e.g. EUR_USD)")
     parser.add_argument("-g", "--granularity", help="Filter by granularity (e.g. M5, H1)")
     args = parser.parse_args()
@@ -73,101 +137,100 @@ def main() -> None:
             print(f"❌ Error: Granularity {args.granularity} not in instruments.toml")
             sys.exit(1)
 
-    print(f"📥 Downloading data for {len(pairs)} pairs × {len(granularities)} granularities\n")
+    print(
+        f"📥 Downloading data for {len(pairs)} pairs × {len(granularities)} granularities from IBKR\n"
+    )
 
+    app = IBKRHistoricalDataApp()
+    app.connect(IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID)
+    api_thread = threading.Thread(target=app.run, daemon=True)
+    api_thread.start()
+
+    # Wait for connection
+    time.sleep(1)
+
+    req_id = 1
     for pair in pairs:
         for gran in granularities:
             output_path = DATA_DIR / f"{pair}_{gran}.parquet"
+            ib_contract = get_ib_contract(pair)
+            bar_size = map_granularity(gran)
+            duration = map_duration(gran)
 
-            # Resume logic or start from 2005
-            from_time = "2005-01-01T00:00:00Z"
+            print(
+                f"  ↓ Requesting {pair} {gran} (BarSize: '{bar_size}', Duration: '{duration}')..."
+            )
+
+            app.data_store = []
+            app.req_complete = False
+            app.error_received = False
+            app.error_msg = ""
+
+            # Request historical data
+            # To get specific end times, use format "YYYYMMDD HH:mm:ss"
+            # Leaving empty string gets the most recent data up to now.
+            app.reqHistoricalData(
+                reqId=req_id,
+                contract=ib_contract,
+                endDateTime="",
+                durationStr=duration,
+                barSizeSetting=bar_size,
+                whatToShow="MIDPOINT",  # MID for Forex
+                useRTH=0,
+                formatDate=1,
+                keepUpToDate=False,
+                chartOptions=[],
+            )
+
+            # Wait for request to complete
+            while not app.req_complete:
+                time.sleep(0.5)
+
+            if app.error_received:
+                print(f"    ❌ Error fetching data: {app.error_msg}")
+                req_id += 1
+                continue
+
+            if not app.data_store:
+                print(f"    ⚠ No data returned for {pair} {gran}.")
+                req_id += 1
+                continue
+
+            df = pd.DataFrame(app.data_store)
+
+            # IBKR times can be "YYYYMMDD" or "YYYYMMDD HH:mm:ss" depending on bar size
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            if df["timestamp"].dt.tz is None:
+                # Assume UTC or local depending on TWS setting. Usually returned in local timezone if not specified,
+                # but let's localize standardizing to UTC for simplicity.
+                df["timestamp"] = df["timestamp"].dt.tz_localize("UTC")
+
+            # Merge with existing data if present
             if output_path.exists():
-                try:
-                    existing = pd.read_parquet(output_path)
-                    # Enforce timestamp type
-                    if not pd.api.types.is_datetime64_any_dtype(existing["timestamp"]):
-                        existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
+                existing = pd.read_parquet(output_path)
+                if not pd.api.types.is_datetime64_any_dtype(existing["timestamp"]):
+                    existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
 
-                    # Sanitize: Remove future data if any
-                    now_utc = pd.Timestamp.now(timezone.utc)
-                    existing = existing[existing["timestamp"] <= now_utc]
+                df = (
+                    pd.concat([existing, df])
+                    .drop_duplicates(subset="timestamp")
+                    .sort_values("timestamp")
+                )
 
-                    if not existing.empty:
-                        last_ts = existing["timestamp"].max()
-                        from_time = last_ts.isoformat()
-                        print(f"  ↻ Resuming {pair} {gran} from {from_time}")
-                except Exception as e:
-                    print(f"    ⚠ Error reading existing file: {e}. Starting fresh.")
-                    from_time = "2005-01-01T00:00:00Z"
-            else:
-                print(f"  ↓ Downloading {pair} {gran} from {from_time}...")
+            now_utc = pd.Timestamp.now(timezone.utc)
+            df = df[df["timestamp"] <= now_utc]
 
-            # Pagination Loop
-            total_downloaded = 0
-            while True:
-                try:
-                    candles = fetch_candles(client, pair, gran, from_time=from_time, count=5000)
-                    df = candles_to_dataframe(candles)
+            df.to_parquet(output_path, index=False)
+            print(
+                f"    → Saved {len(app.data_store)} new rows. Total File Rows: {len(df)}. Last TS: {df['timestamp'].max()}"
+            )
 
-                    if df.empty:
-                        print(f"    ✓ No more data for {pair} {gran}.")
-                        break
-
-                    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-
-                    # Filter out records <= from_time to avoid duplicates/infinite loop
-                    # OANDA 'from' is exclusive or inclusive? It seems inclusive sometimes.
-                    if from_time:
-                         df = df[df["timestamp"] > pd.Timestamp(from_time)]
-
-                    if df.empty:
-                        print("    ✓ Up to date.")
-                        break
-
-                    # Append to existing file on disk (read-modify-write pattern for simplicity)
-                    if output_path.exists():
-                        existing = pd.read_parquet(output_path)
-                        if not pd.api.types.is_datetime64_any_dtype(existing["timestamp"]):
-                            existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
-
-                        df = (
-                            pd.concat([existing, df])
-                            .drop_duplicates(subset="timestamp")
-                            .sort_values("timestamp")
-                        )
-
-                    # Type conversion
-                    cols = ["open", "high", "low", "close", "volume"]
-                    for col in cols:
-                        if col in df.columns:
-                            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-                    now_utc = pd.Timestamp.now(timezone.utc)
-                    df = df[df["timestamp"] <= now_utc]
-
-                    if df.empty:
-                         print("    ⚠ All fetched data was future-dated/filtered. Stop.")
-                         break
-
-                    df.to_parquet(output_path, index=False)
-
-
-                    last_ts = df["timestamp"].max()
-                    from_time = last_ts.isoformat()
-                    total_downloaded += len(candles)
-
-                    print(f"    → Saved {len(df)} rows total. Last: {last_ts}. (Batch: {len(candles)})")
-
-                    # If we got fewer than requested, we are likely at the end
-                    if len(candles) < 5000:
-                        print("    ✓ Reached end of stream.")
-                        break
-
-                except Exception as e:
-                    print(f"    ❌ Error: {e}")
-                    break
+            req_id += 1
+            # Rate limiting for IBKR historical data pacing
+            time.sleep(1)
 
     print("\n✅ Data download complete.\n")
+    app.disconnect()
 
 
 if __name__ == "__main__":

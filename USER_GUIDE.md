@@ -1,6 +1,6 @@
-# Titan-Oanda-Algo: The Complete Beginner's Guide
+# Titan-IBKR-Algo: The Complete Beginner's Guide
 
-Welcome! This guide is designed to take you from "I have a computer" to "I am running an algorithmic trading system on OANDA."
+Welcome! This guide is designed to take you from "I have a computer" to "I am running an algorithmic trading system on Interactive Brokers."
 
 ---
 
@@ -8,10 +8,10 @@ Welcome! This guide is designed to take you from "I have a computer" to "I am ru
 
 This system is a **Quant Trading Engine**. It automates the process of finding trading strategies and executing them. Here is the workflow:
 
-1.  **Data Acquisition:** We download historical price data (candles) from OANDA. *You can't test a strategy without history.*
+1.  **Data Acquisition:** We download historical price data (candles) from IBKR. *You can't test a strategy without history.*
 2.  **Strategy Discovery:** We use **VectorBT** to simulate thousands of trading rules (e.g., "Buy when RSI is low") on that history to find what actually makes money.
 3.  **Machine Learning:** We train AI models to recognize complex patterns that simple rules miss.
-4.  **Live Trading:** We turn on **NautilusTrader**, which connects to OANDA, watches the market in real-time, and executes the winning strategies.
+4.  **Live Trading:** We turn on **NautilusTrader**, which connects to IBKR (TWS or Gateway), watches the market in real-time, and executes the winning strategies.
 
 ---
 
@@ -21,18 +21,20 @@ This system is a **Quant Trading Engine**. It automates the process of finding t
 1.  **A Computer:** Windows, Mac, or Linux.
 2.  **Python 3.11+:** The programming language we use. [Download Here](https://www.python.org/downloads/).
 3.  **VS Code:** A good code editor. [Download Here](https://code.visualstudio.com/).
-4.  **OANDA Account:** You need an account to trade. Start with a **Practice Account** (Play Money).
-    - Go to [OANDA](https://www.oanda.com/).
-    - Create an account.
-    - Go to "Manage API Access" and generate a **Personal Access Token**.
-    - Write down your **Account ID** (format: `000-000-0000000-000`).
+4.  **Interactive Brokers Account & TWS/Gateway:** You need an account to trade. Start with a **Paper Account** (Play Money).
+    - Download and install [IB Gateway](https://www.interactivebrokers.com/en/trading/ibgateway.php) or [TWS (Trader Workstation)](https://www.interactivebrokers.com/en/trading/tws.php).
+    - Log in to your Paper Trading account.
+    - Go to Settings -> API -> Settings.
+    - Check "Enable ActiveX and Socket Clients".
+    - Uncheck "Read-Only API".
+    - Note the **Socket port** (usually `4002` for Paper Gateway, `7497` for Paper TWS).
 
 ### Step 1: Download the Code
 Open your terminal (Command Prompt or PowerShell) and run:
 
 ```bash
-git clone https://github.com/rayan-azhari/Titan-Oanda-Algo.git
-cd Titan-Oanda-Algo
+git clone https://github.com/rayan-azhari/Titan_IBKR.git
+cd Titan_IBKR
 ```
 
 ### Step 2: Install the Brains (Dependencies)
@@ -48,22 +50,29 @@ uv pip install -e .
 *Tip: If `uv` doesn't work, just use `pip install -e .`*
 
 ### Step 3: Connect Your Account
-We need to tell the system your OANDA secret password.
+We need to tell the system how to connect to your IBKR TWS/Gateway.
 
-1.  Run the setup script:
+1.  Copy the example credentials file:
     ```bash
-    uv run python scripts/setup_env.py
+    cp .env.example .env
     ```
-2.  It will ask for your **Account ID** and **Token**. Paste them in.
-3.  It creates a hidden file called `.env`.
+2.  Open `.env` in VS Code.
+3.  Update the connection details if necessary (by default it assumes Gateway Paper port 4002):
+    ```env
+    IBKR_HOST=127.0.0.1
+    IBKR_PORT=4002
+    IBKR_CLIENT_ID=1
+    IBKR_ACCOUNT_ID=DUxxxxxxx  # Add your specific paper account here
+    ```
 
 **Sanity Check:**
+Make sure TWS or IB Gateway is running and logged in.
 Run this verification script. If it works, you are ready to go!
 ```bash
 uv run python scripts/verify_connection.py
 ```
-✅ **Success:** You see "Connected to OANDA", your account balance, and open trades.
-❌ **Failure:** "Unauthorized" or "Connection Error". Check your Token and Account ID in `.env`.
+✅ **Success:** You see "IBKR Connection Verified ✓ [Port: 4002]".
+❌ **Failure:** "Connection timed out". Check that TWS/Gateway is running and the API port matches your `.env` setting.
 
 ---
 
@@ -305,11 +314,11 @@ uv run python scripts/run_live_mtf.py
 
 ## 💸 Phase 5: Live Trading
 
-This is it. The system connects to OANDA and trades for real.
+This is it. The system connects to IBKR and trades for real.
 
 **⚠️ DANGER ZONE:**
-- By default, we run in **PRACTICE** mode.
-- To trade real money, you must change `OANDA_ENVIRONMENT` to `live` in your `.env` file. **DO NOT DO THIS UNTIL YOU ARE SURE.**
+- By default, we use **Paper Trading**.
+- To trade real money, you must login to your LIVE account in TWS/Gateway and update the `.env` file port to the live socket port (usually `4001` or `7496`). **DO NOT DO THIS UNTIL YOU ARE SURE.**
 
 **Choose Your Strategy:**
 
@@ -327,10 +336,10 @@ uv run python scripts/run_live_mtf.py
 
 **What Happens Next:**
 1.  **Data Sync:** Automatically downloads latest data (for **ALL** strategies).
-2.  **Connection:** The system connects to OANDA.
+2.  **Connection:** The system connects to IBKR.
 3.  **Warmup:** It loads recent data from `data/` to calculate indicators immediately.
 4.  **Reconciliation:** It checks if you have existing positions and syncs them.
-5.  **Trading:** It streams live prices (`QUOTE EUR_USD...`) and executes trades when signals align.
+5.  **Trading:** It streams live prices (`QUOTE EUR.USD.IBKR...`) and executes trades when signals align.
 
 **Monitoring:**
 - **Logs:** Check `.tmp/logs/` for detailed files like `mtf_live_*.log`.
@@ -365,21 +374,6 @@ uv run python scripts/kill_switch.py
 
 ---
 
-## ⚕️ Phase 6: Health Checks & Maintenance
-
-Before you go live, or if you suspect something is wrong, run the **System Stress Test**.
-
-**The Command:**
-```bash
-uv run python scripts/stress_test_oanda.py
-```
-
-**What it does:**
-1.  **Market Order Test:** Places and immediately closes a trade.
-2.  **Pending Order Test:** Places Limits and Stops, then cancels them.
-3.  **Burst Test:** Fires 5 orders rapidly to test rate limits.
-4.  **Integration Check:** Verifies the entire pipeline (Auth -> Network -> Adapter -> OANDA).
-
 **Success Criteria:**
 - You see `✅ STRESS TEST COMPLETE`.
 - No "Order Not Found" errors.
@@ -411,7 +405,7 @@ If you want the bot to run 24/7 without your laptop being on, you use **Docker**
     ```
 2.  **Run It:**
     ```bash
-    docker run --env-file .env titan-oanda-algo
+    docker run --env-file .env titan-ibkr-algo
     ```
 
 ---
@@ -506,35 +500,17 @@ If you add a new directory with Python files, you may need to add it here.
 **Q: "Command not found: uv"**
 A: You didn't install `uv`. Try `pip install uv` again. Or just use `python` instead of `uv run python`.
 
+**Q: "Connection timed out"**
+A: Ensure your IB Gateway or TWS is running and configured to accept socket connections on the configured port. Go to Settings -> API -> Settings -> check "Enable ActiveX and Socket Clients".
+
 **Q: "ConnectionResetError"**
-A: OANDA disconnected you. The script usually reconnects automatically. If it happens constantly, check your internet.
+A: IBKR disconnected you. The script usually reconnects automatically. If it happens at a specific time daily, remember that IBKR restarts its servers every night.
 
-**Q: "401 Unauthorized"**
-A: Your Token is wrong or expired. Generate a new one on the OANDA website and update your `.env` file.
+**Q: "401 Unauthorized" or Account errors**
+A: Ensure your `IBKR_ACCOUNT_ID` matches the account currently logged into TWS/Gateway.
 
-**Q: "AttributeError: 'NoneType' object has no attribute 'value'" (Crash on start)**
-A: This usually means the `account_id` wasn't set correctly in the Execution Client. Ensure your `.env` has the correct `OANDA_ACCOUNT_ID`.
-
-**Q: "LiveExecutionClient: No account found for ID..."**
-A: This means the `AccountState` event wasn't received before the strategy started. We fixed this by ensuring `_connect()` awaits the initial account state update. If it persists, restart the script.
-
-**Q: "NotImplementedError: method `generate_order_status_reports`..."**
-A: **Fixed in v1.1.** This error meant the adapter couldn't handle single-order queries. Update your `titan` package (`uv pip install -e .`) to get the fix.
-
-**Q: "Trade ID Unspecified" (Trailing Stop Rejection)**
-A: OANDA requires Trailing Stops to be linked to an existing Trade ID. The current adapter doesn't support this automatically. Use standard Stop Loss orders managed by your strategy logic instead.
-
-**Q: "TypeError: Argument 'account_id' has incorrect type"**
-A: You are passing a string (e.g., "001") where a `AccountId` object is expected. Use `self.cache.accounts()[0]` to get the valid account object dynamically.
-
-**Q: "AttributeError: ... object has no attribute 'total'" (Balance check)**
-A: You are trying to access `account.balance.total`. This is incorrect. Use `account.balance_total().as_double()` to get the float value of your equity.
-
-**Q: "Order not found" or "AttributeError ... _handle_event"**
-A: Ensure you are using `OmsType.NETTING` in your `LiveExecEngineConfig`. OANDA requires Netting mode because it doesn't support distinct position IDs per trade. Also verify `execution.py` has all event handlers restored.
-
-**Q: "TypeError: Cannot convert OandaDataClient..."**
-A: This is an internal adapter error. It means the Data Client class isn't inheriting from `MarketDataClient`. This should be fixed in the latest version.
+**Q: "TypeError: Cannot convert InteractiveBrokersDataClient..."**
+A: Check that Nautilus internal dependency is satisfied. You might have Nautilus version conflicts.
 
 **Q: I don't see any trades!**
 A: The market might be closed (Weekends). Or the strategy just hasn't found a good setup yet. Be patient.
@@ -546,7 +522,7 @@ A: Run `uv run ruff format .` locally, commit, and push again. The formatter aut
 A: Run `uv run ruff check . --fix` locally. It auto-fixes most issues. For remaining errors, read the error message — it tells you the exact file, line, and what's wrong.
 
 **Q: Tests pass locally but fail in CI**
-A: Check if you have `.env` variables that tests depend on. CI doesn't have your `.env` file, so tests requiring live OANDA credentials are auto-skipped. If tests fail for a different reason, check the CI logs for the exact error.
+A: Check if you have `.env` variables that tests depend on. CI doesn't have your `.env` file, so tests requiring live IBKR credentials are auto-skipped. If tests fail for a different reason, check the CI logs for the exact error.
 
 **Q: Feature Selection sweep is slow**
 A: The sweep tests ~1,200+ parameter combos across 7 indicators + MTF confluence. On H4 data with ~2 years of history, expect 5–15 minutes per pair. To speed up, reduce the parameter ranges in `run_feature_selection.py` (e.g., widen the step sizes).

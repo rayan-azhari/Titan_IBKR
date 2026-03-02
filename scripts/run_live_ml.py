@@ -28,14 +28,16 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 import os
 
-from titan.adapters.oanda.config import (
-    OandaDataClientConfig,
-    OandaExecutionClientConfig,
-    OandaInstrumentProviderConfig,
+from nautilus_trader.adapters.interactive_brokers.config import (
+    InteractiveBrokersDataClientConfig,
+    InteractiveBrokersExecClientConfig,
+    InteractiveBrokersInstrumentProviderConfig,
 )
-from titan.adapters.oanda.data import OandaDataClient
-from titan.adapters.oanda.execution import OandaExecutionClient
-from titan.adapters.oanda.instruments import OandaInstrumentProvider
+from nautilus_trader.adapters.interactive_brokers.factories import (
+    InteractiveBrokersLiveDataClientFactory,
+    InteractiveBrokersLiveExecClientFactory,
+)
+
 from titan.strategies.debug.simple_printer import SimplePrinter, SimplePrinterConfig
 
 # ---------------------------------------------------------------------------
@@ -70,18 +72,19 @@ def main():
     """Run the live trading node."""
     logger = _setup_logging()
 
-    account_id = os.getenv("OANDA_ACCOUNT_ID")
-    access_token = os.getenv("OANDA_ACCESS_TOKEN")
-    environment = os.getenv("OANDA_ENVIRONMENT", "practice")
+    ib_host = os.getenv("IBKR_HOST", "127.0.0.1")
+    ib_port = int(os.getenv("IBKR_PORT", 4002))
+    ib_client_id = int(os.getenv("IBKR_CLIENT_ID", 1))
+    ib_account_id = os.getenv("IBKR_ACCOUNT_ID")
 
-    if not account_id or not access_token:
+    if not ib_account_id:
         logger.error(
-            "OANDA credentials not found. Set OANDA_ACCOUNT_ID and OANDA_ACCESS_TOKEN in .env."
+            "IBKR credentials not found. Set IBKR_ACCOUNT_ID and connection settings in .env."
         )
         sys.exit(1)
 
     logger.info("=" * 50)
-    logger.info("  TITAN NAUTILUS ENGINE — %s", environment.upper())
+    logger.info("  TITAN NAUTILUS ENGINE — ML LIVE (IBKR)")
     logger.info("=" * 50)
 
     # 0. Auto-Download Data
@@ -106,58 +109,29 @@ def main():
     node = TradingNode(config=node_config)
 
     # 2. Configure Adapter Components
-    data_config = OandaDataClientConfig(
-        account_id=account_id,
-        access_token=access_token,
-        environment=environment,
+    inst_config = InteractiveBrokersInstrumentProviderConfig(load_all=False)
+
+    data_config = InteractiveBrokersDataClientConfig(
+        ibg_host=ib_host,
+        ibg_port=ib_port,
+        ibg_client_id=ib_client_id,
+        instrument_provider=inst_config,
     )
 
-    exec_config = OandaExecutionClientConfig(
-        account_id=account_id,
-        access_token=access_token,
-        environment=environment,
-    )
-
-    inst_config = OandaInstrumentProviderConfig(
-        account_id=account_id,
-        access_token=access_token,
-        environment=environment,
+    exec_config = InteractiveBrokersExecClientConfig(
+        ibg_host=ib_host,
+        ibg_port=ib_port,
+        ibg_client_id=ib_client_id,
+        account_id=ib_account_id,
+        instrument_provider=inst_config,
     )
 
     # 3. Register Clients
-    # We register factories that default to the configuration defined above.
-    # This pattern allows the trading node to instantiate clients as needed.
-
-    node.add_data_client_factory(
-        "OANDA",
-        lambda loop, msgbus, cache, clock: OandaDataClient(
-            loop,
-            data_config,
-            msgbus,
-            cache,
-            clock,
-        ),
-    )
-
-    node.add_execution_client_factory(
-        "OANDA",
-        lambda loop, msgbus, cache, clock: OandaExecutionClient(
-            loop,
-            exec_config,
-            msgbus,
-            cache,
-            clock,
-        ),
-    )
+    node.add_data_client_factory("IBKR", InteractiveBrokersLiveDataClientFactory)
+    node.add_exec_client_factory("IBKR", InteractiveBrokersLiveExecClientFactory)
 
     # 4. Load Instruments
-    provider = OandaInstrumentProvider(inst_config)
-    print("⏳ Loading instruments from OANDA...")
-    instruments = provider.load_all()
-    print(f"✅ Loaded {len(instruments)} instruments.")
-
-    for inst in instruments:
-        node.add_instrument(inst)
+    print("⏳ Instruments will be loaded dynamically by the IBKR client...")
 
     # 5. Load Strategy (Auto-Discover ML Model)
     print("🧠 Searching for trained ML models...")

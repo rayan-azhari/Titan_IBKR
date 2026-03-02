@@ -1,6 +1,6 @@
-# Titan-Oanda-Algo-Enhanced
+# Titan-IBKR-Algo
 
-> A quantitative **swing trading** system for OANDA — ML-driven strategy discovery, VectorBT optimisation, NautilusTrader execution, and GCE deployment.
+> A quantitative **swing trading** system for Interactive Brokers (IBKR) — ML-driven strategy discovery, VectorBT optimisation, NautilusTrader execution, and GCE deployment.
 
 📘 **[Read the User Guide](USER_GUIDE.md)** for complete setup and usage instructions.
 
@@ -36,12 +36,11 @@ This project follows a **3-layer architecture** that separates *Probabilistic In
 ├── Titan Workspace Rules.md       ← Technical & ML constraints
 ├── directives/                    ← SOPs
 │   ├── Titan Library Reference.md      ← [API DOCS] Detailed Package Guide
-│   ├── Titan-Oanda Adapter Guide.md    ← [NEW] Architecture & Usage Guide
 │   ├── Workspace Structure.md          ← File Layout Docs
 │   ├── Alpha Research Loop (VectorBT).md
 │   ├── ... (and other directives)
 ├── titan/                         ← [CORE] Package (Library Code)
-│   ├── adapters/                  ← NautilusTrader Adapters (OANDA)
+│   ├── adapters/                  ← NautilusTrader Adapters (IBKR/Core)
 │   ├── config/                    ← Config Loading
 │   ├── data/                      ← Data Fetching & ValidationLogic
 │   ├── indicators/                ← Shared Indicators (Numba/VBT)
@@ -114,7 +113,7 @@ uv run python research/ml/run_ensemble.py
 ### 7. Deployment (Docker)
 ```bash
 uv run python scripts/build_docker.py
-docker run --env-file .env titan-oanda-algo
+docker run --env-file .env titan-ibkr-algo
 ```
 
 ### 8. NautilusTrader Live
@@ -129,9 +128,9 @@ uv run python scripts/run_live_ml.py
 ```
 The engine will:
 1. **Checks for and automatically downloads latest data** (runs `scripts/download_data.py`).
-2. Load instruments from OANDA.
+2. Load instruments from IBKR.
 3. Warm up indicators from local Parquet data (`data/EUR_USD_H1.parquet`, etc.).
-4. Reconcile open positions with OANDA (if any exist).
+4. Reconcile open positions with IBKR (if any exist).
 5. Subscribe to the live price stream and start processing bars.
 
 A **status dashboard** prints to the Nautilus log on every bar close showing per-timeframe SMA direction, RSI, confluence score, and position state.

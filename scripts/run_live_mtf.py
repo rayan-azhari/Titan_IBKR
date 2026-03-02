@@ -22,20 +22,17 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 import os
 
-from nautilus_trader.config import TradingNodeConfig
-from nautilus_trader.live.factories import LiveDataClientFactory, LiveExecClientFactory
-from nautilus_trader.live.node import TradingNode
-from nautilus_trader.model.enums import AccountType, OmsType
-from nautilus_trader.model.identifiers import ClientId, Venue
-
-from titan.adapters.oanda.config import (
-    OandaDataClientConfig,
-    OandaExecutionClientConfig,
-    OandaInstrumentProviderConfig,
+from nautilus_trader.adapters.interactive_brokers.config import (
+    InteractiveBrokersDataClientConfig,
+    InteractiveBrokersExecClientConfig,
+    InteractiveBrokersInstrumentProviderConfig,
 )
-from titan.adapters.oanda.data import OandaDataClient
-from titan.adapters.oanda.execution import OandaExecutionClient
-from titan.adapters.oanda.instruments import OandaInstrumentProvider
+from nautilus_trader.adapters.interactive_brokers.factories import (
+    InteractiveBrokersLiveDataClientFactory,
+    InteractiveBrokersLiveExecClientFactory,
+)
+from nautilus_trader.config import TradingNodeConfig
+from nautilus_trader.live.node import TradingNode
 
 # Import our Strategy
 from titan.strategies.mtf.strategy import MTFConfluenceConfig, MTFConfluenceStrategy
@@ -73,18 +70,19 @@ def main():
     """Run the MTF Strategy live."""
     logger = _setup_logging()
 
-    account_id = os.getenv("OANDA_ACCOUNT_ID")
-    access_token = os.getenv("OANDA_ACCESS_TOKEN")
-    environment = os.getenv("OANDA_ENVIRONMENT", "practice")
+    ib_host = os.getenv("IBKR_HOST", "127.0.0.1")
+    ib_port = int(os.getenv("IBKR_PORT", 4002))
+    ib_client_id = int(os.getenv("IBKR_CLIENT_ID", 1))
+    ib_account_id = os.getenv("IBKR_ACCOUNT_ID")
 
-    if not account_id or not access_token:
+    if not ib_account_id:
         logger.error(
-            "OANDA credentials not found. Set OANDA_ACCOUNT_ID and OANDA_ACCESS_TOKEN in .env."
+            "IBKR credentials not found. Set IBKR_ACCOUNT_ID and connection settings in .env."
         )
         sys.exit(1)
 
     logger.info("=" * 50)
-    logger.info("  MTF CONFLUENCE LIVE — %s", environment.upper())
+    logger.info("  MTF CONFLUENCE LIVE — IBKR GATEWAY")
 
     # 1. Download Data
     print("📥 Checking for latest data...")
@@ -98,89 +96,49 @@ def main():
         print("⚠️ Data download encounterd an issue. Proceeding with existing data if available.")
 
     # 2. Configure Adapter
-    data_config = OandaDataClientConfig(
-        account_id=account_id,
-        access_token=access_token,
-        environment=environment,
-    )
-    exec_config = OandaExecutionClientConfig(
-        account_id=account_id,
-        access_token=access_token,
-        environment=environment,
-    )
-    inst_config = OandaInstrumentProviderConfig(
-        account_id=account_id,
-        access_token=access_token,
-        environment=environment,
+    inst_config = InteractiveBrokersInstrumentProviderConfig(load_all=False)
+
+    data_config = InteractiveBrokersDataClientConfig(
+        ibg_host=ib_host,
+        ibg_port=ib_port,
+        ibg_client_id=ib_client_id,
+        instrument_provider=inst_config,
     )
 
-    # 3. Load Instruments (Moved up to provide to factories)
-    provider = OandaInstrumentProvider(inst_config)
-    print("⏳ Loading instruments from OANDA...")
-    instruments = provider.load_all()
-    print(f"✅ Loaded {len(instruments)} instruments.")
+    exec_config = InteractiveBrokersExecClientConfig(
+        ibg_host=ib_host,
+        ibg_port=ib_port,
+        ibg_client_id=ib_client_id,
+        account_id=ib_account_id,
+        instrument_provider=inst_config,
+    )
+
+    # 3. Load Instruments
+    # Note: InteractiveBrokersInstrumentProvider relies on a live client connection.
+    # The client is created during node build, so we will handle instrument loads
+    # inside the node or configure the provider to fetch on demand.
+    print("⏳ Instruments will be loaded dynamically by the IBKR client...")
 
     # 4. Configure Node with Client Configs
     node_config = TradingNodeConfig(
         trader_id="TITAN-MTF",
-        data_clients={"OANDA": data_config},
-        exec_clients={"OANDA": exec_config},
+        data_clients={"IBKR": data_config},
+        exec_clients={"IBKR": exec_config},
     )
     node = TradingNode(config=node_config)
 
-    for inst in instruments:
-        node.cache.add_instrument(inst)
-
-    # 5. Register Clients
-    # Wrapper Factories to inject config
-    class LiveOandaDataFactory(LiveDataClientFactory):
-        conf = data_config
-
-        @classmethod
-        def create(cls, loop, msgbus, cache, clock, name, **kwargs):
-            print(f"🔧 Creating OandaDataClient ({name})...")
-            return OandaDataClient(
-                loop=loop,
-                client_id=ClientId("OANDA-DATA"),
-                venue=Venue("OANDA"),
-                config=cls.conf,
-                msgbus=msgbus,
-                cache=cache,
-                clock=clock,
-            )
-
-    class LiveOandaExecutionFactory(LiveExecClientFactory):
-        conf = exec_config
-        prov = provider
-
-        @classmethod
-        def create(cls, loop, msgbus, cache, clock, name, **kwargs):
-            print(f"🔧 Creating OandaExecutionClient ({name})...")
-            return OandaExecutionClient(
-                loop=loop,
-                client_id=ClientId("OANDA-EXEC"),
-                venue=Venue("OANDA"),
-                oms_type=OmsType.NETTING,
-                account_type=AccountType.MARGIN,
-                base_currency=None,  # Or Currency.from_str("USD")
-                instrument_provider=cls.prov,
-                config=cls.conf,
-                msgbus=msgbus,
-                cache=cache,
-                clock=clock,
-            )
-
-    node.add_data_client_factory("OANDA", LiveOandaDataFactory)
-    node.add_exec_client_factory("OANDA", LiveOandaExecutionFactory)
+    # 5. Register Clients using Nautilus built-in factories
+    node.add_data_client_factory("IBKR", InteractiveBrokersLiveDataClientFactory)
+    node.add_exec_client_factory("IBKR", InteractiveBrokersLiveExecClientFactory)
 
     # 5. Configure Strategy
     strat_config = MTFConfluenceConfig(
-        instrument_id="EUR/USD.OANDA",
+        instrument_id="EUR.USD.IBKR",
         bar_types={
-            "H1": "EUR/USD.OANDA-1-HOUR-MID-INTERNAL",
-            "H4": "EUR/USD.OANDA-4-HOUR-MID-INTERNAL",
-            "D": "EUR/USD.OANDA-1-DAY-MID-INTERNAL",
-            "W": "EUR/USD.OANDA-1-WEEK-MID-INTERNAL",
+            "H1": "EUR.USD.IBKR-1-HOUR-MID-INTERNAL",
+            "H4": "EUR.USD.IBKR-4-HOUR-MID-INTERNAL",
+            "D": "EUR.USD.IBKR-1-DAY-MID-INTERNAL",
+            "W": "EUR.USD.IBKR-1-WEEK-MID-INTERNAL",
         },
         risk_pct=0.01,
         leverage_cap=5.0,

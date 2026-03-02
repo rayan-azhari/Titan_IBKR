@@ -350,7 +350,7 @@ def build_features(
         # Mom: +0.5 if RSI > 50 else -0.5
         mom_score = np.where(r > 50, 0.5, -0.5)
 
-        total_signal = pd.Series(trend_score + mom_score, index=tf_data.index) # -1.0 to +1.0
+        total_signal = pd.Series(trend_score + mom_score, index=tf_data.index)  # -1.0 to +1.0
 
         # Align to base timeframe
         # Reindexing to feats.index (base TF) with ffill

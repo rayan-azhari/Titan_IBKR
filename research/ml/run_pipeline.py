@@ -198,8 +198,7 @@ def train_and_evaluate(X: pd.DataFrame, y: pd.Series, close: pd.Series):
         # Run folds in parallel
         # n_jobs=-1 uses all avail cores
         fold_results = Parallel(n_jobs=-1)(
-            delayed(_train_fold)(model, X, y, close, tr, te)
-            for tr, te in splits
+            delayed(_train_fold)(model, X, y, close, tr, te) for tr, te in splits
         )
 
         # Aggregation

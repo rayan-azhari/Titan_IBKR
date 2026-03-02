@@ -396,9 +396,6 @@ def sweep_adx_filter(
 # ─────────────────────────────────────────────────────────────────────
 
 
-
-
-
 def _process_mtf_tf(
     tf: str,
     pair: str,
@@ -493,9 +490,7 @@ def sweep_mtf_confluence(
 
     # Run parallel jobs for each higher timeframe
     all_results = Parallel(n_jobs=-1)(
-        delayed(_process_mtf_tf)(
-            tf, pair, base_index, base_entries, base_exits, close, fees
-        )
+        delayed(_process_mtf_tf)(tf, pair, base_index, base_entries, base_exits, close, fees)
         for tf in higher_tfs
     )
 
@@ -877,9 +872,6 @@ def _reconstruct_signals(
         return None, None
 
     return entries, exits
-
-
-
 
 
 def main() -> None:

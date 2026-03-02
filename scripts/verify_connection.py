@@ -1,12 +1,13 @@
-"""verify_connection.py — Validate OANDA API connectivity.
+"""verify_connection.py — Validate IBKR TWS/Gateway connectivity.
 
-Reads credentials from .env and prints account summary + available instruments.
+Reads credentials from .env and tests connection to the IBKR socket.
 Directive: 01_environment_setup.md
 """
 
 import os
 import sys
-from decimal import Decimal
+import threading
+import time
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -22,10 +23,10 @@ except ImportError:
     sys.exit(1)
 
 try:
-    import oandapyV20
-    import oandapyV20.endpoints.accounts as accounts
+    from ibapi.client import EClient
+    from ibapi.wrapper import EWrapper
 except ImportError:
-    print("ERROR: oandapyV20 is not installed. Run `uv sync` first.")
+    print("ERROR: ibapi is not installed. Run `uv sync` first.")
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
@@ -33,49 +34,56 @@ except ImportError:
 # ---------------------------------------------------------------------------
 load_dotenv(PROJECT_ROOT / ".env")
 
-ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID")
-ACCESS_TOKEN = os.getenv("OANDA_ACCESS_TOKEN")
-ENVIRONMENT = os.getenv("OANDA_ENVIRONMENT", "practice")
+IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
+IBKR_PORT = int(os.getenv("IBKR_PORT", 4002))
+IBKR_CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", 1))
+
+
+class VerifyApp(EWrapper, EClient):
+    def __init__(self):
+        EClient.__init__(self, self)
+        self.success = False
+
+    def nextValidId(self, orderId: int):
+        print("=" * 50)
+        print(f"  IBKR Connection Verified ✓ [Port: {IBKR_PORT}]")
+        print("=" * 50)
+        self.success = True
+        self.disconnect()
+
+    def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=""):
+        if errorCode != 2104 and errorCode != 2106:  # ignore info messages
+            print(f"IBKR Error [{errorCode}]: {errorString}")
 
 
 def main() -> None:
-    if not ACCOUNT_ID or not ACCESS_TOKEN:
-        print("ERROR: OANDA_ACCOUNT_ID and OANDA_ACCESS_TOKEN must be set in .env")
-        sys.exit(1)
-
-    client = oandapyV20.API(
-        access_token=ACCESS_TOKEN,
-        environment=ENVIRONMENT,
+    print(
+        f"Connecting to IBKR Gateway/TWS on {IBKR_HOST}:{IBKR_PORT} (Client ID: {IBKR_CLIENT_ID})..."
     )
 
-    # --- Account Summary ---
-    r = accounts.AccountSummary(ACCOUNT_ID)
+    app = VerifyApp()
+
     try:
-        response = client.request(r)
-    except oandapyV20.exceptions.V20Error as e:
-        print(f"ERROR: OANDA API returned an error:\n{e}")
+        app.connect(IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID)
+    except Exception as e:
+        print(f"Failed to connect: {e}")
         sys.exit(1)
 
-    acct = response["account"]
-    print("=" * 50)
-    print("  OANDA Connection Verified ✓")
-    print("=" * 50)
-    print(f"  Account ID  : {acct['id']}")
-    print(f"  Currency    : {acct['currency']}")
-    print(f"  Balance     : {Decimal(acct['balance'])}")
-    print(f"  NAV         : {Decimal(acct['NAV'])}")
-    print(f"  Open Trades : {acct['openTradeCount']}")
-    print(f"  Environment : {ENVIRONMENT}")
-    print("=" * 50)
+    api_thread = threading.Thread(target=app.run, daemon=True)
+    api_thread.start()
 
-    # --- Available Instruments ---
-    r = accounts.AccountInstruments(ACCOUNT_ID)
-    response = client.request(r)
-    instruments = response["instruments"]
-    print(f"\n  {len(instruments)} instruments available.")
-    print("  First 10:")
-    for inst in instruments[:10]:
-        print(f"    • {inst['name']}  ({inst['type']})")
+    # Wait for connection
+    timeout = 5
+    start_time = time.time()
+    while not app.success and time.time() - start_time < timeout:
+        time.sleep(0.1)
+
+    if not app.success:
+        print("\n❌ ERROR: Connection timed out.")
+        print(
+            "Ensure TWS or IB Gateway is running and configured to accept socket connections on the configured port."
+        )
+        sys.exit(1)
 
     print("\n✅ All checks passed. You are ready to go.\n")
 
