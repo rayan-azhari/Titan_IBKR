@@ -29,7 +29,7 @@ from decimal import Decimal
 import math
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
-from nautilus_trader.models.data import Bar
+from nautilus_trader.models.data import Bar, BarType
 from nautilus_trader.models.enums import OrderSide
 from nautilus_trader.models.identifiers import InstrumentId, AccountId
 
@@ -49,24 +49,23 @@ class ORBStrategy(Strategy):
         self.or_high: Decimal | None = None
         self.or_low: Decimal | None = None
         self.signal_active: str | None = None
-        self.traded_today: bool = False  # Flag to prevent overtrading
+        self.traded_today: bool = False
         self.current_date: str | None = None
 
     def on_start(self):
-        """Subscribe to the required timeframes for the strategy."""
-        self.subscribe_bars(self.instrument_id, "15-MINUTE")
-        self.subscribe_bars(self.instrument_id, "5-MINUTE")
-        self.subscribe_bars(self.instrument_id, "1-MINUTE")
+        """Subscribe to 15m and 5m bars for logic, 1m for execution."""
+        # Using specific BarType strings/objects depending on setup, assuming standard strings here
+        self.subscribe_bars(self.instrument_id, "15-MINUTE-MID") 
+        self.subscribe_bars(self.instrument_id, "5-MINUTE-MID")
+        self.subscribe_bars(self.instrument_id, "1-MINUTE-MID")
         self.log.info("ORB Strategy started. Subscribed to 1m, 5m, and 15m bars.")
 
     def on_bar(self, bar: Bar):
-        """Main event loop triggered on every new bar."""
         dt = bar.ts_event.to_datetime()
         time_str = dt.strftime('%H:%M')
         date_str = dt.strftime('%Y-%m-%d')
-        bar_type = bar.bar_type.to_str()
+        bar_step = bar.bar_type.step # e.g. 15, 5, 1
 
-        # Reset daily variables at the start of a new trading session
         if self.current_date != date_str:
             self.current_date = date_str
             self.or_high = None
@@ -75,13 +74,14 @@ class ORBStrategy(Strategy):
             self.traded_today = False
 
         # 1. Establish the 15-minute Opening Range (09:30 - 09:45)
-        if "15-MINUTE" in bar_type and time_str == "09:45":
+        # 09:45 bar close establishes the range
+        if bar_step == 15 and time_str == "09:45":
             self.or_high = bar.high
             self.or_low = bar.low
             self.log.info(f"[{time_str}] ORB Established: High {self.or_high}, Low {self.or_low}")
 
         # 2. Check 5-minute Confirmation (Breakout of the range)
-        if "5-MINUTE" in bar_type and self.or_high is not None and not self.signal_active and not self.traded_today:
+        if bar_step == 5 and self.or_high is not None and not self.signal_active and not self.traded_today:
             if bar.close > self.or_high:
                 self.signal_active = "LONG"
                 self.log.info(f"[{time_str}] Bullish 5m confirmation. Looking for long entry.")
@@ -90,85 +90,73 @@ class ORBStrategy(Strategy):
                 self.log.info(f"[{time_str}] Bearish 5m confirmation. Looking for short entry.")
 
         # 3. Execute on the 1-minute chart
-        if "1-MINUTE" in bar_type and self.signal_active and not self.traded_today:
-            # Ensure we are not already holding a position
+        if bar_step == 1 and self.signal_active and not self.traded_today:
             if not self.portfolio.is_flat(self.instrument_id):
                 return 
             
             entry_price = bar.close
-            
-            # Determine Stop Loss based on direction
             stop_loss = self.or_low if self.signal_active == "LONG" else self.or_high
-            
-            # Calculate dynamic size based on 1% risk
             size = self._calculate_position_size(entry_price, stop_loss)
             
             if size > Decimal("0"):
                 side = OrderSide.BUY if self.signal_active == "LONG" else OrderSide.SELL
                 self._execute_bracket_trade(side, entry_price, stop_loss, size)
-                self.traded_today = True  # Lock out further trades for the day
+                self.traded_today = True
 
     def _calculate_position_size(self, entry_price: Decimal, stop_loss_price: Decimal) -> Decimal:
-        """Calculates order quantity to risk exactly 1% of total equity."""
-        # Retrieve the live account state from Nautilus
         account = self.portfolio.get_account(self.account_id)
         if not account:
-            self.log.error("Account not found. Cannot calculate position size.")
             return Decimal("0")
             
         current_equity = account.margins.net_liquidation_value
         risk_amount = current_equity * self.config.risk_percent
-        
         trade_risk = abs(entry_price - stop_loss_price)
         
         if trade_risk <= Decimal("0"):
-            self.log.error("Invalid trade risk calculation. Aborting sizing.")
             return Decimal("0")
         
-        # Calculate raw size and floor it to avoid fractional units
+        # NOTE: For IBKR S&P500 ETF (SPY), round to nearest whole share
         raw_size = risk_amount / trade_risk
         position_size = Decimal(math.floor(raw_size))
-        
-        self.log.info(
-            f"Sizing Calculation -> Equity: {current_equity} | Risk (£): {risk_amount:.2f} | "
-            f"Risk per share: {trade_risk} | Size: {position_size} units"
-        )
-        
         return position_size
 
     def _execute_bracket_trade(self, side: OrderSide, entry_price: Decimal, stop_loss_price: Decimal, quantity: Decimal):
-        """Submits the entry order alongside a Stop Loss and Take Profit."""
         risk_per_unit = abs(entry_price - stop_loss_price)
         target_distance = risk_per_unit * self.config.risk_reward_ratio
         
-        # Calculate Take Profit price
-        if side == OrderSide.BUY:
-            take_profit_price = entry_price + target_distance
-        else:
-            take_profit_price = entry_price - target_distance
+        take_profit_price = entry_price + target_distance if side == OrderSide.BUY else entry_price - target_distance
 
-        # Note: Nautilus order execution logic can vary slightly depending on the exact adapter.
-        # This standardises sending a market entry with attached limit/stop exits.
+        # IBKR Bracket Order implementation via NautilusTrader
         entry_order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=side,
-            quantity=quantity
+            quantity=quantity,
+            time_in_force="GTC"
         )
         
-        # In a fully integrated production script, you would attach OCO (One-Cancels-Other) 
-        # conditions for the SL and TP here according to the IBKR adapter's capabilities.
-        
-        self.submit_order(entry_order)
-        self.log.info(
-            f"Executed {side} | Qty: {quantity} | Entry: {entry_price} | "
-            f"SL: {stop_loss_price} | TP: {take_profit_price}"
+        sl_order = self.order_factory.stop_market(
+            instrument_id=self.instrument_id,
+            order_side=OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY,
+            quantity=quantity,
+            trigger_price=stop_loss_price,
+            time_in_force="GTC"
         )
+        
+        tp_order = self.order_factory.limit(
+            instrument_id=self.instrument_id,
+            order_side=OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY,
+            quantity=quantity,
+            price=take_profit_price,
+            time_in_force="GTC"
+        )
+        
+        # Link the bracket components
+        self.submit_bracket_order(entry_order, sl_order, tp_order)
+        self.log.info(f"Bracket Executed! {side} | Qty: {quantity} | SL: {stop_loss_price} | TP: {take_profit_price}")
 
     def on_stop(self):
-        """Cleanup function when the strategy is stopped."""
         self.cancel_all_orders(self.instrument_id)
         self.close_all_positions(self.instrument_id)
-        self.log.info("Strategy stopped. All orders cancelled and positions closed.")
 
 
 
