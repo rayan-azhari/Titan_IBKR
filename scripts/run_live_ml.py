@@ -111,14 +111,14 @@ def main():
     # 2. Configure Adapter Components
     inst_config = InteractiveBrokersInstrumentProviderConfig(load_all=False)
 
-    data_config = InteractiveBrokersDataClientConfig(
+    _data_config = InteractiveBrokersDataClientConfig(
         ibg_host=ib_host,
         ibg_port=ib_port,
         ibg_client_id=ib_client_id,
         instrument_provider=inst_config,
     )
 
-    exec_config = InteractiveBrokersExecClientConfig(
+    _exec_config = InteractiveBrokersExecClientConfig(
         ibg_host=ib_host,
         ibg_port=ib_port,
         ibg_client_id=ib_client_id,
