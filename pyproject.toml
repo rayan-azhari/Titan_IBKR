@@ -1,11 +1,11 @@
 [project]
-name = "titan-oanda-algo"
+name = "titan-ibkr-algo"
 version = "0.1.0"
-description = "Quantitative swing trading system for OANDA — ML-driven strategy discovery, VectorBT optimisation, NautilusTrader execution, and GCE deployment."
+description = "Quantitative swing trading system for Interactive Brokers — ML-driven strategy discovery, VectorBT optimisation, NautilusTrader execution, and GCE deployment."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "ibapi>=10.19.1",
+    "python-ibapi-stable>=10.30.1",
     "pandas>=2.2",
     "numpy>=1.26",
     "scikit-learn>=1.5",
@@ -51,7 +51,7 @@ ignore = [
 "execution/*.py" = ["E402"]         # Scripts need sys.path/dotenv before imports
 "scripts/*" = ["E402", "D"]         # Standalone scripts: allow sys.path, skip docstrings
 "titan/strategies/**/*" = ["D"]       # Strategy files: skip docstring rules
-"titan/adapters/oanda/execution.py" = ["E402"] # Allow late imports if needed
+"titan/adapters/ibkr/execution.py" = ["E402"] # Allow late imports if needed
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

@@ -1009,12 +1009,6 @@ wheels = [
 ]
 
 [[package]]
-name = "oandapyv20"
-version = "0.7.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/10/f7/04f0ee293c979829cad5d8ee8d55df19f1dedf5cb4ebd35fb1e6b039fff4/oandapyV20-0.7.2.tar.gz", hash = "sha256:5ca3990f824d0b16afd49d8e08f7403862d2b3c5a583470f777db7f76f04d073", size = 51615, upload-time = "2021-08-27T20:50:40.477Z" }
-
-[[package]]
 name = "packaging"
 version = "26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1381,6 +1375,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f0/26/19cadc79a718c5edbec86fd4919a6b6d3f681039a2f6d66d14be94e75fb9/python_dotenv-1.2.1.tar.gz", hash = "sha256:42667e897e16ab0d66954af0e60a9caa94f0fd4ecf3aaf6d2d260eec1aa36ad6", size = 44221, upload-time = "2025-10-26T15:12:10.434Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/14/1b/a298b06749107c305e1fe0f814c6c74aea7b2f1e10989cb30f544a1b3253/python_dotenv-1.2.1-py3-none-any.whl", hash = "sha256:b81ee9561e9ca4004139c6cbba3a238c32b03e4894671e181b671e8cb8425d61", size = 21230, upload-time = "2025-10-26T15:12:09.109Z" },
+]
+
+[[package]]
+name = "python-ibapi-stable"
+version = "10.30.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/55/88234090f91ec20cc7160634d1d62c37b8bf7ead143920e2a3ecdea899b8/python_ibapi_stable-10.30.1.tar.gz", hash = "sha256:c0e25a57a9f0140109a36208f99af452fb63ee8a8b417ca6339e7e8d9af572ab", size = 69525, upload-time = "2024-11-20T02:23:08.073Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/02/76/939aae501bf6c3fe945b1f2ca207e3b4faa389e83c8a634f2e696d36798b/python_ibapi_stable-10.30.1-py3-none-any.whl", hash = "sha256:2aabd990edcf902ebd161722d6825d6fd8342528519e1be507ed16005b081fbe", size = 76624, upload-time = "2024-11-20T02:23:05.562Z" },
 ]
 
 [[package]]
@@ -1763,7 +1766,7 @@ wheels = [
 ]
 
 [[package]]
-name = "titan-oanda-algo"
+name = "titan-ibkr-algo"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
@@ -1771,12 +1774,13 @@ dependencies = [
     { name = "joblib" },
     { name = "nautilus-trader", version = "1.221.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "nautilus-trader", version = "1.222.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "numba" },
     { name = "numpy" },
-    { name = "oandapyv20" },
     { name = "pandas" },
     { name = "plotly" },
     { name = "pyarrow" },
     { name = "python-dotenv" },
+    { name = "python-ibapi-stable" },
     { name = "scikit-learn" },
     { name = "vectorbt" },
     { name = "xgboost" },
@@ -1793,13 +1797,14 @@ requires-dist = [
     { name = "backtesting", specifier = ">=0.3.3" },
     { name = "joblib", specifier = ">=1.4" },
     { name = "nautilus-trader", specifier = ">=1.200" },
+    { name = "numba", specifier = ">=0.59" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "oandapyv20", specifier = ">=0.7.2" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "plotly", specifier = ">=5.20" },
     { name = "pyarrow", specifier = ">=15.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "python-ibapi-stable", specifier = ">=10.30.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "scikit-learn", specifier = ">=1.5" },
     { name = "vectorbt", specifier = ">=0.26" },
