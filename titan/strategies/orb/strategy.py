@@ -10,6 +10,7 @@ import tomllib
 from datetime import datetime, time
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from nautilus_trader.config import StrategyConfig
@@ -17,8 +18,10 @@ from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Quantity
+from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.trading.strategy import Strategy
+
+ET = ZoneInfo("America/New_York")
 
 # Reuse indicators from the ML features module (which has SMA, RSI, ATR)
 from titan.strategies.ml.features import atr, rsi, sma
@@ -54,7 +57,7 @@ class ORBStrategy(Strategy):
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         
         # We need the naked ticker for looking up the TOML config
-        self.ticker = self.instrument_id.symbol.value.replace("/", "").replace("USD", "").strip()
+        self.ticker = self.instrument_id.symbol.value.replace("/", "").replace("USD", "").replace(".", "").strip()
 
         # Load optimization params for this specific ticker
         self.toml_cfg = self._load_toml(config.config_path).get(self.ticker, {})
@@ -196,14 +199,16 @@ class ORBStrategy(Strategy):
             "time": dt, "close": float(bar.close),
             "high": float(bar.high), "low": float(bar.low)
         })
-        
+
         if len(self.history_5m) > self.config.warmup_bars_5m + 20:
             self.history_5m = self.history_5m[-self.config.warmup_bars_5m:]
-            
+
         self._update_5m_indicators()
 
-        bar_date = dt.date()
-        bar_time = dt.time()
+        # Convert UTC timestamp to Eastern Time for ORB hour comparisons
+        dt_et = dt.astimezone(ET)
+        bar_date = dt_et.date()
+        bar_time = dt_et.time()
 
         # New day reset
         if self.current_date != bar_date:
@@ -359,22 +364,25 @@ class ORBStrategy(Strategy):
         
         # TP Limit
         opposite_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
-        
+
+        instrument = self.cache.instrument(self.instrument_id)
+        precision = instrument.price_precision if instrument else 2
+
         tp_order = self.order_factory.limit(
             instrument_id=self.instrument_id,
             order_side=opposite_side,
             quantity=qty,
-            price=Decimal(str(round(tp_price, 2))),
+            price=Price(round(tp_price, precision), precision=precision),
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(tp_order)
-        
-        # SL Stop
-        sl_order = self.order_factory.stop(
+
+        # SL Stop-Market
+        sl_order = self.order_factory.stop_market(
             instrument_id=self.instrument_id,
             order_side=opposite_side,
             quantity=qty,
-            price=Decimal(str(round(sl_price, 2))),
+            trigger_price=Price(round(sl_price, precision), precision=precision),
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(sl_order)

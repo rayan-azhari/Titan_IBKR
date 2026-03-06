@@ -60,3 +60,21 @@ use_rsi = true
 use_gauss = true
 orb_window_end = "09:45"
 entry_cutoff = "11:00"
+
+[CRM]
+atr_multiplier = 2.0
+rr_ratio = 2.0
+use_sma = true
+use_rsi = true
+use_gauss = true
+orb_window_end = "09:45"
+entry_cutoff = "11:00"
+
+[CSCO]
+atr_multiplier = 2.0
+rr_ratio = 2.0
+use_sma = true
+use_rsi = false
+use_gauss = true
+orb_window_end = "09:40"
+entry_cutoff = "11:00"

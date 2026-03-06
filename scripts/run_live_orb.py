@@ -80,7 +80,7 @@ def main():
     # for the Daily and 5M history files used in warmup.
 
     # 1. Configure IBKR Adapter
-    inst_config = InteractiveBrokersInstrumentProviderConfig(load_all=False)
+    inst_config = InteractiveBrokersInstrumentProviderConfig(load_all=True)
 
     data_config = InteractiveBrokersDataClientConfig(
         ibg_host=ib_host,
@@ -115,8 +115,8 @@ def main():
         inst_id = f"{ticker}.USD.IBKR"
         
         # IBKR periodicity strings: "1-DAY", "5-MINUTE"
-        bar_5m = f"{inst_id}-5-MINUTE-TRADES-INTERNAL" 
-        bar_1d = f"{inst_id}-1-DAY-TRADES-INTERNAL"
+        bar_5m = f"{inst_id}-5-MINUTE-LAST-INTERNAL" 
+        bar_1d = f"{inst_id}-1-DAY-LAST-INTERNAL"
         
         strat_config = ORBConfig(
             instrument_id=inst_id,
@@ -126,7 +126,7 @@ def main():
             risk_pct=0.01,
             leverage_cap=4.0,
             warmup_bars_1d=60,
-            warmup_bars_5m=100
+            warmup_bars_5m=200,  # Gaussian channel needs 144+ bars to initialize
         )
 
         strategy = ORBStrategy(strat_config)
