@@ -1,0 +1,62 @@
+[UNH]
+atr_multiplier = 2.0
+rr_ratio = 2.0
+use_sma = true
+use_rsi = true
+use_gauss = false
+orb_window_end = "09:45"
+entry_cutoff = "11:00"
+
+[AMAT]
+atr_multiplier = 2.5
+rr_ratio = 1.5
+use_sma = true
+use_rsi = true
+use_gauss = true
+orb_window_end = "09:40"
+entry_cutoff = "11:00"
+
+[TXN]
+atr_multiplier = 2.0
+rr_ratio = 3.0
+use_sma = true
+use_rsi = true
+use_gauss = true
+orb_window_end = "09:40"
+entry_cutoff = "11:00"
+
+[INTC]
+atr_multiplier = 1.25
+rr_ratio = 3.0
+use_sma = false
+use_rsi = true
+use_gauss = true
+orb_window_end = "09:40"
+entry_cutoff = "11:00"
+
+[CAT]
+atr_multiplier = 2.5
+rr_ratio = 2.0
+use_sma = true
+use_rsi = true
+use_gauss = true
+orb_window_end = "09:40"
+entry_cutoff = "11:00"
+
+[WMT]
+atr_multiplier = 2.0
+rr_ratio = 2.0
+use_sma = true
+use_rsi = false
+use_gauss = true
+orb_window_end = "09:45"
+entry_cutoff = "11:00"
+
+[TMO]
+atr_multiplier = 2.5
+rr_ratio = 1.5
+use_sma = true
+use_rsi = true
+use_gauss = true
+orb_window_end = "09:45"
+entry_cutoff = "11:00"

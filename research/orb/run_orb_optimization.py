@@ -1,21 +1,25 @@
 import math
 import itertools
 from datetime import datetime, timedelta
+import warnings
 
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
 import yfinance as yf
 
-def run_orb_optimization(ticker: str = "NVDA", days: int = 59):
+# Suppress frequent yfinance warnings
+warnings.filterwarnings("ignore")
+
+def run_orb_optimization(ticker: str, days: int = 59) -> dict | None:
     print(f"Fetching {days} days of data for {ticker}...")
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days - 1)
 
     df_5m = yf.download(ticker, start=start_date, end=end_date, interval="5m", progress=False)
     if df_5m.empty:
-        print("No 5m data downloaded.")
-        return
+        print(f"No 5m data downloaded for {ticker}.")
+        return None
 
     # Download 1h data
     hourly_start = start_date - timedelta(days=20)
@@ -40,7 +44,6 @@ def run_orb_optimization(ticker: str = "NVDA", days: int = 59):
     df_1h.loc[:, "SMA20"] = df_1h["Close"].rolling(20).mean().shift(1)
     
     df_5m.loc[:, "Vol_SMA20"] = df_5m["Volume"].rolling(20).mean()
-    df_1h.loc[:, "Vol_SMA20"] = df_1h["Volume"].rolling(20).mean().shift(1)
 
     df_5m = df_5m.between_time("09:30", "15:55").copy()
 
@@ -55,25 +58,19 @@ def run_orb_optimization(ticker: str = "NVDA", days: int = 59):
     
     df_5m["Hourly_SMA50"] = df_5m["Hour_Str"].map(df_1h.set_index("Hour_Str")["SMA50"].to_dict())
     df_5m["Hourly_SMA20"] = df_5m["Hour_Str"].map(df_1h.set_index("Hour_Str")["SMA20"].to_dict())
-    
-    df_5m["Hourly_Vol_SMA20"] = df_5m["Hour_Str"].map(df_1h.set_index("Hour_Str")["Vol_SMA20"].to_dict())
 
-    # Parameter grid
+    # Parameter grid (We loosen the Volume filter by removing the harsh Hourly requirement)
     sma_options = [
         ("Daily", "SMA50", "Daily_SMA50"),
-        ("Daily", "SMA20", "Daily_SMA20"),
-        ("Hourly", "SMA50", "Hourly_SMA50"),
         ("Hourly", "SMA20", "Hourly_SMA20"),
         ("None", "None", None)
     ]
     vol_options = [
-        ("5m", "Vol_SMA20"),
-        ("Hourly", "Hourly_Vol_SMA20"),
+        ("Loosened 5m > SMA20", "Vol_SMA20"),
         ("None", None)
     ]
     trail_options = [
         "None",
-        "Tight (1R->BE, 2R->1R)",
         "Loose (2R->BE)"
     ]
 
@@ -82,9 +79,6 @@ def run_orb_optimization(ticker: str = "NVDA", days: int = 59):
     best_pf = None
 
     groups = df_5m.groupby(df_5m.index.date)
-
-    total_iters = len(sma_options) * len(vol_options) * len(trail_options)
-    print(f"Running grid search over {total_iters} combinations...")
 
     for (sma_label, sma_per, sma_col), (vol_label, vol_col), trail_type in itertools.product(sma_options, vol_options, trail_options):
         
@@ -151,31 +145,23 @@ def run_orb_optimization(ticker: str = "NVDA", days: int = 59):
                     highest_price = max(highest_price, high)
                     if initial_risk > 0:
                         r_multiple = (highest_price - entry_price) / initial_risk
-                        if trail_type == "Tight (1R->BE, 2R->1R)":
-                            if r_multiple >= 3.0: current_sl = max(current_sl, entry_price + 2.0 * initial_risk)
-                            elif r_multiple >= 2.0: current_sl = max(current_sl, entry_price + 1.0 * initial_risk)
-                            elif r_multiple >= 1.0: current_sl = max(current_sl, entry_price)
-                        elif trail_type == "Loose (2R->BE)":
+                        if trail_type == "Loose (2R->BE)":
                             if r_multiple >= 3.0: current_sl = max(current_sl, entry_price + 1.0 * initial_risk)
                             elif r_multiple >= 2.0: current_sl = max(current_sl, entry_price)
                     
-                    if low <= current_sl:
-                        exits.loc[ts] = True
-                        position = 0
+                    if low <= current_sl or (entry_price > 0 and (close - entry_price) >= (2.0 * initial_risk)): # Fixed 1:2 Reward fallback if no trail
+                         exits.loc[ts] = True
+                         position = 0
 
                 elif position == -1:
                     lowest_price = min(lowest_price, low)
                     if initial_risk > 0:
                         r_multiple = (entry_price - lowest_price) / initial_risk
-                        if trail_type == "Tight (1R->BE, 2R->1R)":
-                            if r_multiple >= 3.0: current_sl = min(current_sl, entry_price - 2.0 * initial_risk)
-                            elif r_multiple >= 2.0: current_sl = min(current_sl, entry_price - 1.0 * initial_risk)
-                            elif r_multiple >= 1.0: current_sl = min(current_sl, entry_price)
-                        elif trail_type == "Loose (2R->BE)":
+                        if trail_type == "Loose (2R->BE)":
                             if r_multiple >= 3.0: current_sl = min(current_sl, entry_price - 1.0 * initial_risk)
                             elif r_multiple >= 2.0: current_sl = min(current_sl, entry_price)
                             
-                    if high >= current_sl:
+                    if high >= current_sl or (entry_price > 0 and (entry_price - close) >= (2.0 * initial_risk)):
                         short_exits.loc[ts] = True
                         position = 0
 
@@ -201,23 +187,40 @@ def run_orb_optimization(ticker: str = "NVDA", days: int = 59):
             best_params = (sma_label, sma_per, vol_label, trail_type)
             best_pf = pf
 
-    print("\n" + "="*60)
-    if best_params:
-        print(f"🏆 BEST ORB OPTIMIZATION RESULTS: {ticker} (Last {days} Days)")
-        print("="*60)
-        print(f"Trend Filter:   {best_params[0]} {best_params[1]}")
-        print(f"Volume Filter:  {best_params[2]} > SMA20")
-        print(f"Trailing Stop:  {best_params[3]}")
-        print("-" * 60)
-        print(f"Total Return [%]:   {best_pf.total_return() * 100:.2f}%")
-        print(f"Sharpe Ratio:       {best_pf.sharpe_ratio():.2f}")
-        print(f"Max Drawdown [%]:   {best_pf.max_drawdown() * 100:.2f}%")
-        print(f"Win Rate [%]:       {best_pf.trades.win_rate() * 100:.2f}%")
-        print(f"Total Trades:       {best_pf.trades.count()}")
-        print(f"Profit Factor:      {best_pf.trades.profit_factor():.2f}")
-        print("="*60)
-    else:
-        print("No profitable combination found.")
+    if best_params and best_pf:
+        return {
+            "ticker": ticker,
+            "trend": f"{best_params[0]} {best_params[1]}",
+            "volume": best_params[2],
+            "trailing": best_params[3],
+            "return": best_pf.total_return() * 100,
+            "sharpe": best_pf.sharpe_ratio(),
+            "win_rate": best_pf.trades.win_rate() * 100,
+            "trades": best_pf.trades.count(),
+            "profit_factor": best_pf.trades.profit_factor()
+        }
+    return None
 
 if __name__ == "__main__":
-    run_orb_optimization("NVDA", 59)
+    tickers = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA"]
+    results = []
+    
+    for t in tickers:
+        res = run_orb_optimization(t, 59)
+        if res:
+            results.append(res)
+            
+    print("\n" + "="*80)
+    print("BEST ORB OPTIMIZATION RESULTS ACROSS TECH MAJORS (Last 59 Days)")
+    print("="*80)
+    print(f"{'Ticker':<8} | {'Return':<8} | {'Win Rate':<10} | {'Trades':<8} | {'Trend Filter':<20} | {'Volume Filter':<20} | {'Trailing Stop'}")
+    print("-" * 80)
+    
+    # Sort by return
+    results.sort(key=lambda x: x['return'], reverse=True)
+    
+    for r in results:
+        ret_str = f"{r['return']:.2f}%"
+        win_str = f"{r['win_rate']:.2f}%"
+        print(f"{r['ticker']:<8} | {ret_str:<8} | {win_str:<10} | {r['trades']:<8} | {r['trend']:<20} | {r['volume']:<20} | {r['trailing']}")
+    print("="*80)

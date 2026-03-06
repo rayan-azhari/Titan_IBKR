@@ -81,10 +81,18 @@ def load_instruments_config() -> dict:
 
 def get_ib_contract(symbol: str) -> Contract:
     contract = Contract()
-    contract.symbol = symbol[:3]  # e.g. EUR from EUR_USD
-    contract.secType = "CASH"
-    contract.currency = symbol[4:]  # e.g. USD from EUR_USD
-    contract.exchange = "IDEALPRO"
+    if "_" in symbol:
+        # Forex
+        contract.symbol = symbol[:3]
+        contract.secType = "CASH"
+        contract.currency = symbol[4:]
+        contract.exchange = "IDEALPRO"
+    else:
+        # Stock
+        contract.symbol = symbol
+        contract.secType = "STK"
+        contract.currency = "USD"
+        contract.exchange = "SMART"
     return contract
 
 
@@ -175,8 +183,8 @@ def main() -> None:
                 endDateTime="",
                 durationStr=duration,
                 barSizeSetting=bar_size,
-                whatToShow="MIDPOINT",  # MID for Forex
-                useRTH=0,
+                whatToShow="MIDPOINT" if "_" in pair else "TRADES",
+                useRTH=0 if "_" in pair else 1,
                 formatDate=1,
                 keepUpToDate=False,
                 chartOptions=[],

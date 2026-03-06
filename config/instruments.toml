@@ -1,83 +1,20 @@
 # ──────────────────────────────────────────────────────────
 # instruments.toml — Instruments and granularities to trade
 # ──────────────────────────────────────────────────────────
-# Swing trading focus: higher timeframes only.
+# ORB trading focus: Stocks (M5 and Daily)
 
 [instruments]
 pairs = [
-    "AUD_CAD",
-    "AUD_CHF",
-    "AUD_HKD",
-    "AUD_JPY",
-    "AUD_NZD",
-    "AUD_SGD",
-    "AUD_USD",
-    "CAD_CHF",
-    "CAD_HKD",
-    "CAD_JPY",
-    "CAD_SGD",
-    "CHF_HKD",
-    "CHF_JPY",
-    "CHF_ZAR",
-    "EUR_AUD",
-    "EUR_CAD",
-    "EUR_CHF",
-    "EUR_CZK",
-    "EUR_DKK",
-    "EUR_GBP",
-    "EUR_HKD",
-    "EUR_HUF",
-    "EUR_JPY",
-    "EUR_NOK",
-    "EUR_NZD",
-    "EUR_PLN",
-    "EUR_SEK",
-    "EUR_SGD",
-    "EUR_TRY",
-    "EUR_USD",
-    "EUR_ZAR",
-    "GBP_AUD",
-    "GBP_CAD",
-    "GBP_CHF",
-    "GBP_HKD",
-    "GBP_JPY",
-    "GBP_NZD",
-    "GBP_PLN",
-    "GBP_SGD",
-    "GBP_USD",
-    "GBP_ZAR",
-    "HKD_JPY",
-    "NZD_CAD",
-    "NZD_CHF",
-    "NZD_HKD",
-    "NZD_JPY",
-    "NZD_SGD",
-    "NZD_USD",
-    "SGD_CHF",
-    "SGD_JPY",
-    "TRY_JPY",
-    "USD_CAD",
-    "USD_CHF",
-    "USD_CNH",
-    "USD_CZK",
-    "USD_DKK",
-    "USD_HKD",
-    "USD_HUF",
-    "USD_JPY",
-    "USD_MXN",
-    "USD_NOK",
-    "USD_PLN",
-    "USD_SEK",
-    "USD_SGD",
-    "USD_THB",
-    "USD_TRY",
-    "USD_ZAR",
-    "ZAR_JPY",
+    "UNH",
+    "WMT",
+    "AMAT",
+    "TXN",
+    "CRM",
+    "CSCO",
+    "INTC"
 ]
 
 granularities = [
-    "H1",    # 1-hour candles (entry/exit timing)
-    "H4",    # 4-hour candles (primary analysis)
-    "D",     # Daily candles (trend confirmation)
-    "W",     # Weekly candles (regime filter)
+    "M5",    # 5-minute candles (ORB execution)
+    "D",     # Daily candles (SMA/RSI filters)
 ]
