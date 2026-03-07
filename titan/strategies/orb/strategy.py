@@ -10,7 +10,6 @@ Bracket Management:
   Positions are flattened at 15:55 ET to avoid overnight gap risk.
 """
 
-import sys
 import tomllib
 from datetime import datetime, time
 from decimal import Decimal
@@ -29,12 +28,13 @@ from nautilus_trader.trading.strategy import Strategy
 ET = ZoneInfo("America/New_York")
 
 # Reuse indicators from the ML features module (which has SMA, RSI, ATR)
-from titan.strategies.ml.features import atr, rsi, sma
 from titan.indicators.gaussian_filter import _gaussian_channel_kernel
+from titan.strategies.ml.features import atr, rsi, sma
+
 
 class ORBConfig(StrategyConfig):
     """Configuration for ORB Strategy."""
-    
+
     instrument_id: str
     bar_type_5m: str
     bar_type_1d: str
@@ -42,12 +42,12 @@ class ORBConfig(StrategyConfig):
     risk_pct: float = 0.01  # 1% Risk per trade
     leverage_cap: float = 4.0
     warmup_bars_1d: int = 60  # For SMA50 and RSI14
-    warmup_bars_5m: int = 100 # For ATR14
+    warmup_bars_5m: int = 100  # For ATR14
 
 
 class ORBStrategy(Strategy):
     """Executes ORB Logic.
-    
+
     1. Subscribes to 5M and 1D bars.
     2. Calculates Daily SMA50 and RSI14 (from 1D bars).
     3. Calculates 5M ATR14 (from 5M bars).
@@ -60,26 +60,31 @@ class ORBStrategy(Strategy):
 
         # Identifier
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
-        
+
         # We need the naked ticker for looking up the TOML config
-        self.ticker = self.instrument_id.symbol.value.replace("/", "").replace("USD", "").replace(".", "").strip()
+        self.ticker = (
+            self.instrument_id.symbol.value.replace("/", "")
+            .replace("USD", "")
+            .replace(".", "")
+            .strip()
+        )
 
         # Load optimization params for this specific ticker
         self.toml_cfg = self._load_toml(config.config_path).get(self.ticker, {})
         if not self.toml_cfg:
             self.log.error(f"No configuration found for {self.ticker} in {config.config_path}!")
-            
+
         # Strategy Parameters
         self.atr_multiplier = self.toml_cfg.get("atr_multiplier", 2.0)
         self.rr_ratio = self.toml_cfg.get("rr_ratio", 2.0)
         self.use_sma = self.toml_cfg.get("use_sma", True)
         self.use_rsi = self.toml_cfg.get("use_rsi", True)
         self.use_gauss = self.toml_cfg.get("use_gauss", False)
-        
+
         # Parse times
         orb_window_str = self.toml_cfg.get("orb_window_end", "09:45")
         cutoff_str = self.toml_cfg.get("entry_cutoff", "11:00")
-        
+
         self.orb_end_time = datetime.strptime(orb_window_str, "%H:%M").time()
         self.cutoff_time = datetime.strptime(cutoff_str, "%H:%M").time()
 
@@ -96,11 +101,11 @@ class ORBStrategy(Strategy):
         self.daily_rsi = 50.0
         self.current_atr = 0.0
         self.current_gauss_mid = 0.0
-        
+
         # Daily Session State
         self.current_date = None
-        self.or_high = float('-inf')
-        self.or_low = float('inf')
+        self.or_high = float("-inf")
+        self.or_low = float("inf")
         self.trade_taken_today = False
         self.orb_formed = False
         self.eod_flattened = False
@@ -116,16 +121,18 @@ class ORBStrategy(Strategy):
             p = project_root / path
             if not p.exists():
                 raise FileNotFoundError(f"Config not found at {p}")
-                
+
         with open(p, "rb") as fobj:
             return tomllib.load(fobj)
 
     def on_start(self):
         """Lifecycle: Strategy Started."""
-        self.log.info(f"ORB Strategy Started for {self.ticker}. Parameters: "
-                      f"ATR:{self.atr_multiplier} RR:{self.rr_ratio} "
-                      f"SMA:{self.use_sma} Gauss:{self.use_gauss} RSI:{self.use_rsi} "
-                      f"ORB:{self.orb_end_time} Cutoff:{self.cutoff_time}")
+        self.log.info(
+            f"ORB Strategy Started for {self.ticker}. Parameters: "
+            f"ATR:{self.atr_multiplier} RR:{self.rr_ratio} "
+            f"SMA:{self.use_sma} Gauss:{self.use_gauss} RSI:{self.use_rsi} "
+            f"ORB:{self.orb_end_time} Cutoff:{self.cutoff_time}"
+        )
 
         # Subscribe
         self.subscribe_bars(self.bt_1d)
@@ -142,16 +149,20 @@ class ORBStrategy(Strategy):
         # 1. Warmup Daily Data
         pair_str = self.instrument_id.symbol.value.replace("/", "_")
         parquet_1d = data_dir / f"{pair_str}_D.parquet"
-        
+
         if parquet_1d.exists():
             self.log.info(f"Loading 1D warmup from {parquet_1d}")
             try:
                 df_1d = pd.read_parquet(parquet_1d).sort_index().tail(self.config.warmup_bars_1d)
                 for t, row in df_1d.iterrows():
-                    self.history_1d.append({
-                        "time": t, "close": float(row["close"]), 
-                        "high": float(row["high"]), "low": float(row["low"])
-                    })
+                    self.history_1d.append(
+                        {
+                            "time": t,
+                            "close": float(row["close"]),
+                            "high": float(row["high"]),
+                            "low": float(row["low"]),
+                        }
+                    )
                 self._update_daily_indicators()
                 self.log.info(f"[{self.ticker}] Daily warmup complete. SMA50: {self.daily_sma:.2f}")
             except Exception as e:
@@ -166,12 +177,18 @@ class ORBStrategy(Strategy):
             try:
                 df_5m = pd.read_parquet(parquet_5m).sort_index().tail(self.config.warmup_bars_5m)
                 for t, row in df_5m.iterrows():
-                    self.history_5m.append({
-                        "time": t, "close": float(row["close"]),
-                        "high": float(row["high"]), "low": float(row["low"])
-                    })
+                    self.history_5m.append(
+                        {
+                            "time": t,
+                            "close": float(row["close"]),
+                            "high": float(row["high"]),
+                            "low": float(row["low"]),
+                        }
+                    )
                 self._update_5m_indicators()
-                self.log.info(f"[{self.ticker}] 5M warmup complete. ATR: {self.current_atr:.2f}, Gauss Mid: {self.current_gauss_mid:.2f}")
+                self.log.info(
+                    f"[{self.ticker}] 5M warmup complete. ATR: {self.current_atr:.2f}, Gauss Mid: {self.current_gauss_mid:.2f}"
+                )
             except Exception as e:
                 self.log.error(f"Failed to load 5M parquet: {e}")
         else:
@@ -180,7 +197,7 @@ class ORBStrategy(Strategy):
     def on_bar(self, bar: Bar):
         """Lifecycle: New Bar Closed."""
         dt = unix_nanos_to_dt(bar.ts_event)
-        
+
         if bar.bar_type == self.bt_1d:
             self._handle_daily_bar(bar, dt)
         elif bar.bar_type == self.bt_5m:
@@ -188,25 +205,23 @@ class ORBStrategy(Strategy):
 
     def _handle_daily_bar(self, bar: Bar, dt: datetime):
         """Process a Daily bar close to update SMA and RSI."""
-        self.history_1d.append({
-            "time": dt, "close": float(bar.close),
-            "high": float(bar.high), "low": float(bar.low)
-        })
-        
+        self.history_1d.append(
+            {"time": dt, "close": float(bar.close), "high": float(bar.high), "low": float(bar.low)}
+        )
+
         if len(self.history_1d) > self.config.warmup_bars_1d + 20:
-            self.history_1d = self.history_1d[-self.config.warmup_bars_1d:]
-            
+            self.history_1d = self.history_1d[-self.config.warmup_bars_1d :]
+
         self._update_daily_indicators()
 
     def _handle_5m_bar(self, bar: Bar, dt: datetime):
         """Process a 5-minute bar."""
-        self.history_5m.append({
-            "time": dt, "close": float(bar.close),
-            "high": float(bar.high), "low": float(bar.low)
-        })
+        self.history_5m.append(
+            {"time": dt, "close": float(bar.close), "high": float(bar.high), "low": float(bar.low)}
+        )
 
         if len(self.history_5m) > self.config.warmup_bars_5m + 20:
-            self.history_5m = self.history_5m[-self.config.warmup_bars_5m:]
+            self.history_5m = self.history_5m[-self.config.warmup_bars_5m :]
 
         self._update_5m_indicators()
 
@@ -218,23 +233,25 @@ class ORBStrategy(Strategy):
         # New day reset
         if self.current_date != bar_date:
             self.current_date = bar_date
-            self.or_high = float('-inf')
-            self.or_low = float('inf')
+            self.or_high = float("-inf")
+            self.or_low = float("inf")
             self.trade_taken_today = False
             self.orb_formed = False
             self.eod_flattened = False
-            
+
         # Form Opening Range (09:30 to orb_end_time)
         trading_start = time(9, 30)
-        
+
         if trading_start <= bar_time <= self.orb_end_time:
             self.or_high = max(self.or_high, float(bar.high))
             self.or_low = min(self.or_low, float(bar.low))
-            
+
             if bar_time == self.orb_end_time:
                 self.orb_formed = True
-                self.log.info(f"[{self.ticker}] ORB Formed - High: {self.or_high:.2f}, Low: {self.or_low:.2f}")
-                
+                self.log.info(
+                    f"[{self.ticker}] ORB Formed - High: {self.or_high:.2f}, Low: {self.or_low:.2f}"
+                )
+
             return  # Still in the ORB window, no trading yet
 
         # EOD Flatten: Close all positions and cancel orders at 15:55 ET
@@ -246,21 +263,21 @@ class ORBStrategy(Strategy):
         # Out of bounds check
         if not self.orb_formed or self.trade_taken_today:
             return
-            
+
         # Time Cutoff check
         if bar_time > self.cutoff_time:
             return
 
         # ── Execution Logic ──
         c = float(bar.close)
-        
+
         # Filter evaluation
         bull_sma = (c > self.daily_sma) if self.use_sma else True
         bear_sma = (c < self.daily_sma) if self.use_sma else True
-        
+
         bull_rsi = (self.daily_rsi < 70) if self.use_rsi else True
         bear_rsi = (self.daily_rsi > 30) if self.use_rsi else True
-        
+
         bull_gauss = (c > self.current_gauss_mid) if self.use_gauss else True
         bear_gauss = (c < self.current_gauss_mid) if self.use_gauss else True
 
@@ -268,10 +285,14 @@ class ORBStrategy(Strategy):
 
         if c > self.or_high and bull_sma and bull_rsi and bull_gauss:
             target_side = OrderSide.BUY
-            self.log.info(f"[{self.ticker}] LONG Trigger: Close {c} > ORH {self.or_high}. SMA={self.daily_sma:.2f}, RSI={self.daily_rsi:.2f}, Gauss={self.current_gauss_mid:.2f}")
+            self.log.info(
+                f"[{self.ticker}] LONG Trigger: Close {c} > ORH {self.or_high}. SMA={self.daily_sma:.2f}, RSI={self.daily_rsi:.2f}, Gauss={self.current_gauss_mid:.2f}"
+            )
         elif c < self.or_low and bear_sma and bear_rsi and bear_gauss:
             target_side = OrderSide.SELL
-            self.log.info(f"[{self.ticker}] SHORT Trigger: Close {c} < ORL {self.or_low}. SMA={self.daily_sma:.2f}, RSI={self.daily_rsi:.2f}, Gauss={self.current_gauss_mid:.2f}")
+            self.log.info(
+                f"[{self.ticker}] SHORT Trigger: Close {c} < ORL {self.or_low}. SMA={self.daily_sma:.2f}, RSI={self.daily_rsi:.2f}, Gauss={self.current_gauss_mid:.2f}"
+            )
 
         if target_side:
             self._execute_bracket(target_side, Decimal(str(c)))
@@ -282,7 +303,9 @@ class ORBStrategy(Strategy):
         self._bracket_pairs.clear()
         self.cancel_all_orders(self.instrument_id)
         self.close_all_positions(self.instrument_id)
-        self.log.info(f"[{self.ticker}] EOD Flatten @ 15:55 ET — Closed all positions and cancelled orders.")
+        self.log.info(
+            f"[{self.ticker}] EOD Flatten @ 15:55 ET — Closed all positions and cancelled orders."
+        )
 
     def on_order_filled(self, event):
         """When SL or TP fills, cancel the counterpart to prevent ghost orders."""
@@ -318,14 +341,14 @@ class ORBStrategy(Strategy):
         """Update SMA50 and RSI14."""
         if len(self.history_1d) < 50:
             return
-            
+
         df = pd.DataFrame(self.history_1d)
         close = df["close"]
-        
+
         # Note: the features return a Series. We take the last value.
         sma_series = sma(close, 50)
         rsi_series = rsi(close, 14)
-        
+
         self.daily_sma = float(sma_series.iloc[-1])
         self.daily_rsi = float(rsi_series.iloc[-1])
 
@@ -333,18 +356,18 @@ class ORBStrategy(Strategy):
         """Update ATR14."""
         if len(self.history_5m) < 14:
             return
-            
+
         df = pd.DataFrame(self.history_5m)
-        df.set_index('time', inplace=True) 
-        
+        df.set_index("time", inplace=True)
+
         # feature.atr expects a DataFrame with High/Low/Close
         # Because we're using vectorbt internally, we format it nicely
         df = df.rename(columns={"close": "Close", "high": "High", "low": "Low"})
-        
+
         atr_series = atr(df, 14)
         if not atr_series.empty:
             self.current_atr = float(atr_series.iloc[-1])
-            
+
         # Gaussian Channel
         high_arr = df["High"].values
         low_arr = df["Low"].values
@@ -370,23 +393,23 @@ class ORBStrategy(Strategy):
 
         equity = float(accounts[0].balance_total().as_double())
         risk_amount = equity * self.config.risk_pct
-        
+
         risk_per_share = self.current_atr * self.atr_multiplier
         raw_units = risk_amount / risk_per_share
-        
+
         # Cap Leverage
         max_units = (equity * self.config.leverage_cap) / float(fill_price)
         units = int(min(raw_units, max_units))
-        
+
         if units == 0:
             self.log.warning(f"[{self.ticker}] Sizing calculated 0 units. Trade skipped.")
             return
-            
+
         qty = Quantity.from_int(units)
 
         # 2. Setup Bracket Prices
         price_f = float(fill_price)
-        
+
         if side == OrderSide.BUY:
             sl_price = price_f - risk_per_share
             tp_price = price_f + (risk_per_share * self.rr_ratio)
@@ -395,10 +418,10 @@ class ORBStrategy(Strategy):
             tp_price = price_f - (risk_per_share * self.rr_ratio)
 
         # 3. Submit
-        # Nautilus OrderFactory doesn't have a single bracket() function, 
+        # Nautilus OrderFactory doesn't have a single bracket() function,
         # so we rely on OCO (One Cancels Other) or submitting market entry + SL/TP limit/stop orders.
         # Alternatively, using conditional logic inside nautilus.
-        
+
         # Submit Market Entry
         parent_order = self.order_factory.market(
             instrument_id=self.instrument_id,
@@ -407,10 +430,10 @@ class ORBStrategy(Strategy):
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(parent_order)
-        
+
         # Typically, a bracket is submitted via trailing stop or OCO SL/TP.
         # Nautilus supports contingent orders, but since we're using basic order factory:
-        
+
         # TP Limit
         opposite_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
 
@@ -442,7 +465,9 @@ class ORBStrategy(Strategy):
         self._bracket_pairs[tp_id] = sl_id
         self._bracket_pairs[sl_id] = tp_id
         self.log.info(f"[{self.ticker}] Bracket Submitted -> {side} {units} @ {price_f:.2f}")
-        self.log.info(f"[{self.ticker}] Stop Loss -> {sl_price:.2f} | Take Profit -> {tp_price:.2f}")
+        self.log.info(
+            f"[{self.ticker}] Stop Loss -> {sl_price:.2f} | Take Profit -> {tp_price:.2f}"
+        )
 
     def on_stop(self):
         """Lifecycle: Strategy Stopped. Clean up all orders and positions."""

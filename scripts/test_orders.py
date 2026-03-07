@@ -11,9 +11,10 @@ Usage:
 """
 
 import os
-import sys
 import signal
+import sys
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -21,7 +22,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 load_dotenv(PROJECT_ROOT / ".env")
 
 import pandas as pd
-
 from nautilus_trader.adapters.interactive_brokers.common import IBContract
 from nautilus_trader.adapters.interactive_brokers.config import (
     InteractiveBrokersDataClientConfig,
@@ -32,12 +32,12 @@ from nautilus_trader.adapters.interactive_brokers.factories import (
     InteractiveBrokersLiveDataClientFactory,
     InteractiveBrokersLiveExecClientFactory,
 )
-from nautilus_trader.config import TradingNodeConfig, StrategyConfig
+from nautilus_trader.config import StrategyConfig, TradingNodeConfig
 from nautilus_trader.live.node import TradingNode
-from nautilus_trader.trading.strategy import Strategy
-from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.enums import OrderSide, TimeInForce
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
+from nautilus_trader.trading.strategy import Strategy
 
 # The 7 tickers from the ORB strategy universe
 TEST_TICKERS = ["UNH", "AMAT", "TXN", "INTC", "CAT", "WMT", "TMO"]
@@ -52,8 +52,7 @@ class TestOrderStrategy(Strategy):
     def __init__(self, config: StrategyConfig):
         super().__init__(config)
         self.instrument_ids = {
-            ticker: InstrumentId.from_str(f"{ticker}.USD.IBKR")
-            for ticker in TEST_TICKERS
+            ticker: InstrumentId.from_str(f"{ticker}.USD.IBKR") for ticker in TEST_TICKERS
         }
         self.stage = 0  # 0=opening, 1=waiting, 2=closing, 3=done
         self.orders_in_flight: set = set()
@@ -96,8 +95,7 @@ class TestOrderStrategy(Strategy):
         if self.stage == 0 and not self.orders_in_flight:
             self.stage = 1
             self.log.info(
-                f"All {len(TEST_TICKERS)} opening orders filled! "
-                "Setting 60-second close timer..."
+                f"All {len(TEST_TICKERS)} opening orders filled! Setting 60-second close timer..."
             )
             self.clock.set_time_alert(
                 name="close_positions",
@@ -106,8 +104,7 @@ class TestOrderStrategy(Strategy):
 
         elif self.stage == 2 and not self.orders_in_flight:
             self.log.info(
-                f"=== ALL {len(TEST_TICKERS)} CLOSING ORDERS FILLED. "
-                "PIPELINE TEST COMPLETE! ==="
+                f"=== ALL {len(TEST_TICKERS)} CLOSING ORDERS FILLED. PIPELINE TEST COMPLETE! ==="
             )
             self.stage = 3
             os.kill(os.getpid(), signal.SIGINT)
@@ -140,8 +137,7 @@ def main():
 
     # Tell IBKR provider to load specific stock contracts on startup.
     contracts = [
-        IBContract(secType="STK", symbol=t, exchange="SMART", currency="USD")
-        for t in TEST_TICKERS
+        IBContract(secType="STK", symbol=t, exchange="SMART", currency="USD") for t in TEST_TICKERS
     ]
     inst_config = InteractiveBrokersInstrumentProviderConfig(
         load_all=False,

@@ -1,7 +1,5 @@
-import math
 from datetime import datetime, timedelta
 
-import numpy as np
 import pandas as pd
 import vectorbt as vbt
 import yfinance as yf
@@ -19,9 +17,9 @@ def run_orb_backtest(ticker: str = "SPY", days: int = 59):
         return
 
     # Fetch daily data for SMA50 context
-    daily_start = start_date - timedelta(days=100) # buffer for SMA50 calculation
+    daily_start = start_date - timedelta(days=100)  # buffer for SMA50 calculation
     daily_df = yf.download(ticker, start=daily_start, end=end_date, interval="1d", progress=False)
-    
+
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.droplevel(1)
     if isinstance(daily_df.columns, pd.MultiIndex):
@@ -33,15 +31,15 @@ def run_orb_backtest(ticker: str = "SPY", days: int = 59):
 
     df.index = df.index.tz_convert("US/Eastern")
     df = df.between_time("09:30", "15:55")
-    
+
     # Calculate Volume SMA for 5m bars
     df["Vol_SMA20"] = df["Volume"].rolling(20).mean()
 
     # Map daily SMA50 to 5m dataframe
     df["Date_Str"] = df.index.strftime("%Y-%m-%d")
-    daily_df.index = daily_df.index.tz_localize(None) # Remove tz to match string formatting
+    daily_df.index = daily_df.index.tz_localize(None)  # Remove tz to match string formatting
     daily_df["Date_Str"] = daily_df.index.strftime("%Y-%m-%d")
-    
+
     sma_map = daily_df.set_index("Date_Str")["SMA50"].to_dict()
     df["Daily_SMA50"] = df["Date_Str"].map(sma_map)
 
@@ -80,11 +78,11 @@ def run_orb_backtest(ticker: str = "SPY", days: int = 59):
             volume = float(row["Volume"])
             vol_sma = float(row["Vol_SMA20"])
             daily_sma = float(row["Daily_SMA50"])
-            
+
             # Trend filter
             bull_trend = close > daily_sma if not pd.isna(daily_sma) else True
             bear_trend = close < daily_sma if not pd.isna(daily_sma) else True
-            
+
             # Volume filter
             high_vol = volume > vol_sma if not pd.isna(vol_sma) else True
 
@@ -111,18 +109,18 @@ def run_orb_backtest(ticker: str = "SPY", days: int = 59):
 
             elif position == 1:
                 highest_price = max(highest_price, high)
-                
+
                 # Dynamic Trailing Stop
                 if initial_risk > 0:
                     r_multiple = (highest_price - entry_price) / initial_risk
-                    
+
                     if r_multiple >= 3.0:
                         current_sl = max(current_sl, entry_price + 2.0 * initial_risk)
                     elif r_multiple >= 2.0:
                         current_sl = max(current_sl, entry_price + 1.0 * initial_risk)
                     elif r_multiple >= 1.0:
                         current_sl = max(current_sl, entry_price)
-                
+
                 # Check Exits (Stop Loss)
                 if low <= current_sl:
                     exits.loc[ts] = True
@@ -130,18 +128,18 @@ def run_orb_backtest(ticker: str = "SPY", days: int = 59):
 
             elif position == -1:
                 lowest_price = min(lowest_price, low)
-                
+
                 # Dynamic Trailing Stop
                 if initial_risk > 0:
                     r_multiple = (entry_price - lowest_price) / initial_risk
-                    
+
                     if r_multiple >= 3.0:
                         current_sl = min(current_sl, entry_price - 2.0 * initial_risk)
                     elif r_multiple >= 2.0:
                         current_sl = min(current_sl, entry_price - 1.0 * initial_risk)
                     elif r_multiple >= 1.0:
                         current_sl = min(current_sl, entry_price)
-                        
+
                 # Check Exits
                 if high >= current_sl:
                     short_exits.loc[ts] = True

@@ -7,7 +7,7 @@ import os
 import sys
 import threading
 import time
-from datetime import datetime
+
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -16,12 +16,13 @@ sys.path.insert(0, project_root)
 load_dotenv(os.path.join(project_root, ".env"))
 
 from ibapi.client import EClient
-from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
+from ibapi.wrapper import EWrapper
 
 IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
 IBKR_PORT = int(os.getenv("IBKR_PORT", 7497))
 IBKR_CLIENT_ID = 888
+
 
 class TestHistApp(EWrapper, EClient):
     def __init__(self):
@@ -32,14 +33,16 @@ class TestHistApp(EWrapper, EClient):
         self.error_msg = ""
 
     def historicalData(self, reqId, bar):
-        self.data.append({
-            "time": bar.date,
-            "open": float(bar.open),
-            "high": float(bar.high),
-            "low": float(bar.low),
-            "close": float(bar.close),
-            "volume": float(bar.volume),
-        })
+        self.data.append(
+            {
+                "time": bar.date,
+                "open": float(bar.open),
+                "high": float(bar.high),
+                "low": float(bar.low),
+                "close": float(bar.close),
+                "volume": float(bar.volume),
+            }
+        )
 
     def historicalDataEnd(self, reqId, start, end):
         self.req_complete = True
@@ -51,6 +54,7 @@ class TestHistApp(EWrapper, EClient):
             if reqId > -1:
                 self.req_complete = True
 
+
 def get_contract(symbol: str) -> Contract:
     contract = Contract()
     contract.symbol = symbol
@@ -59,14 +63,15 @@ def get_contract(symbol: str) -> Contract:
     contract.currency = "USD"
     return contract
 
+
 def fetch_data(app, ticker, duration, bar_size):
     print(f"\nRequesting {duration} of {bar_size} bars for {ticker}...")
     app.data = []
     app.req_complete = False
     app.error_received = False
-    
+
     contract = get_contract(ticker)
-    
+
     app.reqHistoricalData(
         reqId=int(time.time()),
         contract=contract,
@@ -77,25 +82,26 @@ def fetch_data(app, ticker, duration, bar_size):
         useRTH=1,
         formatDate=1,
         keepUpToDate=False,
-        chartOptions=[]
+        chartOptions=[],
     )
-    
+
     start = time.time()
     while not app.req_complete and time.time() - start < 15:
         time.sleep(0.1)
-        
+
     if app.error_received:
         print(f"❌ Error: {app.error_msg}")
         return None
-        
+
     if not app.data:
         print("⚠️ No data returned.")
         return None
-        
+
     df = pd.DataFrame(app.data)
     print(f"✅ Success! Fetched {len(df)} rows.")
     print(f"First bar: {df.iloc[0]['time']} | Last bar: {df.iloc[-1]['time']}")
     return df
+
 
 def main():
     print(f"Connecting to IBKR on {IBKR_HOST}:{IBKR_PORT}...")
@@ -108,14 +114,15 @@ def main():
 
     # 1. Test 100 days of Daily bars (for SMA50/RSI14)
     df_daily = fetch_data(app, "AMAT", "100 D", "1 day")
-    
+
     # Wait to avoid pacing violations
     time.sleep(2)
-    
+
     # 2. Test 5 days of 5-Minute bars (for ATR14 and Gaussian)
     df_5m = fetch_data(app, "AMAT", "5 D", "5 mins")
-    
+
     app.disconnect()
+
 
 if __name__ == "__main__":
     main()

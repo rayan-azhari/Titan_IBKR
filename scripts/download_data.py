@@ -207,8 +207,11 @@ def main() -> None:
             df = pd.DataFrame(app.data_store)
 
             # IBKR times can be "YYYYMMDD" or "YYYYMMDD HH:mm:ss" or "YYYYMMDD HH:mm:ss Timezone" depending on bar size  # noqa: E501
-            df["timestamp"] = df["timestamp"].astype(str).str.split(" ").apply(
-                lambda x: f"{x[0]} {x[1]}" if len(x) > 1 else x[0]
+            df["timestamp"] = (
+                df["timestamp"]
+                .astype(str)
+                .str.split(" ")
+                .apply(lambda x: f"{x[0]} {x[1]}" if len(x) > 1 else x[0])
             )
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             if df["timestamp"].dt.tz is None:

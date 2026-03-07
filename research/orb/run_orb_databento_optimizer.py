@@ -1,15 +1,16 @@
+import itertools
 import os
 import sys
-import itertools
-import warnings
 import time as _time
-from datetime import timedelta, time as dt_time
+import warnings
+from datetime import time as dt_time
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from joblib import Parallel, delayed
 from dotenv import load_dotenv
+from joblib import Parallel, delayed
 
 # Add project root to path for local imports
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -26,6 +27,7 @@ SLIPPAGE = 0.0005
 ROUND_TRIP_COST = 2 * (FEES + SLIPPAGE)
 
 # ── Data Loading ──────────────────────────────────────────────────────────────
+
 
 def load_ticker_data(ticker: str) -> pd.DataFrame:
     """Load cached data, converting CSV → parquet on first access for speed."""
@@ -47,14 +49,17 @@ def load_ticker_data(ticker: str) -> pd.DataFrame:
 
     return pd.DataFrame()
 
+
 # ── Indicators ────────────────────────────────────────────────────────────────
 
+
 def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    high_low = df['High'] - df['Low']
-    high_close = np.abs(df['High'] - df['Close'].shift())
-    low_close = np.abs(df['Low'] - df['Close'].shift())
+    high_low = df["High"] - df["Low"]
+    high_close = np.abs(df["High"] - df["Close"].shift())
+    low_close = np.abs(df["Low"] - df["Close"].shift())
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
     return np.max(ranges, axis=1).rolling(period).mean()
+
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()
@@ -63,14 +68,18 @@ def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
+
 def normalize(value, min_val=-2.0, max_val=3.0):
     return max(0.0, min(1.0, (value - min_val) / (max_val - min_val)))
 
+
 # ── Pre-computation ──────────────────────────────────────────────────────────
+
 
 def precompute_daily_arrays(df_5m, orb_end_str, trading_start_str, cutoff_str):
     """Pre-compute daily numpy arrays and ORB levels for a (window, cutoff) combo.
-    Called once per combo (4 total), not once per config (288)."""
+    Called once per combo (4 total), not once per config (288).
+    """
     cutoff_time = dt_time(*map(int, cutoff_str.split(":")))
     days = []
 
@@ -94,22 +103,26 @@ def precompute_daily_arrays(df_5m, orb_end_str, trading_start_str, cutoff_str):
         sma = float(first_row["Daily_SMA50"]) if not pd.isna(first_row["Daily_SMA50"]) else 0.0
         rsi = float(first_row["Daily_RSI14"]) if not pd.isna(first_row["Daily_RSI14"]) else 50.0
 
-        days.append({
-            'close': trading["Close"].values.astype(np.float64),
-            'high':  trading["High"].values.astype(np.float64),
-            'low':   trading["Low"].values.astype(np.float64),
-            'atr':   trading["ATR"].values.astype(np.float64),
-            'gauss_mid': trading["Gauss_Mid"].values.astype(np.float64),
-            'or_high': float(orb_bars["High"].max()),
-            'or_low':  float(orb_bars["Low"].min()),
-            'sma': sma,
-            'rsi': rsi,
-            'cutoff_idx': cutoff_idx,
-            'first_bar_pos': df_5m.index.get_loc(trading.index[0]),
-        })
+        days.append(
+            {
+                "close": trading["Close"].values.astype(np.float64),
+                "high": trading["High"].values.astype(np.float64),
+                "low": trading["Low"].values.astype(np.float64),
+                "atr": trading["ATR"].values.astype(np.float64),
+                "gauss_mid": trading["Gauss_Mid"].values.astype(np.float64),
+                "or_high": float(orb_bars["High"].max()),
+                "or_low": float(orb_bars["Low"].min()),
+                "sma": sma,
+                "rsi": rsi,
+                "cutoff_idx": cutoff_idx,
+                "first_bar_pos": df_5m.index.get_loc(trading.index[0]),
+            }
+        )
     return days
 
+
 # ── Fast Simulation ──────────────────────────────────────────────────────────
+
 
 def simulate_config(daily_data, atr_mult, rr_ratio, use_sma, use_rsi, use_gauss, split_idx):
     """Simulate a single config across all days using numpy for exit detection."""
@@ -117,18 +130,18 @@ def simulate_config(daily_data, atr_mult, rr_ratio, use_sma, use_rsi, use_gauss,
     oos_rets = []
 
     for day in daily_data:
-        close = day['close']
-        high  = day['high']
-        low   = day['low']
-        atr   = day['atr']
-        g_mid = day['gauss_mid']
-        or_h  = day['or_high']
-        or_l  = day['or_low']
-        sma   = day['sma']
-        rsi   = day['rsi']
-        co    = day['cutoff_idx']
-        n     = len(close)
-        is_oos = day['first_bar_pos'] >= split_idx
+        close = day["close"]
+        high = day["high"]
+        low = day["low"]
+        atr = day["atr"]
+        g_mid = day["gauss_mid"]
+        or_h = day["or_high"]
+        or_l = day["or_low"]
+        sma = day["sma"]
+        rsi = day["rsi"]
+        co = day["cutoff_idx"]
+        n = len(close)
+        is_oos = day["first_bar_pos"] >= split_idx
 
         bull_rsi = (rsi < 70) if use_rsi else True
         bear_rsi = (rsi > 30) if use_rsi else True
@@ -138,14 +151,14 @@ def simulate_config(daily_data, atr_mult, rr_ratio, use_sma, use_rsi, use_gauss,
             c = close[i]
             a = atr[i] if not np.isnan(atr[i]) else (or_h - or_l)
             gm = g_mid[i]
-            
+
             if a <= 0:
                 i += 1
                 continue
 
             bull_sma = (c > sma) if (use_sma and sma != 0.0) else True
             bear_sma = (c < sma) if (use_sma and sma != 0.0) else True
-            
+
             bull_gauss = (c > gm) if (use_gauss and not np.isnan(gm)) else True
             bear_gauss = (c < gm) if (use_gauss and not np.isnan(gm)) else True
 
@@ -170,8 +183,8 @@ def simulate_config(daily_data, atr_mult, rr_ratio, use_sma, use_rsi, use_gauss,
             exit_bar = n - 1
 
             if i + 1 < n:
-                rem_h = high[i+1:]
-                rem_l = low[i+1:]
+                rem_h = high[i + 1 :]
+                rem_l = low[i + 1 :]
                 if direction == 1:
                     hit = (rem_l <= sl) | (rem_h >= tp)
                 else:
@@ -197,9 +210,10 @@ def simulate_config(daily_data, atr_mult, rr_ratio, use_sma, use_rsi, use_gauss,
 
     return _score(is_rets, oos_rets)
 
+
 def _score(is_rets, oos_rets):
     """Compute composite consistency score from trade-return lists."""
-    is_arr  = np.array(is_rets)  if is_rets  else np.empty(0)
+    is_arr = np.array(is_rets) if is_rets else np.empty(0)
     oos_arr = np.array(oos_rets) if oos_rets else np.empty(0)
     is_n, oos_n = len(is_arr), len(oos_arr)
 
@@ -215,12 +229,12 @@ def _score(is_rets, oos_rets):
     def _ret(arr):
         return float((np.prod(1 + arr) - 1) * 100) if len(arr) > 0 else 0.0
 
-    is_sharpe  = _sharpe(is_arr)
+    is_sharpe = _sharpe(is_arr)
     oos_sharpe = _sharpe(oos_arr)
-    is_wr      = _wr(is_arr)
-    oos_wr     = _wr(oos_arr)
-    is_ret     = _ret(is_arr)
-    oos_ret    = _ret(oos_arr)
+    is_wr = _wr(is_arr)
+    oos_wr = _wr(oos_arr)
+    is_ret = _ret(is_arr)
+    oos_ret = _ret(oos_arr)
 
     # Early exit: skip configs with no IS edge
     if is_n < 10 or is_sharpe <= 0:
@@ -230,21 +244,27 @@ def _score(is_rets, oos_rets):
 
     score = (
         0.40 * normalize(oos_sharpe)
-      + 0.25 * normalize(is_sharpe)
-      + 0.15 * (oos_wr / 100.0)
-      + 0.10 * (min(oos_n, 30) / 30.0)
-      + 0.10 * retention
+        + 0.25 * normalize(is_sharpe)
+        + 0.15 * (oos_wr / 100.0)
+        + 0.10 * (min(oos_n, 30) / 30.0)
+        + 0.10 * retention
     )
 
     return {
-        'is_return': is_ret, 'is_sharpe': is_sharpe,
-        'is_trades': is_n,   'is_win_rate': is_wr,
-        'oos_return': oos_ret, 'oos_sharpe': oos_sharpe,
-        'oos_trades': oos_n,   'oos_win_rate': oos_wr,
-        'score': score,
+        "is_return": is_ret,
+        "is_sharpe": is_sharpe,
+        "is_trades": is_n,
+        "is_win_rate": is_wr,
+        "oos_return": oos_ret,
+        "oos_sharpe": oos_sharpe,
+        "oos_trades": oos_n,
+        "oos_win_rate": oos_wr,
+        "score": score,
     }
 
+
 # ── Per-Ticker Grid Search ──────────────────────────────────────────────────
+
 
 def run_grid_search_for_ticker(ticker: str) -> list[dict]:
     t0 = _time.perf_counter()
@@ -254,22 +274,26 @@ def run_grid_search_for_ticker(ticker: str) -> list[dict]:
         return []
 
     # Daily indicators via yfinance
-    df_1d = yf.download(ticker,
-                        start=df_5m.index.min() - timedelta(days=100),
-                        end=df_5m.index.max(), interval="1d", progress=False)
+    df_1d = yf.download(
+        ticker,
+        start=df_5m.index.min() - timedelta(days=100),
+        end=df_5m.index.max(),
+        interval="1d",
+        progress=False,
+    )
     if isinstance(df_1d.columns, pd.MultiIndex):
         df_1d.columns = df_1d.columns.droplevel(1)
     df_1d.index = df_1d.index.tz_localize(None)
 
     df_5m["ATR"] = calculate_atr(df_5m, 14)
-    
+
     # 5M Gaussian Channel (144 period, 4 poles, 2.0 sigma are defaults for 5m TF)
     high_arr = df_5m["High"].values
     low_arr = df_5m["Low"].values
     close_arr = df_5m["Close"].values
     _, _, g_mid = _gaussian_channel_kernel(high_arr, low_arr, close_arr, 144.0, 4, 2.0)
     df_5m["Gauss_Mid"] = g_mid
-    
+
     df_1d["SMA50"] = df_1d["Close"].rolling(50).mean().shift(1)
     df_1d["RSI14"] = calculate_rsi(df_1d["Close"], 14).shift(1)
 
@@ -283,12 +307,12 @@ def run_grid_search_for_ticker(ticker: str) -> list[dict]:
     split_idx = int(len(df_5m) * 0.70)
 
     # Parameter grid
-    atr_mults    = [0.75, 1.0, 1.25, 1.5, 2.0, 2.5]
-    rr_ratios    = [1.5, 2.0, 3.0]
-    sma_filters  = [True, False]
-    rsi_filters  = [True, False]
+    atr_mults = [0.75, 1.0, 1.25, 1.5, 2.0, 2.5]
+    rr_ratios = [1.5, 2.0, 3.0]
+    sma_filters = [True, False]
+    rsi_filters = [True, False]
     gauss_filters = [True, False]
-    orb_windows  = [("09:40", "09:45"), ("09:45", "09:50")]
+    orb_windows = [("09:40", "09:45"), ("09:45", "09:50")]
     entry_cutoffs = ["15:55", "11:00"]
 
     # Pre-compute daily arrays for each (window, cutoff) combo — 4 total
@@ -300,30 +324,39 @@ def run_grid_search_for_ticker(ticker: str) -> list[dict]:
     # Run 576 configs using pre-computed daily data
     results = []
     for atr_m, rr, use_sma, use_rsi, use_gauss, (orb_end, _), cutoff in itertools.product(
-            atr_mults, rr_ratios, sma_filters, rsi_filters, gauss_filters, orb_windows, entry_cutoffs):
-
+        atr_mults, rr_ratios, sma_filters, rsi_filters, gauss_filters, orb_windows, entry_cutoffs
+    ):
         daily_data = precomputed[(orb_end, cutoff)]
         metrics = simulate_config(daily_data, atr_m, rr, use_sma, use_rsi, use_gauss, split_idx)
         if metrics is None:
             continue
 
-        metrics.update({
-            'ticker': ticker, 'atr': atr_m, 'rr': rr,
-            'sma': use_sma, 'rsi': use_rsi, 'gauss': use_gauss,
-            'orb': orb_end, 'cutoff': cutoff,
-        })
+        metrics.update(
+            {
+                "ticker": ticker,
+                "atr": atr_m,
+                "rr": rr,
+                "sma": use_sma,
+                "rsi": use_rsi,
+                "gauss": use_gauss,
+                "orb": orb_end,
+                "cutoff": cutoff,
+            }
+        )
         results.append(metrics)
 
     elapsed = _time.perf_counter() - t0
     print(f"[{ticker}] Done — {len(results)} profitable configs in {elapsed:.1f}s")
     return results
 
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     cache_dir = os.path.join("data", "databento")
     csv_files = sorted(
-        f for f in os.listdir(cache_dir)
+        f
+        for f in os.listdir(cache_dir)
         if f.endswith("_1yr_5m.csv") or f.endswith("_1yr_5m.parquet")
     )
     # Deduplicate tickers (prefer parquet)
@@ -333,10 +366,10 @@ if __name__ == "__main__":
         print("No cached Databento data found in data/databento/. Exiting.")
         exit(1)
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"  ORB + Gaussian Optimizer — {len(tickers)} tickers × 576 configs")
     print(f"  Total backtests: {576 * len(tickers):,}")
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
     t_start = _time.perf_counter()
     all_results = Parallel(n_jobs=-1, verbose=5)(
@@ -364,19 +397,23 @@ if __name__ == "__main__":
     print(hdr)
     print("-" * 110)
 
-    best = df.sort_values(["ticker","score"], ascending=[True,False]).groupby("ticker").head(1)
+    best = df.sort_values(["ticker", "score"], ascending=[True, False]).groupby("ticker").head(1)
     best = best.sort_values("score", ascending=False)
     for _, r in best.iterrows():
         cfg = f"ATR:{r['atr']} RR:{r['rr']} S:{str(r['sma'])[:1]} G:{str(r['gauss'])[:1]} R:{str(r['rsi'])[:1]} ORB:{r['orb'][3:]} Cut:{r['cutoff'][:2]}"
-        print(f"{r['ticker']:<7} | {r['score']:<5.3f} | {r['is_sharpe']:<7.2f} | {r['oos_sharpe']:<8.2f} | {r['is_win_rate']:>5.1f}% | {r['oos_win_rate']:>5.1f}%  | {r['is_return']:>6.1f}% | {r['oos_return']:>7.1f}% | {cfg}")
+        print(
+            f"{r['ticker']:<7} | {r['score']:<5.3f} | {r['is_sharpe']:<7.2f} | {r['oos_sharpe']:<8.2f} | {r['is_win_rate']:>5.1f}% | {r['oos_win_rate']:>5.1f}%  | {r['is_return']:>6.1f}% | {r['oos_return']:>7.1f}% | {cfg}"
+        )
 
     # ── Top 25 overall ───────────────────────────────────────────────────────
-    print(f"\n{'='*110}")
+    print(f"\n{'=' * 110}")
     print("🏆 TOP 25 OVERALL CONFIGURATIONS")
     print("=" * 110)
     print(hdr)
     print("-" * 110)
     for _, r in df.head(25).iterrows():
         cfg = f"ATR:{r['atr']} RR:{r['rr']} S:{str(r['sma'])[:1]} G:{str(r['gauss'])[:1]} R:{str(r['rsi'])[:1]} ORB:{r['orb'][3:]} Cut:{r['cutoff'][:2]}"
-        print(f"{r['ticker']:<7} | {r['score']:<5.3f} | {r['is_sharpe']:<7.2f} | {r['oos_sharpe']:<8.2f} | {r['is_win_rate']:>5.1f}% | {r['oos_win_rate']:>5.1f}%  | {r['is_return']:>6.1f}% | {r['oos_return']:>7.1f}% | {cfg}")
+        print(
+            f"{r['ticker']:<7} | {r['score']:<5.3f} | {r['is_sharpe']:<7.2f} | {r['oos_sharpe']:<8.2f} | {r['is_win_rate']:>5.1f}% | {r['oos_win_rate']:>5.1f}%  | {r['is_return']:>6.1f}% | {r['oos_return']:>7.1f}% | {cfg}"
+        )
     print("=" * 110)

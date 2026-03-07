@@ -15,7 +15,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import os
+
 from dotenv import load_dotenv
+
 load_dotenv(PROJECT_ROOT / ".env")
 
 from nautilus_trader.adapters.interactive_brokers.config import (
@@ -39,6 +41,7 @@ from titan.strategies.orb.strategy import ORBConfig, ORBStrategy
 LOGS_DIR = PROJECT_ROOT / ".tmp" / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
+
 def _setup_logging() -> logging.Logger:
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     log_file = LOGS_DIR / f"orb_live_{date_str}.log"
@@ -57,6 +60,7 @@ def _setup_logging() -> logging.Logger:
 
     return logging.getLogger("titan.nautilus.orb")
 
+
 # ---------------------------------------------------------------------------
 # Main Runner
 # ---------------------------------------------------------------------------
@@ -65,7 +69,7 @@ def main():
 
     ib_host = os.getenv("IBKR_HOST", "127.0.0.1")
     ib_port = int(os.getenv("IBKR_PORT", 4002))
-    ib_client_id = int(os.getenv("IBKR_CLIENT_ID", 2))  # ID=2 for ORB 
+    ib_client_id = int(os.getenv("IBKR_CLIENT_ID", 2))  # ID=2 for ORB
     ib_account_id = os.getenv("IBKR_ACCOUNT_ID")
 
     if not ib_account_id:
@@ -113,11 +117,11 @@ def main():
     for ticker in TICKERS:
         # Construct Nautilus IDs
         inst_id = f"{ticker}.USD.IBKR"
-        
+
         # IBKR periodicity strings: "1-DAY", "5-MINUTE"
-        bar_5m = f"{inst_id}-5-MINUTE-LAST-INTERNAL" 
+        bar_5m = f"{inst_id}-5-MINUTE-LAST-INTERNAL"
         bar_1d = f"{inst_id}-1-DAY-LAST-INTERNAL"
-        
+
         strat_config = ORBConfig(
             instrument_id=inst_id,
             bar_type_5m=bar_5m,
@@ -150,6 +154,7 @@ def main():
         logger.exception("Fatal Runtime Error")
         print(f"\n❌ FATAL ERROR: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
