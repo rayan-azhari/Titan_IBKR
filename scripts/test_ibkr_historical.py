@@ -113,13 +113,13 @@ def main():
     time.sleep(1)
 
     # 1. Test 100 days of Daily bars (for SMA50/RSI14)
-    df_daily = fetch_data(app, "AMAT", "100 D", "1 day")
+    fetch_data(app, "AMAT", "100 D", "1 day")
 
     # Wait to avoid pacing violations
     time.sleep(2)
 
     # 2. Test 5 days of 5-Minute bars (for ATR14 and Gaussian)
-    df_5m = fetch_data(app, "AMAT", "5 D", "5 mins")
+    fetch_data(app, "AMAT", "5 D", "5 mins")
 
     app.disconnect()
 

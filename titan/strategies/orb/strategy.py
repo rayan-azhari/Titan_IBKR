@@ -25,11 +25,11 @@ from nautilus_trader.model.identifiers import ClientOrderId, InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.trading.strategy import Strategy
 
-ET = ZoneInfo("America/New_York")
-
 # Reuse indicators from the ML features module (which has SMA, RSI, ATR)
 from titan.indicators.gaussian_filter import _gaussian_channel_kernel
 from titan.strategies.ml.features import atr, rsi, sma
+
+ET = ZoneInfo("America/New_York")
 
 
 class ORBConfig(StrategyConfig):
@@ -187,7 +187,8 @@ class ORBStrategy(Strategy):
                     )
                 self._update_5m_indicators()
                 self.log.info(
-                    f"[{self.ticker}] 5M warmup complete. ATR: {self.current_atr:.2f}, Gauss Mid: {self.current_gauss_mid:.2f}"
+                    f"[{self.ticker}] 5M warmup complete. ATR: {self.current_atr:.2f}, "
+                    f"Gauss Mid: {self.current_gauss_mid:.2f}"
                 )
             except Exception as e:
                 self.log.error(f"Failed to load 5M parquet: {e}")
@@ -286,12 +287,16 @@ class ORBStrategy(Strategy):
         if c > self.or_high and bull_sma and bull_rsi and bull_gauss:
             target_side = OrderSide.BUY
             self.log.info(
-                f"[{self.ticker}] LONG Trigger: Close {c} > ORH {self.or_high}. SMA={self.daily_sma:.2f}, RSI={self.daily_rsi:.2f}, Gauss={self.current_gauss_mid:.2f}"
+                f"[{self.ticker}] LONG Trigger: Close {c} > ORH {self.or_high}. "
+                f"SMA={self.daily_sma:.2f}, RSI={self.daily_rsi:.2f}, "
+                f"Gauss={self.current_gauss_mid:.2f}"
             )
         elif c < self.or_low and bear_sma and bear_rsi and bear_gauss:
             target_side = OrderSide.SELL
             self.log.info(
-                f"[{self.ticker}] SHORT Trigger: Close {c} < ORL {self.or_low}. SMA={self.daily_sma:.2f}, RSI={self.daily_rsi:.2f}, Gauss={self.current_gauss_mid:.2f}"
+                f"[{self.ticker}] SHORT Trigger: Close {c} < ORL {self.or_low}. "
+                f"SMA={self.daily_sma:.2f}, RSI={self.daily_rsi:.2f}, "
+                f"Gauss={self.current_gauss_mid:.2f}"
             )
 
         if target_side:
@@ -419,8 +424,8 @@ class ORBStrategy(Strategy):
 
         # 3. Submit
         # Nautilus OrderFactory doesn't have a single bracket() function,
-        # so we rely on OCO (One Cancels Other) or submitting market entry + SL/TP limit/stop orders.
-        # Alternatively, using conditional logic inside nautilus.
+        # so we rely on OCO (One Cancels Other) or submitting market entry
+        # plus SL/TP limit/stop orders. Alternatively, using conditional logic inside nautilus.
 
         # Submit Market Entry
         parent_order = self.order_factory.market(
