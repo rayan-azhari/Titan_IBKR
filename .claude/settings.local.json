@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run python scripts/test_orders.py)",
+      "Bash(python scripts/test_orders.py)",
+      "Bash(.venv/Scripts/python scripts/test_orders.py)",
+      "Bash(.venv/Scripts/pip list)",
+      "Bash(.venv/Scripts/pip install python-dotenv)",
+      "Bash(\"C:/Users/rayan/AppData/Local/Programs/Python/Python311/python.exe\" -c \"import nautilus_trader; print\\(nautilus_trader.__version__\\)\")",
+      "Bash(\"C:/Users/rayan/AppData/Local/Programs/Python/Python311/python.exe\" scripts/test_orders.py)",
+      "Bash(.venv/Scripts/python.exe -m pip install --upgrade pip)",
+      "Bash(.venv/Scripts/python.exe -m pip install -e \".[dev]\")",
+      "Bash(.venv/Scripts/python.exe -c \"from nautilus_trader.adapters.interactive_brokers.factories import InteractiveBrokersLiveExecClientFactory; print\\(''IBKR adapter OK''\\)\")",
+      "Bash(.venv/Scripts/python.exe scripts/test_orders.py)",
+      "Bash(.venv/Scripts/python.exe -c \":*)"
+    ]
+  }
+}

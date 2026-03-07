@@ -11,7 +11,7 @@ Here is the **Optimized Institutional Rule Set**:
 3. **Define the Range:** Mark the High and Low of the first 15-minute candle at the New York open (09:30:00 to 09:45:00 EST).
 4. **Signal Confirmation:** Wait for a 5-minute candle to close above the 15-minute range high (for a long bias) or below the 15-minute range low (for a short bias).
 5. **Dynamic Volatility Stop (ATR):** Do not use the 15m candle extreme as the stop loss. Instead, set the stop loss to exactly **2.0 * 5m ATR** away from your entry price.
-6. **Execution & Management:** Execute the trade using a bracket order targeting a strict **1:2 Risk-to-Reward Ratio**. No trailing stops. 
+6. **Execution & Management:** Execute the trade using a bracket order targeting a strict **1:2 Risk-to-Reward Ratio**. No trailing stops. Require auto-cancellation of counterpart orders on fill, and a strict End-of-Day (EOD) flatten at 15:55 ET to clear overnight risk. 
 
 Below is a comprehensive blueprint to execute this live on Interactive Brokers using NautilusTrader.
 

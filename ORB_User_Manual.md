@@ -9,8 +9,9 @@ This manual explains how to run the updated 5-Minute Opening Range Breakout (ORB
   - Opening Range defined from `09:30` to `09:40`/`09:45` (varies by ticker).
   - Price must break out of the Opening Range before `11:00 AM`.
   - The breakout direction must align with the Daily SMA50, Daily RSI14, and the 5-Minute Gaussian Channel (Close vs Midline).
-- **Execution:** Full Bracket Orders (Market Entry, Stop Loss, Take Profit).
-- **Position Sizing:** 1% of total account Equity, risked via the ATR Stop Loss distance.
+- **Execution:** Bracket Orders (Market Entry, Stop Loss, Take Profit) with active counterpart cancellation to prevent ghost orders.
+- **Position Sizing:** Configured percentage of total account Equity, risked via the ATR Stop Loss distance.
+- **Risk Management:** End-of-Day (EOD) flatten automatically fires at 15:55 ET to close positions and pending orders, eliminating overnight gap risk.
 
 ---
 

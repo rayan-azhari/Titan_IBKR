@@ -5,5 +5,11 @@
 [risk]
 max_position_size_units = 10000          # Max units per position
 max_daily_loss_pct = 2.0                 # Kill switch at 2% daily loss
-max_open_trades = 3                      # Max concurrent positions
-trailing_stop_pips = 15                  # Trailing stop distance
+max_open_trades = 3                      # Max concurrent positions for general/MTF strategies
+trailing_stop_pips = 15                  # Trailing stop distance for Forex strategies
+
+[orb_risk]
+max_open_trades = 7                      # Allow all 7 equity tickers simultaneously
+max_leverage = 4.0                       # Maximum account leverage across all active equity positions
+max_daily_loss_pct = 2.5                 # Specific daily loss limit for equities
+

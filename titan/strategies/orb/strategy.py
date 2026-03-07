@@ -3,6 +3,11 @@
 
 Opening Range Breakout Strategy for NautilusTrader.
 Implements the 5m ORB with Daily SMA50/RSI14 filters and 1% Equity Risk Bracket Orders.
+
+Bracket Management:
+  SL and TP are submitted as independent orders. When either fills,
+  on_order_filled cancels the counterpart to prevent ghost orders.
+  Positions are flattened at 15:55 ET to avoid overnight gap risk.
 """
 
 import sys
@@ -16,8 +21,8 @@ import pandas as pd
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import OrderSide, TimeInForce
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.enums import OrderSide, OrderStatus, TimeInForce
+from nautilus_trader.model.identifiers import ClientOrderId, InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.trading.strategy import Strategy
 
@@ -98,6 +103,10 @@ class ORBStrategy(Strategy):
         self.or_low = float('inf')
         self.trade_taken_today = False
         self.orb_formed = False
+        self.eod_flattened = False
+
+        # Bracket Order Tracking: maps each SL/TP order id to its counterpart
+        self._bracket_pairs: dict[str, str] = {}
 
     def _load_toml(self, path: str) -> dict:
         p = Path(path)
@@ -172,10 +181,6 @@ class ORBStrategy(Strategy):
         """Lifecycle: New Bar Closed."""
         dt = unix_nanos_to_dt(bar.ts_event)
         
-        # Normalize timezone to ET if naive (Nautilus usually uses UTC in memory but we want ET for ORB times)
-        # Assuming the execution system timezone or we just check time
-        # Standard IBKR Eastern Time trading hours setup
-        
         if bar.bar_type == self.bt_1d:
             self._handle_daily_bar(bar, dt)
         elif bar.bar_type == self.bt_5m:
@@ -217,6 +222,7 @@ class ORBStrategy(Strategy):
             self.or_low = float('inf')
             self.trade_taken_today = False
             self.orb_formed = False
+            self.eod_flattened = False
             
         # Form Opening Range (09:30 to orb_end_time)
         trading_start = time(9, 30)
@@ -230,6 +236,12 @@ class ORBStrategy(Strategy):
                 self.log.info(f"[{self.ticker}] ORB Formed - High: {self.or_high:.2f}, Low: {self.or_low:.2f}")
                 
             return  # Still in the ORB window, no trading yet
+
+        # EOD Flatten: Close all positions and cancel orders at 15:55 ET
+        eod_time = time(15, 55)
+        if bar_time >= eod_time and not self.eod_flattened:
+            self._flatten_eod()
+            return
 
         # Out of bounds check
         if not self.orb_formed or self.trade_taken_today:
@@ -263,6 +275,43 @@ class ORBStrategy(Strategy):
 
         if target_side:
             self._execute_bracket(target_side, Decimal(str(c)))
+
+    def _flatten_eod(self):
+        """Close all positions and cancel all orders at end of day."""
+        self.eod_flattened = True
+        self._bracket_pairs.clear()
+        self.cancel_all_orders(self.instrument_id)
+        self.close_all_positions(self.instrument_id)
+        self.log.info(f"[{self.ticker}] EOD Flatten @ 15:55 ET — Closed all positions and cancelled orders.")
+
+    def on_order_filled(self, event):
+        """When SL or TP fills, cancel the counterpart to prevent ghost orders."""
+        filled_id = str(event.client_order_id)
+        counterpart_id = self._bracket_pairs.pop(filled_id, None)
+        if counterpart_id:
+            self._bracket_pairs.pop(counterpart_id, None)
+            # Cancel the counterpart order if it's still active
+            try:
+                order = self.cache.order(ClientOrderId(counterpart_id))
+                if order and order.status in (
+                    OrderStatus.ACCEPTED,
+                    OrderStatus.SUBMITTED,
+                ):
+                    self.cancel_order(order)
+                    self.log.info(
+                        f"[{self.ticker}] Bracket counterpart cancelled: {counterpart_id}"
+                    )
+            except Exception as e:
+                self.log.warning(
+                    f"[{self.ticker}] Failed to cancel counterpart {counterpart_id}: {e}"
+                )
+
+    def on_order_canceled(self, event):
+        """Clean up bracket tracking when an order is cancelled."""
+        cancelled_id = str(event.client_order_id)
+        counterpart_id = self._bracket_pairs.pop(cancelled_id, None)
+        if counterpart_id:
+            self._bracket_pairs.pop(counterpart_id, None)
             self.trade_taken_today = True
 
     def _update_daily_indicators(self):
@@ -387,5 +436,16 @@ class ORBStrategy(Strategy):
         )
         self.submit_order(sl_order)
 
+        # Track SL<->TP as a pair so we can cancel counterpart on fill
+        tp_id = str(tp_order.client_order_id)
+        sl_id = str(sl_order.client_order_id)
+        self._bracket_pairs[tp_id] = sl_id
+        self._bracket_pairs[sl_id] = tp_id
         self.log.info(f"[{self.ticker}] Bracket Submitted -> {side} {units} @ {price_f:.2f}")
         self.log.info(f"[{self.ticker}] Stop Loss -> {sl_price:.2f} | Take Profit -> {tp_price:.2f}")
+
+    def on_stop(self):
+        """Lifecycle: Strategy Stopped. Clean up all orders and positions."""
+        self._bracket_pairs.clear()
+        self.cancel_all_orders(self.instrument_id)
+        self.log.info(f"[{self.ticker}] ORB Strategy stopped — all orders cancelled.")

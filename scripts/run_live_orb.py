@@ -108,7 +108,7 @@ def main():
     node.add_exec_client_factory("IBKR", InteractiveBrokersLiveExecClientFactory)
 
     # 3. Add Strategy Instances for Top 7 Tickers
-    TICKERS = ["UNH", "WMT", "AMAT", "TXN", "CRM", "CSCO", "INTC"]
+    TICKERS = ["UNH", "AMAT", "TXN", "INTC", "CAT", "WMT", "TMO"]
 
     for ticker in TICKERS:
         # Construct Nautilus IDs
