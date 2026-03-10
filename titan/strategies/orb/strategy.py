@@ -5,8 +5,9 @@ Opening Range Breakout Strategy for NautilusTrader.
 Implements the 5m ORB with Daily SMA50/RSI14 filters and 1% Equity Risk Bracket Orders.
 
 Bracket Management:
-  SL and TP are submitted as independent orders. When either fills,
-  on_order_filled cancels the counterpart to prevent ghost orders.
+  Uses order_factory.bracket() with entry_order_type=MARKET.
+  NautilusTrader wires OTO (entry triggers TP+SL) and OCO (TP/SL cancel each other)
+  contingency automatically — no manual counterpart tracking needed.
   Positions are flattened at 15:55 ET to avoid overnight gap risk.
 """
 
@@ -20,8 +21,8 @@ import pandas as pd
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import OrderSide, OrderStatus, TimeInForce
-from nautilus_trader.model.identifiers import ClientOrderId, InstrumentId
+from nautilus_trader.model.enums import OrderSide, OrderStatus, OrderType, TimeInForce
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.trading.strategy import Strategy
 
@@ -110,8 +111,7 @@ class ORBStrategy(Strategy):
         self.orb_formed = False
         self.eod_flattened = False
 
-        # Bracket Order Tracking: maps each SL/TP order id to its counterpart
-        self._bracket_pairs: dict[str, str] = {}
+        # No manual bracket tracking needed — NautilusTrader manages OTO/OCO contingency.
 
     def _load_toml(self, path: str) -> dict:
         p = Path(path)
@@ -305,42 +305,71 @@ class ORBStrategy(Strategy):
     def _flatten_eod(self):
         """Close all positions and cancel all orders at end of day."""
         self.eod_flattened = True
-        self._bracket_pairs.clear()
         self.cancel_all_orders(self.instrument_id)
         self.close_all_positions(self.instrument_id)
         self.log.info(
             f"[{self.ticker}] EOD Flatten @ 15:55 ET — Closed all positions and cancelled orders."
         )
 
+    def on_order_submitted(self, event):
+        """Fired when order is sent to the broker."""
+        self.log.info(
+            f"[{self.ticker}] ORDER SUBMITTED: {event.client_order_id}"
+        )
+
+    def on_order_accepted(self, event):
+        """Fired when IB acknowledges the order."""
+        self.log.info(
+            f"[{self.ticker}] ORDER ACCEPTED: {event.client_order_id} venue_id={event.venue_order_id}"
+        )
+
+    def on_order_rejected(self, event):
+        """Fired when IB rejects the order — always log with ERROR level."""
+        self.log.error(
+            f"[{self.ticker}] ORDER REJECTED: {event.client_order_id} — {event.reason}"
+        )
+        self.trade_taken_today = False  # allow re-entry if the entry was rejected
+
     def on_order_filled(self, event):
-        """When SL or TP fills, cancel the counterpart to prevent ghost orders."""
-        filled_id = str(event.client_order_id)
-        counterpart_id = self._bracket_pairs.pop(filled_id, None)
-        if counterpart_id:
-            self._bracket_pairs.pop(counterpart_id, None)
-            # Cancel the counterpart order if it's still active
-            try:
-                order = self.cache.order(ClientOrderId(counterpart_id))
-                if order and order.status in (
-                    OrderStatus.ACCEPTED,
-                    OrderStatus.SUBMITTED,
-                ):
-                    self.cancel_order(order)
-                    self.log.info(
-                        f"[{self.ticker}] Bracket counterpart cancelled: {counterpart_id}"
-                    )
-            except Exception as e:
-                self.log.warning(
-                    f"[{self.ticker}] Failed to cancel counterpart {counterpart_id}: {e}"
-                )
+        """Fired on every fill. NautilusTrader handles OTO/OCO cancellation automatically."""
+        self.log.info(
+            f"[{self.ticker}] ORDER FILLED: {event.client_order_id} "
+            f"side={event.order_side.name} qty={event.last_qty} px={event.last_px} "
+            f"commission={event.commission}"
+        )
 
     def on_order_canceled(self, event):
-        """Clean up bracket tracking when an order is cancelled."""
-        cancelled_id = str(event.client_order_id)
-        counterpart_id = self._bracket_pairs.pop(cancelled_id, None)
-        if counterpart_id:
-            self._bracket_pairs.pop(counterpart_id, None)
-            self.trade_taken_today = True
+        """Fired when an order is cancelled (by strategy, EOD flatten, or OCO counterpart)."""
+        self.log.info(
+            f"[{self.ticker}] ORDER CANCELLED: {event.client_order_id}"
+        )
+
+    def on_order_expired(self, event):
+        """Fired when a DAY order expires at end of session."""
+        self.log.warning(
+            f"[{self.ticker}] ORDER EXPIRED: {event.client_order_id}"
+        )
+
+    def on_position_opened(self, event):
+        """Fired when a new position is opened."""
+        self.log.info(
+            f"[{self.ticker}] POSITION OPENED: {event.position_id} "
+            f"side={event.entry.name} qty={event.quantity} avg_px={event.avg_px_open:.2f}"
+        )
+
+    def on_position_changed(self, event):
+        """Fired when a position is partially closed or size changes."""
+        self.log.info(
+            f"[{self.ticker}] POSITION CHANGED: {event.position_id} "
+            f"qty={event.quantity} unrealized_pnl={event.unrealized_pnl}"
+        )
+
+    def on_position_closed(self, event):
+        """Fired when a position is fully closed."""
+        self.log.info(
+            f"[{self.ticker}] POSITION CLOSED: {event.position_id} "
+            f"realized_pnl={event.realized_pnl} duration={event.duration_ns // 1_000_000_000}s"
+        )
 
     def _update_daily_indicators(self):
         """Update SMA50 and RSI14."""
@@ -367,13 +396,13 @@ class ORBStrategy(Strategy):
 
         # feature.atr expects a DataFrame with High/Low/Close
         # Because we're using vectorbt internally, we format it nicely
-        df = df.rename(columns={"close": "Close", "high": "High", "low": "Low"})
-
+        # atr() expects lowercase column names — call before renaming
         atr_series = atr(df, 14)
         if not atr_series.empty:
             self.current_atr = float(atr_series.iloc[-1])
 
-        # Gaussian Channel
+        # Gaussian Channel uses uppercase — rename after atr is done
+        df = df.rename(columns={"close": "Close", "high": "High", "low": "Low"})
         high_arr = df["High"].values
         low_arr = df["Low"].values
         close_arr = df["Close"].values
@@ -382,10 +411,9 @@ class ORBStrategy(Strategy):
         self.current_gauss_mid = float(mid_arr[-1])
 
     def _execute_bracket(self, side: OrderSide, fill_price: Decimal):
-        """Submit Entry + SL + TP bracket."""
+        """Submit a market-entry bracket order (entry → OTO → TP/SL as OCO pair)."""
         # 1. Size Position
         if self.current_atr <= 0:
-            # Fallback to ORB width
             self.current_atr = self.or_high - self.or_low
             if self.current_atr <= 0:
                 self.log.error(f"[{self.ticker}] Cannot calculate Risk (ATR=0). Aborting trade.")
@@ -396,13 +424,17 @@ class ORBStrategy(Strategy):
             self.log.error(f"[{self.ticker}] No account found! Cannot size position.")
             return
 
-        equity = float(accounts[0].balance_total().as_double())
+        account = accounts[0]
+        currencies = list(account.balances().keys())
+        if not currencies:
+            self.log.error(f"[{self.ticker}] Account has no balances. Cannot size position.")
+            return
+        equity = float(account.balance_total(currencies[0]).as_double())
         risk_amount = equity * self.config.risk_pct
 
         risk_per_share = self.current_atr * self.atr_multiplier
         raw_units = risk_amount / risk_per_share
 
-        # Cap Leverage
         max_units = (equity * self.config.leverage_cap) / float(fill_price)
         units = int(min(raw_units, max_units))
 
@@ -412,9 +444,8 @@ class ORBStrategy(Strategy):
 
         qty = Quantity.from_int(units)
 
-        # 2. Setup Bracket Prices
+        # 2. Bracket Prices
         price_f = float(fill_price)
-
         if side == OrderSide.BUY:
             sl_price = price_f - risk_per_share
             tp_price = price_f + (risk_per_share * self.rr_ratio)
@@ -422,60 +453,37 @@ class ORBStrategy(Strategy):
             sl_price = price_f + risk_per_share
             tp_price = price_f - (risk_per_share * self.rr_ratio)
 
-        # 3. Submit
-        # Nautilus OrderFactory doesn't have a single bracket() function,
-        # so we rely on OCO (One Cancels Other) or submitting market entry
-        # plus SL/TP limit/stop orders. Alternatively, using conditional logic inside nautilus.
-
-        # Submit Market Entry
-        parent_order = self.order_factory.market(
-            instrument_id=self.instrument_id,
-            order_side=side,
-            quantity=qty,
-            time_in_force=TimeInForce.GTC,
-        )
-        self.submit_order(parent_order)
-
-        # Typically, a bracket is submitted via trailing stop or OCO SL/TP.
-        # Nautilus supports contingent orders, but since we're using basic order factory:
-
-        # TP Limit
-        opposite_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
-
         instrument = self.cache.instrument(self.instrument_id)
         precision = instrument.price_precision if instrument else 2
 
-        tp_order = self.order_factory.limit(
-            instrument_id=self.instrument_id,
-            order_side=opposite_side,
-            quantity=qty,
-            price=Price(round(tp_price, precision), precision=precision),
-            time_in_force=TimeInForce.GTC,
-        )
-        self.submit_order(tp_order)
+        # 3. Mark trade taken BEFORE submitting — prevents re-entry on the next bar
+        #    if the order is still pending or the bar closes above/below the OR again.
+        self.trade_taken_today = True
 
-        # SL Stop-Market
-        sl_order = self.order_factory.stop_market(
+        # 4. Submit as a linked bracket via order_factory.bracket().
+        #    NautilusTrader wires OTO (entry triggers TP+SL) and OCO (TP/SL cancel each
+        #    other) automatically — no manual _bracket_pairs tracking needed.
+        #    entry_order_type=MARKET uses TimeInForce.DAY (the only valid TIF for MKT on IB).
+        bracket = self.order_factory.bracket(
             instrument_id=self.instrument_id,
-            order_side=opposite_side,
+            order_side=side,
             quantity=qty,
-            trigger_price=Price(round(sl_price, precision), precision=precision),
-            time_in_force=TimeInForce.GTC,
+            sl_trigger_price=Price(round(sl_price, precision), precision=precision),
+            tp_price=Price(round(tp_price, precision), precision=precision),
+            entry_order_type=OrderType.MARKET,
+            entry_time_in_force=TimeInForce.DAY,
+            tp_time_in_force=TimeInForce.GTC,
+            sl_time_in_force=TimeInForce.GTC,
         )
-        self.submit_order(sl_order)
+        self.submit_order_list(bracket)
 
-        # Track SL<->TP as a pair so we can cancel counterpart on fill
-        tp_id = str(tp_order.client_order_id)
-        sl_id = str(sl_order.client_order_id)
-        self._bracket_pairs[tp_id] = sl_id
-        self._bracket_pairs[sl_id] = tp_id
-        self.log.info(f"[{self.ticker}] Bracket Submitted -> {side} {units} @ {price_f:.2f}")
+        self.log.info(f"[{self.ticker}] Bracket submitted -> {side} {units} @ ~{price_f:.2f}")
         self.log.info(
-            f"[{self.ticker}] Stop Loss -> {sl_price:.2f} | Take Profit -> {tp_price:.2f}"
+            f"[{self.ticker}] SL={sl_price:.2f}  TP={tp_price:.2f}  "
+            f"Risk/share={risk_per_share:.2f}  RR={self.rr_ratio}"
         )
 
     def on_stop(self):
         """Lifecycle: Strategy Stopped. Clean up all orders and positions."""
-        self._bracket_pairs.clear()
         self.cancel_all_orders(self.instrument_id)
         self.log.info(f"[{self.ticker}] ORB Strategy stopped — all orders cancelled.")

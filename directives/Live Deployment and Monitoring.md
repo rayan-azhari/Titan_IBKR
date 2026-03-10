@@ -28,21 +28,37 @@ IBKR_ENVIRONMENT=practice
 ### 2. Execution
 Run the specific runner for your strategy:
 
-**A. Multi-Timeframe Confluence (Signal-Based)**
+**A. ORB Strategy (7 large-cap equities — production)**
+```bash
+python scripts/run_live_orb.py
+```
+Connects to TWS/Gateway, loads 7 instruments (`UNH.NYSE`, `AMAT.NASDAQ`, `TXN.NASDAQ`, `INTC.NASDAQ`, `CAT.NYSE`, `WMT.NASDAQ`, `TMO.NYSE`), subscribes to 14 bar feeds (5-MINUTE + 1-DAY EXTERNAL for each), and starts trading.
+
+**B. Multi-Timeframe Confluence (Signal-Based)**
 ```bash
 uv run python scripts/run_live_mtf.py
 ```
 
-**B. ML Strategy (XGBoost)**
+**C. ML Strategy (XGBoost)**
 ```bash
 uv run python scripts/run_live_ml.py
 ```
 
 ### 3. Validation
-- Check console for `[INFO] Strategy Started`.
-- Verify subscriptions (e.g., `EUR/USD.IBKR-1-HOUR...`).
-- Wait for "Warmup complete".
-- Monitor via IBKR mobile app or web dashboard.
+- Check console for `[INFO] RUNNING` on all 7 strategies.
+- Verify 14 bar subscriptions: `Subscribed {TICKER}.{EXCH}-{5-MINUTE|1-DAY}-LAST-EXTERNAL bars`.
+- Wait for warmup log lines: `Warmup complete for {ticker} — SMA50=...`.
+- Monitor ongoing trades in TWS/Gateway order panel.
+- Logs written to `.tmp/logs/orb_live_<timestamp>.log`.
+
+To monitor the live log stream:
+```bash
+# PowerShell
+Get-Content .tmp/logs/orb_live_*.log -Wait -Tail 50
+
+# bash
+tail -f .tmp/logs/orb_live_*.log
+```
 
 ## Cloud Execution Steps (GCE)
 
