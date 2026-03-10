@@ -71,10 +71,7 @@ class OrderTestStrategy(Strategy):
         instrument = self.cache.instrument(self.instrument_id)
         if instrument is None:
             available = [str(i) for i in self.cache.instrument_ids()]
-            self.log.error(
-                f"Instrument {self.instrument_id} not in cache. "
-                f"Available: {available}"
-            )
+            self.log.error(f"Instrument {self.instrument_id} not in cache. Available: {available}")
             self.stop()
             return
 
@@ -120,10 +117,7 @@ class OrderTestStrategy(Strategy):
             self.log.info(f"Close order submitted: {close_side.name} 1 {self.instrument_id}")
 
     def on_position_closed(self, event):
-        self.log.info(
-            f"POSITION CLOSED: realized_pnl={event.realized_pnl} "
-            f"| ==> TEST COMPLETE <=="
-        )
+        self.log.info(f"POSITION CLOSED: realized_pnl={event.realized_pnl} | ==> TEST COMPLETE <==")
         os.kill(os.getpid(), signal.SIGINT)
 
 
@@ -187,9 +181,7 @@ def main():
     # build() BEFORE add_strategy — instruments and engines must be ready first
     node.build()
 
-    strategy = OrderTestStrategy(
-        OrderTestConfig(instrument_id=INSTRUMENT_ID, order_side=side)
-    )
+    strategy = OrderTestStrategy(OrderTestConfig(instrument_id=INSTRUMENT_ID, order_side=side))
     node.trader.add_strategy(strategy)
 
     def stop_node(*args):

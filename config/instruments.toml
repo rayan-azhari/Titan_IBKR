@@ -11,7 +11,9 @@ pairs = [
     "TXN",
     "CRM",
     "CSCO",
-    "INTC"
+    "INTC",
+    "CAT",
+    "TMO"
 ]
 
 granularities = [

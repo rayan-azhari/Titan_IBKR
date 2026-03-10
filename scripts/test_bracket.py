@@ -104,9 +104,7 @@ class BracketTestStrategy(Strategy):
         self.test_complete = False
 
     def on_start(self):
-        self.log.info(
-            f"=== BRACKET TEST START: {self.order_side.name} 1 {self.instrument_id} ==="
-        )
+        self.log.info(f"=== BRACKET TEST START: {self.order_side.name} 1 {self.instrument_id} ===")
         self.log.info(
             f"    Reference price: ${self.reference_price:.2f}  "
             f"TP offset: ${TP_OFFSET:.2f}  SL offset: ${SL_OFFSET:.2f}"
@@ -115,15 +113,11 @@ class BracketTestStrategy(Strategy):
         instrument = self.cache.instrument(self.instrument_id)
         if instrument is None:
             available = [str(i) for i in self.cache.instrument_ids()]
-            self.log.error(
-                f"Instrument {self.instrument_id} not in cache. Available: {available}"
-            )
+            self.log.error(f"Instrument {self.instrument_id} not in cache. Available: {available}")
             self.stop()
             return
 
-        self.log.info(
-            f"Instrument loaded. Placing bracket in {ENTRY_DELAY_SECS}s..."
-        )
+        self.log.info(f"Instrument loaded. Placing bracket in {ENTRY_DELAY_SECS}s...")
         self.clock.set_time_alert(
             name="place_bracket",
             alert_time=self.clock.utc_now() + pd.Timedelta(seconds=ENTRY_DELAY_SECS),
@@ -189,9 +183,7 @@ class BracketTestStrategy(Strategy):
             name="fallback_close",
             alert_time=self.clock.utc_now() + pd.Timedelta(seconds=FALLBACK_TIMEOUT_SECS),
         )
-        self.log.info(
-            f"Bracket submitted. Fallback close in {FALLBACK_TIMEOUT_SECS}s if needed."
-        )
+        self.log.info(f"Bracket submitted. Fallback close in {FALLBACK_TIMEOUT_SECS}s if needed.")
 
     # ── Order Events ──────────────────────────────────────────────────────────
 
@@ -199,9 +191,7 @@ class BracketTestStrategy(Strategy):
         self.log.info(f"ORDER SUBMITTED: {event.client_order_id}")
 
     def on_order_accepted(self, event):
-        self.log.info(
-            f"ORDER ACCEPTED:  {event.client_order_id}  venue_id={event.venue_order_id}"
-        )
+        self.log.info(f"ORDER ACCEPTED:  {event.client_order_id}  venue_id={event.venue_order_id}")
 
     def on_order_rejected(self, event):
         self.log.error(f"ORDER REJECTED:  {event.client_order_id} — {event.reason}")

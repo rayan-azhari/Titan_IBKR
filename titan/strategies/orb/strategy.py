@@ -313,9 +313,7 @@ class ORBStrategy(Strategy):
 
     def on_order_submitted(self, event):
         """Fired when order is sent to the broker."""
-        self.log.info(
-            f"[{self.ticker}] ORDER SUBMITTED: {event.client_order_id}"
-        )
+        self.log.info(f"[{self.ticker}] ORDER SUBMITTED: {event.client_order_id}")
 
     def on_order_accepted(self, event):
         """Fired when IB acknowledges the order."""
@@ -326,9 +324,7 @@ class ORBStrategy(Strategy):
 
     def on_order_rejected(self, event):
         """Fired when IB rejects the order — always log with ERROR level."""
-        self.log.error(
-            f"[{self.ticker}] ORDER REJECTED: {event.client_order_id} — {event.reason}"
-        )
+        self.log.error(f"[{self.ticker}] ORDER REJECTED: {event.client_order_id} — {event.reason}")
         self.trade_taken_today = False  # allow re-entry if the entry was rejected
 
     def on_order_filled(self, event):
@@ -341,15 +337,11 @@ class ORBStrategy(Strategy):
 
     def on_order_canceled(self, event):
         """Fired when an order is cancelled (by strategy, EOD flatten, or OCO counterpart)."""
-        self.log.info(
-            f"[{self.ticker}] ORDER CANCELLED: {event.client_order_id}"
-        )
+        self.log.info(f"[{self.ticker}] ORDER CANCELLED: {event.client_order_id}")
 
     def on_order_expired(self, event):
         """Fired when a DAY order expires at end of session."""
-        self.log.warning(
-            f"[{self.ticker}] ORDER EXPIRED: {event.client_order_id}"
-        )
+        self.log.warning(f"[{self.ticker}] ORDER EXPIRED: {event.client_order_id}")
 
     def on_position_opened(self, event):
         """Fired when a new position is opened."""
