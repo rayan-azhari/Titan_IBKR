@@ -246,6 +246,8 @@ Every trade is submitted as a **linked bracket order**:
 
 NautilusTrader wires these as OTO (entry triggers TP+SL) and OCO (TP and SL cancel each other when one fills). You do not need to manage them manually.
 
+> **Verified live (Mar 10 2026):** All 3 bracket legs submit, are accepted by IB with venue order IDs, and the entry fills correctly. On a **paper account with DELAYED_FROZEN data**, TP/SL fills may not simulate naturally mid-session (price feed is frozen for new subscriptions). On a **live account** with REALTIME data, TP and SL fill normally when the price crosses the level. The EOD flatten at 15:55 ET and the fallback cancel+close path are both confirmed working regardless of account type.
+
 ### End of Day Flatten (15:55 ET)
 
 At 15:55 ET, all open positions and pending orders for each ticker are cancelled and closed automatically:

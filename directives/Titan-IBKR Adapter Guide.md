@@ -140,11 +140,12 @@ This tests the `ibapi` connectivity to the local socket server.
 
 **5. IB rejects Market order — "Order type 'MKT' not valid with TIF 'GTC'"**
 *   **Cause:** Market orders submitted with `TimeInForce.GTC`. IB only accepts `DAY` for market orders.
-*   **Fix:** Use `TimeInForce.DAY` for market entry orders. GTC is valid for limit/stop SL and TP legs.
+*   **Fix:** Use `TimeInForce.DAY` for the entry order. The entry TIF is the `time_in_force` parameter (not `entry_time_in_force` — see entry 17). GTC is valid for limit/stop SL and TP legs.
     ```python
     bracket = self.order_factory.bracket(
         entry_order_type=OrderType.MARKET,
-        entry_time_in_force=TimeInForce.DAY,  # ← must be DAY
+        time_in_force=TimeInForce.DAY,    # ← must be DAY; parameter is 'time_in_force' not 'entry_time_in_force'
+        tp_post_only=False,               # ← required; see entry 18
         tp_time_in_force=TimeInForce.GTC,
         sl_time_in_force=TimeInForce.GTC,
     )
@@ -230,6 +231,46 @@ This tests the `ibapi` connectivity to the local socket server.
 **16. Error 326 — "Unable to connect as the client id is already in use"**
 *   **Cause:** A previous strategy or test process is still running and holding the same `ibg_client_id` socket connection.
 *   **Fix:** Kill old Python processes. Use distinct `ibg_client_id` values per node (e.g. ORB strategy = env var value, test scripts = hardcoded 22+). The `IBKR_CLIENT_ID` env var is shared — test scripts must hardcode a different ID.
+
+**17. `TypeError: bracket() got an unexpected keyword argument 'entry_time_in_force'`**
+*   **Cause:** The `bracket()` method does not have an `entry_time_in_force` parameter. The entry order's time-in-force is set via the shared `time_in_force` parameter.
+*   **Fix:** Replace `entry_time_in_force` with `time_in_force`:
+    ```python
+    # WRONG — raises TypeError, bracket never submitted
+    bracket = self.order_factory.bracket(
+        entry_time_in_force=TimeInForce.DAY,  # ❌ parameter does not exist
+        ...
+    )
+
+    # CORRECT
+    bracket = self.order_factory.bracket(
+        time_in_force=TimeInForce.DAY,        # ✅ controls entry order TIF
+        ...
+    )
+    ```
+*   **Impact:** Every bracket order submission silently fails. No trade is executed even when all entry conditions are met.
+
+**18. IB rejects bracket order — TP limit leg rejected, cascades to entry rejection**
+*   **Cause:** `order_factory.bracket()` defaults to `tp_post_only=True`. IB rejects limit orders with the post-only flag when they are part of a bracket (OTO/OCO) order group.
+*   **Symptom:** Log shows `ORDER REJECTED: ... reason='The order has been rejected due to the rejection of the order with ClientOrderId(...) in the list'` immediately after bracket submission. The entry order is the one visibly rejected, but the root cause is the TP limit leg.
+*   **Fix:** Explicitly set `tp_post_only=False`:
+    ```python
+    bracket = self.order_factory.bracket(
+        ...
+        tp_post_only=False,   # ← required; default True causes IB to reject TP in brackets
+        ...
+    )
+    ```
+*   **Impact:** Every bracket order rejected immediately. No position is ever opened.
+
+**19. Paper account — GTC TP/SL orders do not simulate fills (DELAYED_FROZEN)**
+*   **Cause:** IB paper accounts using `DELAYED_FROZEN` market data do not stream live price updates mid-session for new subscriptions. The paper trading engine cannot simulate TP/SL fills if the price feed is frozen.
+*   **Symptom:** Entry fills correctly, but TP and SL orders sit open indefinitely without filling. Only the fallback cancel + explicit close path fires.
+*   **Fix / Workaround:**
+    - The bracket structure itself is correct — use `scripts/test_bracket.py` to verify submission, acceptance, and entry fill.
+    - For full TP/SL fill simulation, start the strategy before market open (connection established before 09:30 ET gets a live delayed stream).
+    - On a live account (`REALTIME` data), TP/SL fills occur normally.
+    - The 5-minute fallback in `test_bracket.py` (cancel + explicit close) provides a confirmed working close path regardless.
 
 ---
 

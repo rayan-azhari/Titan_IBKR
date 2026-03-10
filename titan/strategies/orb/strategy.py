@@ -320,7 +320,8 @@ class ORBStrategy(Strategy):
     def on_order_accepted(self, event):
         """Fired when IB acknowledges the order."""
         self.log.info(
-            f"[{self.ticker}] ORDER ACCEPTED: {event.client_order_id} venue_id={event.venue_order_id}"
+            f"[{self.ticker}] ORDER ACCEPTED: {event.client_order_id} "
+            f"venue_id={event.venue_order_id}"
         )
 
     def on_order_rejected(self, event):
@@ -471,8 +472,8 @@ class ORBStrategy(Strategy):
             sl_trigger_price=Price(round(sl_price, precision), precision=precision),
             tp_price=Price(round(tp_price, precision), precision=precision),
             entry_order_type=OrderType.MARKET,
-            time_in_force=TimeInForce.DAY,  # entry TIF — named 'time_in_force' not 'entry_time_in_force'
-            tp_post_only=False,  # default True causes IB to reject TP limit orders in brackets
+            time_in_force=TimeInForce.DAY,  # entry TIF (not 'entry_time_in_force')
+            tp_post_only=False,  # default True causes IB to reject TP in brackets
             tp_time_in_force=TimeInForce.GTC,
             sl_time_in_force=TimeInForce.GTC,
         )
