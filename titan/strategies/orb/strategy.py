@@ -471,7 +471,8 @@ class ORBStrategy(Strategy):
             sl_trigger_price=Price(round(sl_price, precision), precision=precision),
             tp_price=Price(round(tp_price, precision), precision=precision),
             entry_order_type=OrderType.MARKET,
-            entry_time_in_force=TimeInForce.DAY,
+            time_in_force=TimeInForce.DAY,  # entry TIF — named 'time_in_force' not 'entry_time_in_force'
+            tp_post_only=False,  # default True causes IB to reject TP limit orders in brackets
             tp_time_in_force=TimeInForce.GTC,
             sl_time_in_force=TimeInForce.GTC,
         )

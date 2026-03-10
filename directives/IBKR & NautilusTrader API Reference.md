@@ -1343,14 +1343,19 @@ bracket = self.order_factory.bracket(
     sl_trigger_price=Price(sl_price, precision=precision),
     tp_price=Price(tp_price, precision=precision),
     entry_order_type=OrderType.MARKET,
-    entry_time_in_force=TimeInForce.DAY,  # DAY for market entry
-    tp_time_in_force=TimeInForce.GTC,     # GTC OK for limit/stop legs
+    time_in_force=TimeInForce.DAY,    # entry TIF — parameter is 'time_in_force', NOT 'entry_time_in_force'
+    tp_post_only=False,               # MUST be False — default True causes IB to reject TP limit orders in brackets
+    tp_time_in_force=TimeInForce.GTC, # GTC OK for limit/stop legs
     sl_time_in_force=TimeInForce.GTC,
 )
 self.submit_order_list(bracket)   # use submit_order_list, NOT submit_order
 ```
 
 > **Important:** `submit_order_list` creates proper OTO+OCO linkage. Never submit three independent orders manually — the SL and TP will not be linked.
+>
+> **IB bracket gotchas (verified live):**
+> - `time_in_force` (not `entry_time_in_force`) sets the entry order TIF — `entry_time_in_force` does not exist in the `bracket()` signature
+> - `tp_post_only=False` is required — the default `True` causes IB to reject the TP limit order in bracket context
 
 #### Closing a Position Reliably
 
