@@ -155,7 +155,9 @@ def main():
 
     # Data and exec share same client_id — adapter reuses a single socket
     is_live = ib_port in (4001, 7496)
-    mkt_data_type = IBMarketDataTypeEnum.REALTIME if is_live else IBMarketDataTypeEnum.DELAYED_FROZEN
+    mkt_data_type = (
+        IBMarketDataTypeEnum.REALTIME if is_live else IBMarketDataTypeEnum.DELAYED_FROZEN
+    )
     data_config = InteractiveBrokersDataClientConfig(
         ibg_host=ib_host,
         ibg_port=ib_port,

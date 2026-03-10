@@ -117,7 +117,9 @@ def main():
     # Data and exec share the same client_id so the adapter reuses a single socket.
     # Use DELAYED_FROZEN for paper accounts; switch to REALTIME for live accounts.
     is_live = ib_port in (4001, 7496)
-    mkt_data_type = IBMarketDataTypeEnum.REALTIME if is_live else IBMarketDataTypeEnum.DELAYED_FROZEN
+    mkt_data_type = (
+        IBMarketDataTypeEnum.REALTIME if is_live else IBMarketDataTypeEnum.DELAYED_FROZEN
+    )
     data_config = InteractiveBrokersDataClientConfig(
         ibg_host=ib_host,
         ibg_port=ib_port,
@@ -132,7 +134,7 @@ def main():
         ibg_client_id=ib_client_id,
         account_id=ib_account_id,
         instrument_provider=inst_config,
-        routing=RoutingConfig(default=True),  # route orders for NYSE/NASDAQ venues through this IB client
+        routing=RoutingConfig(default=True),  # route NYSE/NASDAQ orders through this IB client
     )
 
     # 2. Configure Node — use the canonical IB key, not "IBKR"
