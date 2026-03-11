@@ -26,6 +26,7 @@ class BalanceApp(EWrapper, EClient):
         self.balance_retrieved = False
         self.net_liq = "Unknown"
         self.available_funds = "Unknown"
+        self._all_values: list = []
 
     def nextValidId(self, orderId: int):
         # IB fires this once the connection handshake is fully complete.
@@ -33,6 +34,8 @@ class BalanceApp(EWrapper, EClient):
         self.ready = True
 
     def updateAccountValue(self, key: str, val: str, currency: str, accountName: str):
+        # Capture all values so debug mode can show what IB actually sends
+        self._all_values.append((key, val, currency))
         # IB paper accounts send values with currency="USD"; live may use "BASE"
         if key == "NetLiquidation" and currency in ("USD", "BASE"):
             self.net_liq = val
@@ -93,12 +96,18 @@ def main():
     print("-" * 40)
 
     if app.net_liq == "Unknown":
-        print(
-            "\n⚠  Balance data not received. Possible causes:\n"
-            "   1. Read-Only API is checked in TWS settings — uncheck it\n"
-            "   2. Account ID in .env does not match the logged-in account\n"
-            "   3. TWS is still initialising — wait 30 s and retry"
-        )
+        if app._all_values:
+            # Data came back but our key filter didn't match — show what IB sent
+            print("\n⚠  Got account data but key/currency didn't match. IB sent:")
+            for k, v, c in app._all_values[:20]:
+                print(f"   key={k!r}  currency={c!r}  val={v!r}")
+        else:
+            print(
+                "\n⚠  No account data received at all. Possible causes:\n"
+                "   1. Read-Only API is checked in TWS — Edit > Global Config > API > uncheck it\n"
+                "   2. Account ID in .env doesn't match the TWS logged-in account\n"
+                "   3. TWS is still initialising — wait 30 s and retry"
+            )
 
 
 if __name__ == "__main__":
