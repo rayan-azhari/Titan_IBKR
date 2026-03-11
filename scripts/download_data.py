@@ -31,7 +31,7 @@ from ibapi.wrapper import EWrapper
 # Config
 IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
 IBKR_PORT = int(os.getenv("IBKR_PORT", 4002))
-IBKR_CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", 10))
+IBKR_CLIENT_ID = 10  # Fixed ID — must not conflict with ORB (20) or check_balance (99)
 
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)

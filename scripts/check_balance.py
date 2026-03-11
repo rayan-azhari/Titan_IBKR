@@ -15,7 +15,7 @@ from ibapi.wrapper import EWrapper
 
 IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
 IBKR_PORT = int(os.getenv("IBKR_PORT", 7497))
-IBKR_CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", 99))
+IBKR_CLIENT_ID = 99  # Fixed ID — must not conflict with ORB (20) or download (10)
 IBKR_ACCOUNT_ID = os.getenv("IBKR_ACCOUNT_ID", "DUXXXXX")
 
 
@@ -27,11 +27,11 @@ class BalanceApp(EWrapper, EClient):
         self.available_funds = "Unknown"
 
     def updateAccountValue(self, key: str, val: str, currency: str, accountName: str):
-        if currency == "BASE":
-            if key == "NetLiquidationByCurrency":
-                self.net_liq = val
-            elif key == "AvailableFunds":
-                self.available_funds = val
+        # IB paper accounts send values with currency="USD"; live may use "BASE"
+        if key == "NetLiquidation" and currency in ("USD", "BASE"):
+            self.net_liq = val
+        elif key == "AvailableFunds" and currency in ("USD", "BASE"):
+            self.available_funds = val
 
     def accountDownloadEnd(self, accountName: str):
         self.balance_retrieved = True
