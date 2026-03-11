@@ -85,8 +85,9 @@ python scripts/check_balance.py
 
 Expected output:
 ```
-Connecting to IBKR on 127.0.0.1:4002 for Account DUxxxxxxx...
-Connection Successful!
+Connecting to IBKR on 127.0.0.1:7497 for Account DUxxxxxxx...
+
+✅ Connection Successful!
 ----------------------------------------
 Account ID:      DUxxxxxxx
 Net Liquidation: $XX,XXX.XX
@@ -94,7 +95,13 @@ Available Funds: $XX,XXX.XX
 ----------------------------------------
 ```
 
-If this fails, Gateway is not running or the port/account ID in `.env` is wrong.
+> **GBP-denominated accounts:** If your IB paper account is GBP-based, the balance will show in GBP (e.g. `£1,001,023.39`). The strategy sizes positions using this balance — `risk_pct=1%` of your GBP equity converted to USD position size.
+
+If this fails or shows "Unknown", check:
+- TWS is running and API is enabled (Edit → Global Config → API)
+- "Read-Only API" is **unchecked**
+- Account ID in `.env` matches the account logged in to TWS
+- Run again after waiting 30 seconds (TWS may still be initialising)
 
 ---
 
@@ -113,32 +120,36 @@ If this fails, Gateway is not running or the port/account ID in `.env` is wrong.
 
 ### Start the Strategy (~9:15 ET)
 
-Open **two terminal tabs** in Antigravity. In the first tab, start the strategy:
+Open **two terminal tabs** in Antigravity.
+
+In the first tab, start the strategy **with `tee`** so all output is captured to a file and visible in the terminal simultaneously:
 
 ```bash
 # bash (Antigravity terminal) — Tab 1
-python scripts/run_live_orb.py
+python scripts/run_live_orb.py 2>&1 | tee .tmp/logs/orb_stdout_$(date +%Y%m%d_%H%M%S).log
 ```
 
-The strategy runs in the **foreground**. You will see live logs directly in this terminal. Do not close this tab — closing it kills the strategy.
+> **Why `tee`?** NautilusTrader logs all framework events (connections, bar subscriptions, order submissions, fills, ORB formation) to **stdout only** — they do not appear in the `.tmp/logs/orb_live_*.log` file. Using `tee` captures the full output to a timestamped file so you can grep it after the session.
 
-### Monitor the Live Log — Tab 2
+Do not close this tab — closing it kills the strategy.
 
-In the second tab, tail the log file that the strategy writes to `.tmp/logs/`:
+### Monitor Live — Tab 2
+
+In the second tab, tail the stdout log captured by `tee`:
 
 ```bash
 # bash (Antigravity terminal) — Tab 2
-# Find the latest log file
-ls -t .tmp/logs/ | head -3
+# Find the latest stdout log
+ls -t .tmp/logs/orb_stdout_*.log | head -1
 
 # Stream it live (replace the filename with the actual one)
-tail -f .tmp/logs/orb_live_20260310_091500.log
+tail -f .tmp/logs/orb_stdout_20260311_091500.log
 ```
 
-If you are on **PowerShell** (not recommended, but if needed):
-```powershell
-# PowerShell — NOT the Antigravity terminal
-Get-Content .tmp\logs\orb_live_20260310_091500.log -Wait -Tail 50
+To filter for only the important events (orders, fills, errors):
+```bash
+# bash (Antigravity terminal) — Tab 2
+tail -f .tmp/logs/orb_stdout_20260311_091500.log | grep -i "ORB Formed\|Trigger\|Bracket\|FILLED\|REJECTED\|ERROR\|WARN"
 ```
 
 ---
@@ -381,6 +392,15 @@ ERROR: 321 API interface is currently in Read-Only mode.
 ```
 In TWS/Gateway: **Edit → Global Configuration → API → Settings → uncheck "Read-Only API"**. Orders will be silently rejected until this is fixed.
 
+### Terminal floods with `Portfolio: Updated AccountState` lines
+
+This is **normal**. IB pushes every account field individually every ~3 minutes. NautilusTrader fires one `Portfolio.Updated` event per field — so you get ~30 lines per batch. They confirm the account is connected and tracked. You can ignore them or filter them out when monitoring:
+
+```bash
+# bash (Antigravity terminal) — exclude AccountState noise
+tail -f .tmp/logs/orb_stdout_YYYYMMDD_HHMMSS.log | grep -v "Updated AccountState"
+```
+
 ### No fills / strategy seems idle
 
 This is normal. The strategy only trades when:
@@ -390,6 +410,10 @@ This is normal. The strategy only trades when:
 4. The time is before 11:00 ET
 
 If it is before 09:45 ET you will not see any trade logs — the strategy is waiting for the ORB to form.
+
+### Orders visible in TWS but not in the log file
+
+The `.tmp/logs/orb_live_*.log` file does **not** capture NautilusTrader strategy events. Order submissions, fills, ORB formation, and trigger signals only appear in **terminal stdout**. This is expected — always use `tee` at startup (see above) so the full output is also saved to `orb_stdout_*.log`.
 
 ### `[ERROR] No configuration found for TICKER`
 
@@ -431,10 +455,21 @@ python scripts/check_balance.py
 ### `.env` — Connection Settings
 ```ini
 IBKR_HOST=127.0.0.1        # Gateway/TWS host (local)
-IBKR_PORT=4002             # 4002=Gateway Paper, 4001=Gateway Live, 7497=TWS Paper, 7496=TWS Live
+IBKR_PORT=7497             # 7497=TWS Paper, 7496=TWS Live, 4002=Gateway Paper, 4001=Gateway Live
 IBKR_CLIENT_ID=20          # Socket client ID for the ORB strategy — must be unique per process
 IBKR_ACCOUNT_ID=DUxxxxxxx  # Your IB paper/live account ID
 ```
+
+Client ID assignments (hardcoded per script — do not reuse):
+
+| Script | Client ID | Notes |
+|--------|-----------|-------|
+| `run_live_orb.py` | 20 (from `.env`) | Main ORB strategy |
+| `check_balance.py` | 99 (hardcoded) | Safe to run alongside ORB |
+| `download_data.py` | 10 (hardcoded) | Run pre-market only |
+| `test_bracket.py` | 25 (hardcoded) | Testing only, not for live use |
+
+> **Error 326 (client ID in use):** If a previous run crashed without disconnecting, the old process still holds the socket. Kill all Python processes before restarting (see Force Kill above).
 
 ### `config/orb_live.toml` — Per-Ticker Strategy Parameters
 ```toml
@@ -460,12 +495,16 @@ warmup_bars_5m=200 # 5M bars loaded for ATR/Gaussian warmup (Gaussian needs 144+
 
 ## Log File Location
 
-All log files are written to:
-```
-.tmp/logs/orb_live_YYYYMMDD_HHMMSS.log
-```
+Two log files are created per run:
 
-Log files are timestamped at startup. Each new run of the strategy creates a new file. Old files accumulate — clean them up periodically:
+| File | What it captures |
+|------|-----------------|
+| `.tmp/logs/orb_live_YYYYMMDD_HHMMSS.log` | Startup messages only (runner script logger) |
+| `.tmp/logs/orb_stdout_YYYYMMDD_HHMMSS.log` | **Full output** — connections, bar subscriptions, ORB formation, orders, fills, errors (requires `tee` at startup — see above) |
+
+> **Important:** NautilusTrader framework logs and all `self.log.info()` calls from the strategy go to **stdout only**. The `orb_live_*.log` file only captures the Python logger in `run_live_orb.py` and will not show order events, ORB formation, or fills. Always use `tee` so you have the full record.
+
+Log files are timestamped at startup. Each new run creates new files. Clean up periodically:
 
 ```bash
 # bash (Antigravity terminal) — delete logs older than 7 days
