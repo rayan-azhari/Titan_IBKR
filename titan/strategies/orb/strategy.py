@@ -21,7 +21,7 @@ import pandas as pd
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import OrderSide, OrderType, TimeInForce
+from nautilus_trader.model.enums import OrderSide, OrderType, PriceType, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.trading.strategy import Strategy
@@ -422,7 +422,29 @@ class ORBStrategy(Strategy):
         if not currencies:
             self.log.error(f"[{self.ticker}] Account has no balances. Cannot size position.")
             return
-        equity = float(account.balance_total(currencies[0]).as_double())
+        acct_ccy = currencies[0]
+        equity_raw = float(account.balance_total(acct_ccy).as_double())
+
+        # Convert account equity to USD (instrument currency) for correct sizing.
+        # If the account is GBP-denominated and no GBPUSD rate is cached, fall back
+        # to raw balance with a warning (positions will be ~20% undersized).
+        equity = equity_raw
+        if str(acct_ccy) != "USD":
+            try:
+                from nautilus_trader.model.currency import Currency
+
+                usd = Currency.from_str("USD")
+                fx = self.portfolio.exchange_rate(acct_ccy, usd, PriceType.MID)
+                if fx and fx > 0:
+                    equity = equity_raw * fx
+                else:
+                    raise ValueError("zero rate")
+            except Exception:
+                self.log.warning(
+                    f"[{self.ticker}] No {acct_ccy}/USD FX rate cached; "
+                    "using raw account balance for sizing."
+                )
+
         risk_amount = equity * self.config.risk_pct
 
         risk_per_share = self.current_atr * self.atr_multiplier
