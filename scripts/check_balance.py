@@ -36,11 +36,16 @@ class BalanceApp(EWrapper, EClient):
     def updateAccountValue(self, key: str, val: str, currency: str, accountName: str):
         # Capture all values so debug mode can show what IB actually sends
         self._all_values.append((key, val, currency))
-        # IB paper accounts send values with currency="USD"; live may use "BASE"
-        if key == "NetLiquidation" and currency in ("USD", "BASE"):
-            self.net_liq = val
-        elif key == "AvailableFunds" and currency in ("USD", "BASE"):
-            self.available_funds = val
+        # IB sends per-currency breakdowns with suffixes like "AvailableFunds-C".
+        # Skip those; only take the top-level total (no dash in currency suffix).
+        # Prefer BASE (currency-neutral total); fall back to the first plain currency.
+        if "-" not in currency:
+            if key == "NetLiquidation":
+                if currency == "BASE" or self.net_liq == "Unknown":
+                    self.net_liq = val
+            elif key == "AvailableFunds":
+                if currency == "BASE" or self.available_funds == "Unknown":
+                    self.available_funds = val
 
     def accountDownloadEnd(self, accountName: str):
         self.balance_retrieved = True
