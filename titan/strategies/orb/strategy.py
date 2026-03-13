@@ -8,7 +8,7 @@ Bracket Management:
   Uses order_factory.bracket() with entry_order_type=MARKET.
   NautilusTrader wires OTO (entry triggers TP+SL) and OCO (TP/SL cancel each other)
   contingency automatically — no manual counterpart tracking needed.
-  Positions are flattened at 15:55 ET to avoid overnight gap risk.
+  Positions are flattened at 15:50 ET to avoid overnight gap risk.
 """
 
 import tomllib
@@ -255,8 +255,10 @@ class ORBStrategy(Strategy):
 
             return  # Still in the ORB window, no trading yet
 
-        # EOD Flatten: Close all positions and cancel orders at 15:55 ET
-        eod_time = time(15, 55)
+        # EOD Flatten: Close all positions and cancel orders at 15:50 ET
+        # Using 15:50 (not 15:55) to ensure the market order fills before 16:00 close,
+        # accounting for bar lag on DELAYED_FROZEN paper accounts.
+        eod_time = time(15, 50)
         if bar_time >= eod_time and not self.eod_flattened:
             self._flatten_eod()
             return
@@ -308,7 +310,7 @@ class ORBStrategy(Strategy):
         self.cancel_all_orders(self.instrument_id)
         self.close_all_positions(self.instrument_id)
         self.log.info(
-            f"[{self.ticker}] EOD Flatten @ 15:55 ET — Closed all positions and cancelled orders."
+            f"[{self.ticker}] EOD Flatten @ 15:50 ET — Closed all positions and cancelled orders."
         )
 
     def on_order_submitted(self, event):
