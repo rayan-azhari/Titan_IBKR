@@ -54,8 +54,18 @@ class KillSwitchApp(EWrapper, EClient):
         self.positions_done = True
 
     def orderStatus(
-        self, orderId, status, filled, remaining, avgFillPrice,
-        permId, parentId, lastFillPrice, clientId, whyHeld, mktCapPrice,
+        self,
+        orderId,
+        status,
+        filled,
+        remaining,
+        avgFillPrice,
+        permId,
+        parentId,
+        lastFillPrice,
+        clientId,
+        whyHeld,
+        mktCapPrice,
     ):
         if status not in ("PreSubmitted", "Submitted"):
             print(f"  Order {orderId}: {status}  filled={filled}  remaining={remaining}")
@@ -76,7 +86,7 @@ def _stock_contract(symbol: str) -> Contract:
 
 def _market_order(action: str, quantity: float) -> Order:
     o = Order()
-    o.action = action         # "BUY" or "SELL"
+    o.action = action  # "BUY" or "SELL"
     o.orderType = "MKT"
     o.totalQuantity = quantity
     o.tif = "DAY"
