@@ -3,10 +3,10 @@
 # ========================================================
 # Optimised via run_pair_sweep.py (greedy Stage 3).
 # Pair: GBP_USD
-# OOS LONG Sharpe:  3.056
-# OOS SHORT Sharpe: 2.842
-# Combined Sharpe:  2.358
-# Gates passed: NO -- review before live
+# OOS LONG Sharpe:  1.947
+# OOS SHORT Sharpe: 1.432
+# Combined Sharpe:  1.324
+# Gates passed: YES
 
 confirmation_threshold = 0.10
 atr_stop_mult = 2.5
@@ -18,21 +18,21 @@ D  = 0.60
 W  = 0.05
 
 [H1]
-fast_ma = 10
-slow_ma = 30
-rsi_period = 10
+fast_ma = 20
+slow_ma = 100
+rsi_period = 21
 
 [H4]
 fast_ma = 10
 slow_ma = 30
-rsi_period = 7
+rsi_period = 14
 
 [D]
 fast_ma = 5
 slow_ma = 20
-rsi_period = 14
+rsi_period = 10
 
 [W]
-fast_ma = 13
-slow_ma = 26
-rsi_period = 14
+fast_ma = 10
+slow_ma = 21
+rsi_period = 7

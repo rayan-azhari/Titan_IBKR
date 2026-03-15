@@ -18,7 +18,7 @@ import argparse
 import sys
 import threading
 import time
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
 
@@ -43,12 +43,14 @@ IBKR_CLIENT_ID = 11  # Fixed — must not conflict with ORB (20), check_balance 
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# Timeframes needed by the MTF strategy
+# Timeframes: (suffix, bar_size, max_duration_per_chunk, needs_chunking)
+# H1/H4 are capped at 1Y per IBKR request — require chunking for multi-year fetches.
+# D/W support multi-year durations in a single request.
 TIMEFRAMES = [
-    ("H1", "1 hour",  "1 Y"),
-    ("H4", "4 hours", "1 Y"),
-    ("D",  "1 day",   "5 Y"),
-    ("W",  "1 week",  "5 Y"),
+    ("H1", "1 hour",  "1 Y", True),
+    ("H4", "4 hours", "1 Y", True),
+    ("D",  "1 day",   None,  False),
+    ("W",  "1 week",  None,  False),
 ]
 
 
@@ -96,47 +98,11 @@ def build_contract(symbol: str, currency: str) -> Contract:
     return c
 
 
-def fetch_timeframe(
-    app: IBKRHistoricalDataApp,
-    req_id: int,
-    pair: str,
-    symbol: str,
-    currency: str,
-    suffix: str,
-    bar_size: str,
-    duration: str,
-) -> None:
-    output_path = DATA_DIR / f"{pair}_{suffix}.parquet"
-    print(f"  Downloading {pair} {suffix} (bar_size='{bar_size}', duration='{duration}')...")
-
-    app.data_store = []
-    app.req_complete = False
-    app.error_received = False
-    app.error_msg = ""
-
-    app.reqHistoricalData(
-        reqId=req_id,
-        contract=build_contract(symbol, currency),
-        endDateTime="",
-        durationStr=duration,
-        barSizeSetting=bar_size,
-        whatToShow="MIDPOINT",
-        useRTH=0,          # forex trades 24h — include all sessions
-        formatDate=1,
-        keepUpToDate=False,
-        chartOptions=[],
-    )
-
-    while not app.req_complete:
-        time.sleep(0.5)
-
-    if app.error_received:
-        print(f"    ERROR: {app.error_msg}")
-        return
-
+def _parse_and_save(app: IBKRHistoricalDataApp, output_path: Path) -> pd.DataFrame | None:
+    """Parse data_store into a DataFrame and merge-save to parquet. Returns merged df."""
     if not app.data_store:
         print("    WARNING: No data returned.")
-        return
+        return None
 
     df = pd.DataFrame(app.data_store)
 
@@ -151,7 +117,7 @@ def fetch_timeframe(
     if df["timestamp"].dt.tz is None:
         df["timestamp"] = df["timestamp"].dt.tz_localize("UTC")
 
-    # Merge with existing file to avoid re-downloading old data
+    # Merge with existing file
     if output_path.exists():
         existing = pd.read_parquet(output_path)
         if not pd.api.types.is_datetime64_any_dtype(existing["timestamp"]):
@@ -162,12 +128,56 @@ def fetch_timeframe(
             .sort_values("timestamp")
         )
 
-    # Drop any future-timestamped rows (data artefact)
-    now_utc = pd.Timestamp.now(timezone.utc)
-    df = df[df["timestamp"] <= now_utc]
-
+    # Drop future-timestamped rows (data artefact)
+    df = df[df["timestamp"] <= pd.Timestamp.now(timezone.utc)]
     df.to_parquet(output_path, index=False)
-    print(f"    Saved. Total rows: {len(df)}. Last: {df['timestamp'].max()}")
+    return df
+
+
+def fetch_timeframe(
+    app: IBKRHistoricalDataApp,
+    req_id: int,
+    pair: str,
+    symbol: str,
+    currency: str,
+    suffix: str,
+    bar_size: str,
+    duration: str,
+    end_dt: str = "",
+) -> None:
+    """Fetch one chunk of historical data and merge-save to parquet."""
+    output_path = DATA_DIR / f"{pair}_{suffix}.parquet"
+    label = f"end={end_dt}" if end_dt else "end=now"
+    print(f"  {pair} {suffix} [{label}] ...")
+
+    app.data_store = []
+    app.req_complete = False
+    app.error_received = False
+    app.error_msg = ""
+
+    app.reqHistoricalData(
+        reqId=req_id,
+        contract=build_contract(symbol, currency),
+        endDateTime=end_dt,
+        durationStr=duration,
+        barSizeSetting=bar_size,
+        whatToShow="MIDPOINT",
+        useRTH=0,
+        formatDate=1,
+        keepUpToDate=False,
+        chartOptions=[],
+    )
+
+    while not app.req_complete:
+        time.sleep(0.5)
+
+    if app.error_received:
+        print(f"    ERROR: {app.error_msg}")
+        return
+
+    df = _parse_and_save(app, output_path)
+    if df is not None:
+        print(f"    Saved. Total rows: {len(df)}. Range: {df['timestamp'].min().date()} -> {df['timestamp'].max().date()}")
 
 
 def main() -> None:
@@ -177,6 +187,12 @@ def main() -> None:
         default="EUR_USD",
         help="FX pair in BASE_QUOTE format, e.g. EUR_USD or GBP_USD (default: EUR_USD)",
     )
+    parser.add_argument(
+        "--years",
+        type=int,
+        default=1,
+        help="Years of history to download (default: 1). H1/H4 are fetched in 1Y chunks.",
+    )
     args = parser.parse_args()
 
     pair = args.pair.upper()
@@ -185,8 +201,9 @@ def main() -> None:
         print(f"ERROR: --pair must be BASE_QUOTE format (e.g. EUR_USD), got: {pair}")
         sys.exit(1)
     symbol, currency = parts[0], parts[1]
+    years = args.years
 
-    print(f"Downloading {pair} warmup data for MTF strategy...\n")
+    print(f"Downloading {pair} ({years}Y) for MTF strategy...\n")
 
     app = IBKRHistoricalDataApp()
     app.connect(IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID)
@@ -198,11 +215,29 @@ def main() -> None:
         print("  Check that TWS/Gateway is running and API is enabled on port", IBKR_PORT)
         app.disconnect()
         sys.exit(1)
-    print("  Connected.")
+    print("  Connected.\n")
 
-    for req_id, (suffix, bar_size, duration) in enumerate(TIMEFRAMES, start=1):
-        fetch_timeframe(app, req_id, pair, symbol, currency, suffix, bar_size, duration)
-        time.sleep(1)  # IBKR historical data pacing
+    req_id = 1
+    now_utc = datetime.now(timezone.utc)
+
+    for suffix, bar_size, chunk_duration, needs_chunking in TIMEFRAMES:
+        if needs_chunking:
+            # H1/H4: fetch 1Y chunks, stepping back from now
+            for chunk in range(years):
+                if chunk == 0:
+                    end_dt = ""
+                else:
+                    end_ts = now_utc - timedelta(days=365 * chunk)
+                    end_dt = end_ts.strftime("%Y%m%d-%H:%M:%S")
+                fetch_timeframe(app, req_id, pair, symbol, currency, suffix, bar_size, chunk_duration, end_dt)
+                req_id += 1
+                time.sleep(2)  # IBKR pacing between requests
+        else:
+            # D/W: single request for full history
+            duration = f"{years} Y"
+            fetch_timeframe(app, req_id, pair, symbol, currency, suffix, bar_size, duration)
+            req_id += 1
+            time.sleep(2)
 
     print(f"\n{pair} data download complete.\n")
     app.disconnect()
