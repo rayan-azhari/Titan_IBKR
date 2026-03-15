@@ -84,7 +84,7 @@ class IBKRHistoricalDataApp(EWrapper, EClient):
         self.req_complete = True
 
     def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=""):
-        if errorCode not in [2104, 2106, 2158]:  # ignore info-only messages
+        if errorCode not in [2104, 2106, 2108, 2158]:  # ignore info-only messages
             self.error_received = True
             self.error_msg = f"[{errorCode}] {errorString}"
             if reqId > -1:

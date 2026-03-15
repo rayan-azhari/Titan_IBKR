@@ -1,0 +1,38 @@
+# ========================================================
+# mtf_audusd.toml -- MTF Confluence Config for AUD_USD
+# ========================================================
+# Optimised via run_pair_sweep.py (greedy Stage 3).
+# Pair: AUD_USD
+# OOS LONG Sharpe:  0.135
+# OOS SHORT Sharpe: 0.337
+# Combined Sharpe:  0.249
+# Gates passed: NO -- review before live
+
+confirmation_threshold = 0.45
+atr_stop_mult = 4.0
+
+[weights]
+H1 = 0.10
+H4 = 0.25
+D  = 0.60
+W  = 0.05
+
+[H1]
+fast_ma = 10
+slow_ma = 30
+rsi_period = 10
+
+[H4]
+fast_ma = 15
+slow_ma = 50
+rsi_period = 14
+
+[D]
+fast_ma = 8
+slow_ma = 25
+rsi_period = 21
+
+[W]
+fast_ma = 10
+slow_ma = 13
+rsi_period = 14
