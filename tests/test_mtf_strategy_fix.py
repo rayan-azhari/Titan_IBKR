@@ -22,6 +22,7 @@ class TestMTFStrategyFix(unittest.TestCase):
                 "nautilus_trader.model": MagicMock(),
                 "nautilus_trader.model.data": MagicMock(),
                 "nautilus_trader.model.enums": MagicMock(),
+                "nautilus_trader.model.events": MagicMock(),
                 "nautilus_trader.model.identifiers": MagicMock(),
                 "nautilus_trader.model.objects": MagicMock(),
                 "nautilus_trader.trading": MagicMock(),

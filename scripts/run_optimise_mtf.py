@@ -31,7 +31,7 @@ warnings.filterwarnings("ignore")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-DATA_DIR    = PROJECT_ROOT / "data"
+DATA_DIR = PROJECT_ROOT / "data"
 REPORTS_DIR = PROJECT_ROOT / ".tmp" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -42,12 +42,12 @@ except ImportError:
     sys.exit(1)
 
 # ── Constants ────────────────────────────────────────────────────────────────
-PAIR           = "EUR_USD"
-INIT_EQUITY    = 10_000.0
-RISK_PER_TRADE = 200.0      # 2% of $10k
-MAX_LEVERAGE   = 30.0       # hard cap on leverage (IBKR limit for retail)
-IS_FRAC        = 0.70
-FREQ           = "1h"       # H1 primary index
+PAIR = "EUR_USD"
+INIT_EQUITY = 10_000.0
+RISK_PER_TRADE = 200.0  # 2% of $10k
+MAX_LEVERAGE = 30.0  # hard cap on leverage (IBKR limit for retail)
+IS_FRAC = 0.70
+FREQ = "1h"  # H1 primary index
 
 # Stage 1 grid
 THRESHOLDS = [0.05, 0.10, 0.15, 0.20, 0.25]
@@ -82,16 +82,33 @@ WEIGHT_PRESETS = [
 
 # Stage 2 grids per TF
 PARAM_GRIDS = {
-    "D":  {"fast_ma": [5, 8, 10, 13, 15, 20],    "slow_ma": [20, 25, 30, 40, 50, 60],   "rsi_period": [7, 10, 14, 21]},
-    "H4": {"fast_ma": [8, 10, 13, 15, 20, 25],   "slow_ma": [30, 40, 50, 60, 80],       "rsi_period": [7, 10, 14, 21]},
-    "H1": {"fast_ma": [8, 10, 13, 15, 20, 25],   "slow_ma": [20, 30, 40, 50, 80],       "rsi_period": [10, 14, 21, 28]},
-    "W":  {"fast_ma": [3, 5, 8, 10, 13],          "slow_ma": [8, 13, 21, 26, 34],        "rsi_period": [7, 10, 14, 21]},
+    "D": {
+        "fast_ma": [5, 8, 10, 13, 15, 20],
+        "slow_ma": [20, 25, 30, 40, 50, 60],
+        "rsi_period": [7, 10, 14, 21],
+    },
+    "H4": {
+        "fast_ma": [8, 10, 13, 15, 20, 25],
+        "slow_ma": [30, 40, 50, 60, 80],
+        "rsi_period": [7, 10, 14, 21],
+    },
+    "H1": {
+        "fast_ma": [8, 10, 13, 15, 20, 25],
+        "slow_ma": [20, 30, 40, 50, 80],
+        "rsi_period": [10, 14, 21, 28],
+    },
+    "W": {
+        "fast_ma": [3, 5, 8, 10, 13],
+        "slow_ma": [8, 13, 21, 26, 34],
+        "rsi_period": [7, 10, 14, 21],
+    },
 }
 SWEEP_ORDER = ["D", "H4", "H1", "W"]
-BATCH_SIZE  = 20
+BATCH_SIZE = 20
 
 
 # ── Data helpers ─────────────────────────────────────────────────────────────
+
 
 def load_parquet(pair: str, gran: str) -> pd.DataFrame:
     path = DATA_DIR / f"{pair}_{gran}.parquet"
@@ -104,18 +121,21 @@ def load_parquet(pair: str, gran: str) -> pd.DataFrame:
 
 
 def compute_atr14(df: pd.DataFrame) -> pd.Series:
-    tr = pd.concat([
-        df["high"] - df["low"],
-        (df["high"] - df["close"].shift(1)).abs(),
-        (df["low"]  - df["close"].shift(1)).abs(),
-    ], axis=1).max(axis=1)
+    tr = pd.concat(
+        [
+            df["high"] - df["low"],
+            (df["high"] - df["close"].shift(1)).abs(),
+            (df["low"] - df["close"].shift(1)).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
     return tr.rolling(14).mean()
 
 
 def compute_rsi(close: pd.Series, period: int) -> pd.Series:
     delta = close.diff()
-    gain  = delta.where(delta > 0, 0.0).rolling(period).mean()
-    loss  = (-delta.where(delta < 0, 0.0)).rolling(period).mean()
+    gain = delta.where(delta > 0, 0.0).rolling(period).mean()
+    loss = (-delta.where(delta < 0, 0.0)).rolling(period).mean()
     return 100.0 - (100.0 / (1.0 + gain / loss))
 
 
@@ -123,14 +143,14 @@ def compute_tf_signal(close: pd.Series, fast_ma: int, slow_ma: int, rsi_period: 
     """Per-TF signal in [-1, +1]. MA crossover + RSI threshold, each ±0.5."""
     fast = close.rolling(fast_ma).mean()
     slow = close.rolling(slow_ma).mean()
-    rsi  = compute_rsi(close, rsi_period)
-    return (
-        pd.Series(np.where(fast > slow, 0.5, -0.5), index=close.index)
-        + pd.Series(np.where(rsi > 50, 0.5, -0.5), index=close.index)
+    rsi = compute_rsi(close, rsi_period)
+    return pd.Series(np.where(fast > slow, 0.5, -0.5), index=close.index) + pd.Series(
+        np.where(rsi > 50, 0.5, -0.5), index=close.index
     )
 
 
 # ── ATR-based position sizing ────────────────────────────────────────────────
+
 
 def compute_units(atr14: pd.Series, close: pd.Series) -> pd.Series:
     """Units of EUR per trade based on $200 risk and ATR stop.
@@ -146,6 +166,7 @@ def compute_units(atr14: pd.Series, close: pd.Series) -> pd.Series:
 
 
 # ── Equity curve construction (trade-by-trade) ───────────────────────────────
+
 
 def build_equity_curve(
     trades_df: pd.DataFrame,
@@ -173,7 +194,6 @@ def build_equity_curve(
 
     for _, t in trades_df.iterrows():
         entry_ts = t["Entry Timestamp"]
-        exit_ts  = t["Exit Timestamp"]
 
         # Look up ATR at entry bar (no look-ahead — ATR uses past 14 bars)
         if entry_ts not in atr14.index:
@@ -184,14 +204,14 @@ def build_equity_curve(
 
         # Position size (units of EUR)
         entry_price = float(t["Avg Entry Price"])
-        max_units   = (equity * MAX_LEVERAGE) / entry_price
-        units       = min(RISK_PER_TRADE / atr_val, max_units)
-        units       = max(units, 0.0)
+        max_units = (equity * MAX_LEVERAGE) / entry_price
+        units = min(RISK_PER_TRADE / atr_val, max_units)
+        units = max(units, 0.0)
 
         # Gross P&L
-        exit_price  = float(t["Avg Exit Price"])
-        direction   = 1 if "Long" in str(t["Direction"]) else -1
-        gross_pnl   = direction * units * (exit_price - entry_price)
+        exit_price = float(t["Avg Exit Price"])
+        direction = 1 if "Long" in str(t["Direction"]) else -1
+        gross_pnl = direction * units * (exit_price - entry_price)
 
         # Round-trip spread cost
         fee = spread * units * 2
@@ -204,12 +224,12 @@ def build_equity_curve(
             wins += 1
 
     equity_arr = np.array(equity_curve)
-    returns    = np.diff(equity_arr) / equity_arr[:-1]
+    returns = np.diff(equity_arr) / equity_arr[:-1]
 
-    total_ret  = (equity - INIT_EQUITY) / INIT_EQUITY * 100
+    total_ret = (equity - INIT_EQUITY) / INIT_EQUITY * 100
     dollar_pnl = equity - INIT_EQUITY
-    n_trades   = len(equity_curve) - 1
-    win_rate   = wins / n_trades * 100 if n_trades > 0 else 0.0
+    n_trades = len(equity_curve) - 1
+    win_rate = wins / n_trades * 100 if n_trades > 0 else 0.0
 
     # Annualise: can't compute from trade-level without dates easily
     # Use CAGR proxy from total return and trade count / assumed holding
@@ -235,6 +255,7 @@ def build_equity_curve(
 
 # ── VectorBT batch runner ─────────────────────────────────────────────────────
 
+
 def run_vbt_batch(
     close: pd.Series,
     confluences: dict[str, pd.Series],
@@ -246,13 +267,13 @@ def run_vbt_batch(
     Returns readable trade records with 'Column' identifying the combo.
     """
     col_names = list(confluences.keys())
-    close_df  = pd.DataFrame({c: close.values for c in col_names}, index=close.index)
+    close_df = pd.DataFrame({c: close.values for c in col_names}, index=close.index)
 
-    confl_df      = pd.DataFrame(confluences, index=close.index)
-    long_entries  = confl_df >= threshold
+    confl_df = pd.DataFrame(confluences, index=close.index)
+    long_entries = confl_df >= threshold
     short_entries = confl_df <= -threshold
-    long_exits    = confl_df < 0
-    short_exits   = confl_df > 0
+    long_exits = confl_df < 0
+    short_exits = confl_df > 0
 
     try:
         pf = vbt.Portfolio.from_signals(
@@ -282,31 +303,30 @@ def score_combo(trades_df: pd.DataFrame, col_name: str, atr14: pd.Series, close:
         t, atr14, close
     )
     return {
-        "sharpe":      sharpe,
-        "total_ret":   total_ret,
-        "dollar_pnl":  dollar_pnl,
-        "max_dd":      max_dd,
-        "n_trades":    n_trades,
-        "win_rate":    win_rate,
+        "sharpe": sharpe,
+        "total_ret": total_ret,
+        "dollar_pnl": dollar_pnl,
+        "max_dd": max_dd,
+        "n_trades": n_trades,
+        "win_rate": win_rate,
     }
 
 
 # ── Signal cache ─────────────────────────────────────────────────────────────
+
 
 def build_tf_signals(mtf_cfg: dict, h1_index: pd.DatetimeIndex) -> dict[str, pd.Series]:
     """Compute per-TF signals on their native granularity, aligned to H1 index."""
     tfs_data = {
         "H1": load_parquet(PAIR, "H1"),
         "H4": load_parquet(PAIR, "H4"),
-        "D":  load_parquet(PAIR, "D"),
-        "W":  load_parquet(PAIR, "W"),
+        "D": load_parquet(PAIR, "D"),
+        "W": load_parquet(PAIR, "W"),
     }
     signals = {}
     for tf_name, df_tf in tfs_data.items():
         cfg = mtf_cfg[tf_name]
-        sig = compute_tf_signal(
-            df_tf["close"], cfg["fast_ma"], cfg["slow_ma"], cfg["rsi_period"]
-        )
+        sig = compute_tf_signal(df_tf["close"], cfg["fast_ma"], cfg["slow_ma"], cfg["rsi_period"])
         signals[tf_name] = sig.reindex(h1_index, method="ffill")
     return signals
 
@@ -320,6 +340,7 @@ def build_confluence(tf_signals: dict, weights: dict) -> pd.Series:
 
 
 # ── Stage 1: threshold × weight sweep ────────────────────────────────────────
+
 
 def run_stage1(
     base_tf_signals: dict,
@@ -339,18 +360,18 @@ def run_stage1(
         all_confluences[key] = confl[is_close.index]
 
     # Batch VBT
-    keys      = list(all_confluences.keys())
+    keys = list(all_confluences.keys())
     n_batches = (len(keys) + BATCH_SIZE - 1) // BATCH_SIZE
     all_trades = pd.DataFrame()
 
     for b in range(n_batches):
-        batch_keys   = keys[b * BATCH_SIZE : (b + 1) * BATCH_SIZE]
-        batch_confl  = {k: all_confluences[k] for k in batch_keys}
+        batch_keys = keys[b * BATCH_SIZE : (b + 1) * BATCH_SIZE]
+        batch_confl = {k: all_confluences[k] for k in batch_keys}
         # Use first threshold encountered — we pass threshold=0 and gate inside confl shape
         # Actually each key already embeds threshold. Use threshold=0 and let the entry/exit
         # logic use the actual confluence values. But we need per-combo thresholds.
         # Simplification: run each threshold group separately.
-        sys.stdout.write(f"\r  Batch {b+1}/{n_batches}...   ")
+        sys.stdout.write(f"\r  Batch {b + 1}/{n_batches}...   ")
         sys.stdout.flush()
 
         trades = run_vbt_batch(is_close, batch_confl, threshold=0.0)
@@ -364,28 +385,37 @@ def run_stage1(
     # Score each combo
     for thresh, w_idx in combos:
         key = f"t{thresh}_w{w_idx}"
-        t_subset = all_trades[all_trades["Column"] == key] if len(all_trades) > 0 else pd.DataFrame()
+        t_subset = (
+            all_trades[all_trades["Column"] == key] if len(all_trades) > 0 else pd.DataFrame()
+        )
         stats = score_combo(t_subset, key, is_atr, is_close)
-        stats.update({
-            "threshold": thresh,
-            "weight_idx": w_idx,
-            "key": key,
-            **{f"w_{tf}": WEIGHT_PRESETS[w_idx][tf] for tf in ["H1","H4","D","W"]},
-        })
+        stats.update(
+            {
+                "threshold": thresh,
+                "weight_idx": w_idx,
+                "key": key,
+                **{f"w_{tf}": WEIGHT_PRESETS[w_idx][tf] for tf in ["H1", "H4", "D", "W"]},
+            }
+        )
         results.append(stats)
 
     df = pd.DataFrame(results).sort_values("sharpe", ascending=False)
     df.to_csv(REPORTS_DIR / "mtf_opt_stage1.csv", index=False)
 
     best = df.iloc[0]
-    print(f"  Best IS: threshold={best['threshold']}, weights=H1:{best['w_H1']} H4:{best['w_H4']} D:{best['w_D']} W:{best['w_W']}, Sharpe={best['sharpe']:.3f}")
+    print(
+        f"  Best IS: threshold={best['threshold']}, "
+        f"weights=H1:{best['w_H1']} H4:{best['w_H4']} D:{best['w_D']} W:{best['w_W']}, "
+        f"Sharpe={best['sharpe']:.3f}"
+    )
     return {
-        "threshold":  best["threshold"],
-        "weights":    WEIGHT_PRESETS[int(best["weight_idx"])],
+        "threshold": best["threshold"],
+        "weights": WEIGHT_PRESETS[int(best["weight_idx"])],
     }, df
 
 
 # ── Proper Stage 1 (threshold-aware) ─────────────────────────────────────────
+
 
 def run_stage1_proper(
     base_tf_signals: dict,
@@ -397,20 +427,20 @@ def run_stage1_proper(
 
     results = []
     total = len(THRESHOLDS) * len(WEIGHT_PRESETS)
-    done  = 0
+    done = 0
 
     for thresh in THRESHOLDS:
         # Build confluences for all weight presets at this threshold
         batch_conf = {}
         for w_idx, w in enumerate(WEIGHT_PRESETS):
-            key  = f"t{thresh}_w{w_idx}"
+            key = f"t{thresh}_w{w_idx}"
             conf = build_confluence(base_tf_signals, w)
             batch_conf[key] = conf[is_close.index]
 
         # Run in sub-batches
-        keys     = list(batch_conf.keys())
-        n_sub    = (len(keys) + BATCH_SIZE - 1) // BATCH_SIZE
-        all_trd  = pd.DataFrame()
+        keys = list(batch_conf.keys())
+        n_sub = (len(keys) + BATCH_SIZE - 1) // BATCH_SIZE
+        all_trd = pd.DataFrame()
 
         for b in range(n_sub):
             bkeys = keys[b * BATCH_SIZE : (b + 1) * BATCH_SIZE]
@@ -427,12 +457,14 @@ def run_stage1_proper(
             key = f"t{thresh}_w{w_idx}"
             t_sub = all_trd[all_trd["Column"] == key] if len(all_trd) > 0 else pd.DataFrame()
             stats = score_combo(t_sub, key, is_atr, is_close)
-            stats.update({
-                "threshold": thresh,
-                "weight_idx": w_idx,
-                "key": key,
-                **{f"w_{tf}": w[tf] for tf in ["H1","H4","D","W"]},
-            })
+            stats.update(
+                {
+                    "threshold": thresh,
+                    "weight_idx": w_idx,
+                    "key": key,
+                    **{f"w_{tf}": w[tf] for tf in ["H1", "H4", "D", "W"]},
+                }
+            )
             results.append(stats)
 
     print()
@@ -440,14 +472,19 @@ def run_stage1_proper(
     df.to_csv(REPORTS_DIR / "mtf_opt_stage1.csv", index=False)
 
     best = df.iloc[0]
-    print(f"  Best: thresh={best['threshold']}  H1:{best['w_H1']} H4:{best['w_H4']} D:{best['w_D']} W:{best['w_W']}  Sharpe={best['sharpe']:.3f}  Trades={best['n_trades']:.0f}")
+    print(
+        f"  Best: thresh={best['threshold']}  "
+        f"H1:{best['w_H1']} H4:{best['w_H4']} D:{best['w_D']} W:{best['w_W']}  "
+        f"Sharpe={best['sharpe']:.3f}  Trades={best['n_trades']:.0f}"
+    )
     return {
         "threshold": best["threshold"],
-        "weights":   WEIGHT_PRESETS[int(best["weight_idx"])],
+        "weights": WEIGHT_PRESETS[int(best["weight_idx"])],
     }, df
 
 
 # ── Stage 2: greedy per-TF MA/RSI sweep ──────────────────────────────────────
+
 
 def run_stage2(
     best_s1: dict,
@@ -466,8 +503,8 @@ def run_stage2(
     for tf in SWEEP_ORDER:
         grid = PARAM_GRIDS[tf]
         close_tf = native_closes[tf]
-        weights  = best_s1["weights"]
-        thresh   = best_s1["threshold"]
+        weights = best_s1["weights"]
+        thresh = best_s1["threshold"]
 
         # Pre-compute fixed signal sum (all other TFs at their current best params)
         fixed_conf = pd.Series(0.0, index=h1_index)
@@ -486,23 +523,23 @@ def run_stage2(
 
         batch_conf = {}
         for f, s, r in combos:
-            sig     = compute_tf_signal(close_tf, f, s, r)
+            sig = compute_tf_signal(close_tf, f, s, r)
             aligned = sig.reindex(h1_index, method="ffill")[is_close.index]
-            key     = f"{tf}_f{f}_s{s}_r{r}"
+            key = f"{tf}_f{f}_s{s}_r{r}"
             batch_conf[key] = fixed_conf + aligned * weights.get(tf, 0.0)
 
         # Sub-batch VBT
-        keys    = list(batch_conf.keys())
-        n_sub   = (len(keys) + BATCH_SIZE - 1) // BATCH_SIZE
+        keys = list(batch_conf.keys())
+        n_sub = (len(keys) + BATCH_SIZE - 1) // BATCH_SIZE
         all_trd = pd.DataFrame()
 
         for b in range(n_sub):
-            bkeys  = keys[b * BATCH_SIZE : (b + 1) * BATCH_SIZE]
-            bconf  = {k: batch_conf[k] for k in bkeys}
+            bkeys = keys[b * BATCH_SIZE : (b + 1) * BATCH_SIZE]
+            bconf = {k: batch_conf[k] for k in bkeys}
             trades = run_vbt_batch(is_close, bconf, threshold=thresh)
             if trades is not None and len(trades) > 0:
                 all_trd = pd.concat([all_trd, trades], ignore_index=True)
-            sys.stdout.write(f"\r    Batch {b+1}/{n_sub}...   ")
+            sys.stdout.write(f"\r    Batch {b + 1}/{n_sub}...   ")
             sys.stdout.flush()
 
         print()
@@ -510,7 +547,7 @@ def run_stage2(
         # Score and find best
         tf_results = []
         for f, s, r in combos:
-            key   = f"{tf}_f{f}_s{s}_r{r}"
+            key = f"{tf}_f{f}_s{s}_r{r}"
             t_sub = all_trd[all_trd["Column"] == key] if len(all_trd) > 0 else pd.DataFrame()
             stats = score_combo(t_sub, key, is_atr, is_close)
             stats.update({"fast_ma": f, "slow_ma": s, "rsi_period": r, "key": key})
@@ -520,9 +557,16 @@ def run_stage2(
         tf_df.to_csv(REPORTS_DIR / f"mtf_opt_stage2_{tf}.csv", index=False)
 
         best_row = tf_df.iloc[0]
-        best_f, best_s, best_r = int(best_row["fast_ma"]), int(best_row["slow_ma"]), int(best_row["rsi_period"])
+        best_f, best_s, best_r = (
+            int(best_row["fast_ma"]),
+            int(best_row["slow_ma"]),
+            int(best_row["rsi_period"]),
+        )
         best_params[tf] = {"fast_ma": best_f, "slow_ma": best_s, "rsi_period": best_r}
-        print(f"  {tf} best: fast={best_f} slow={best_s} rsi={best_r}  Sharpe={best_row['sharpe']:.3f}")
+        print(
+            f"  {tf} best: fast={best_f} slow={best_s} rsi={best_r}"
+            f"  Sharpe={best_row['sharpe']:.3f}"
+        )
 
         # Update current_signals for next TF
         new_sig = compute_tf_signal(close_tf, best_f, best_s, best_r)
@@ -532,6 +576,7 @@ def run_stage2(
 
 
 # ── Final OOS validation ─────────────────────────────────────────────────────
+
 
 def validate_oos(
     best_params: dict,
@@ -545,14 +590,16 @@ def validate_oos(
     print("\n[FINAL] OOS validation with best parameters...")
 
     weights = best_s1["weights"]
-    thresh  = best_s1["threshold"]
+    thresh = best_s1["threshold"]
 
     # Build optimised confluence on OOS
     conf = pd.Series(0.0, index=h1_index)
     for tf, params in best_params.items():
-        sig     = compute_tf_signal(native_closes[tf], params["fast_ma"], params["slow_ma"], params["rsi_period"])
+        sig = compute_tf_signal(
+            native_closes[tf], params["fast_ma"], params["slow_ma"], params["rsi_period"]
+        )
         aligned = sig.reindex(h1_index, method="ffill")
-        conf   += aligned * weights.get(tf, 0.0)
+        conf += aligned * weights.get(tf, 0.0)
 
     conf_oos = conf[oos_close.index]
 
@@ -561,9 +608,9 @@ def validate_oos(
     with open(PROJECT_ROOT / "config" / "mtf.toml", "rb") as f:
         orig_cfg = tomllib.load(f)
     orig_weights = orig_cfg["weights"]
-    for tf in ["H1","H4","D","W"]:
+    for tf in ["H1", "H4", "D", "W"]:
         c = orig_cfg[tf]
-        sig     = compute_tf_signal(native_closes[tf], c["fast_ma"], c["slow_ma"], c["rsi_period"])
+        sig = compute_tf_signal(native_closes[tf], c["fast_ma"], c["slow_ma"], c["rsi_period"])
         aligned = sig.reindex(h1_index, method="ffill")
         conf_baseline += aligned * orig_weights[tf]
     conf_baseline_oos = conf_baseline[oos_close.index]
@@ -575,27 +622,38 @@ def validate_oos(
     trades_base = run_vbt_batch(oos_close, {"base": conf_baseline_oos}, threshold=orig_thresh)
 
     def full_stats(trades: pd.DataFrame, col: str, atr: pd.Series, close: pd.Series) -> dict:
-        t_sub = trades[trades["Column"] == col] if trades is not None and len(trades) > 0 else pd.DataFrame()
-        tot_ret, _, sharpe, max_dd, n_trades, win_rate, dollar_pnl = build_equity_curve(t_sub, atr, close)
+        t_sub = (
+            trades[trades["Column"] == col]
+            if trades is not None and len(trades) > 0
+            else pd.DataFrame()
+        )
+        tot_ret, _, sharpe, max_dd, n_trades, win_rate, dollar_pnl = build_equity_curve(
+            t_sub, atr, close
+        )
         n_years = (close.index[-1] - close.index[0]).days / 365.25
-        cagr = ((1 + tot_ret / 100) ** (1 / n_years) - 1) * 100 if n_years > 0 and tot_ret > -100 else float("nan")
+        cagr = (
+            ((1 + tot_ret / 100) ** (1 / n_years) - 1) * 100
+            if n_years > 0 and tot_ret > -100
+            else float("nan")
+        )
         return {
-            "dollar_pnl":  dollar_pnl,
-            "total_ret":   tot_ret,
-            "cagr":        cagr,
-            "sharpe":      sharpe,
-            "max_dd":      max_dd,
-            "n_trades":    n_trades,
-            "win_rate":    win_rate,
+            "dollar_pnl": dollar_pnl,
+            "total_ret": tot_ret,
+            "cagr": cagr,
+            "sharpe": sharpe,
+            "max_dd": max_dd,
+            "n_trades": n_trades,
+            "win_rate": win_rate,
         }
 
-    stats_opt  = full_stats(trades_opt,  "opt",  oos_atr, oos_close)
-    stats_base = full_stats(trades_base, "base",  oos_atr, oos_close)
+    stats_opt = full_stats(trades_opt, "opt", oos_atr, oos_close)
+    stats_base = full_stats(trades_base, "base", oos_atr, oos_close)
 
     return {"optimised": stats_opt, "baseline": stats_base}
 
 
 # ── Report printer ────────────────────────────────────────────────────────────
+
 
 def print_report(
     oos_stats: dict,
@@ -603,31 +661,35 @@ def print_report(
     best_s1: dict,
     oos_close: pd.Series,
 ) -> None:
-    n_years  = (oos_close.index[-1] - oos_close.index[0]).days / 365.25
+    n_years = (oos_close.index[-1] - oos_close.index[0]).days / 365.25
     oos_start = oos_close.index[0].date()
-    oos_end   = oos_close.index[-1].date()
+    oos_end = oos_close.index[-1].date()
 
     sep = "=" * 68
     print(f"\n{sep}")
     print("  MTF OPTIMISER — OOS VALIDATION REPORT")
     print(sep)
     print(f"  Instrument:  EUR/USD H1  |  OOS: {oos_start} to {oos_end} ({n_years:.1f}yr)")
-    print(f"  Account: ${INIT_EQUITY:,.0f}  |  Risk: ${RISK_PER_TRADE:.0f}/trade (2%)  |  ATR-14 stop")
+    print(
+        f"  Account: ${INIT_EQUITY:,.0f}  |  Risk: ${RISK_PER_TRADE:.0f}/trade (2%)  |  ATR-14 stop"
+    )
     print(f"  Max leverage cap: {MAX_LEVERAGE:.0f}x  |  Spread: 1.5 pips/side")
     print(sep)
 
-    print(f"\n  OPTIMISED PARAMETERS:")
+    print("\n  OPTIMISED PARAMETERS:")
     print(f"    threshold  = {best_s1['threshold']}")
     w = best_s1["weights"]
     print(f"    weights:   H1={w['H1']}  H4={w['H4']}  D={w['D']}  W={w['W']}")
     for tf, p in best_params.items():
         print(f"    {tf}:  fast={p['fast_ma']}  slow={p['slow_ma']}  rsi={p['rsi_period']}")
 
-    for label, stats in [("BASELINE (current config)", oos_stats["baseline"]),
-                          ("OPTIMISED",                 oos_stats["optimised"])]:
-        print(f"\n  {'-'*60}")
+    for label, stats in [
+        ("BASELINE (current config)", oos_stats["baseline"]),
+        ("OPTIMISED", oos_stats["optimised"]),
+    ]:
+        print(f"\n  {'-' * 60}")
         print(f"  {label}")
-        print(f"  {'-'*60}")
+        print(f"  {'-' * 60}")
         print(f"    Dollar P&L:       ${stats['dollar_pnl']:>+10,.0f}")
         print(f"    Total Return:     {stats['total_ret']:>+10.2f}%")
         print(f"    CAGR:             {stats['cagr']:>+10.2f}%  per year")
@@ -642,11 +704,15 @@ def print_report(
 
     print(f"\n{sep}")
     b, o = oos_stats["baseline"], oos_stats["optimised"]
-    print(f"  IMPROVEMENT:  Sharpe {b['sharpe']:.3f} -> {o['sharpe']:.3f}  |  CAGR {b['cagr']:+.1f}% -> {o['cagr']:+.1f}%")
+    print(
+        f"  IMPROVEMENT:  Sharpe {b['sharpe']:.3f} -> {o['sharpe']:.3f}"
+        f"  |  CAGR {b['cagr']:+.1f}% -> {o['cagr']:+.1f}%"
+    )
     print(sep)
 
 
 # ── TOML writer ───────────────────────────────────────────────────────────────
+
 
 def write_toml_recommendation(best_params: dict, best_s1: dict) -> None:
     w = best_s1["weights"]
@@ -655,19 +721,19 @@ def write_toml_recommendation(best_params: dict, best_s1: dict) -> None:
         f"confirmation_threshold = {best_s1['threshold']}",
         "",
         "[weights]",
-        f'H1 = {w["H1"]}',
-        f'H4 = {w["H4"]}',
-        f'D  = {w["D"]}',
-        f'W  = {w["W"]}',
+        f"H1 = {w['H1']}",
+        f"H4 = {w['H4']}",
+        f"D  = {w['D']}",
+        f"W  = {w['W']}",
     ]
     for tf in ["H1", "H4", "D", "W"]:
         p = best_params[tf]
         lines += [
             "",
             f"[{tf}]",
-            f'fast_ma    = {p["fast_ma"]}',
-            f'slow_ma    = {p["slow_ma"]}',
-            f'rsi_period = {p["rsi_period"]}',
+            f"fast_ma    = {p['fast_ma']}",
+            f"slow_ma    = {p['slow_ma']}",
+            f"rsi_period = {p['rsi_period']}",
         ]
     rec_path = REPORTS_DIR / "mtf_recommended.toml"
     rec_path.write_text("\n".join(lines))
@@ -680,6 +746,7 @@ def write_toml_recommendation(best_params: dict, best_s1: dict) -> None:
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     print("=" * 68)
@@ -694,30 +761,35 @@ def main() -> None:
 
     h1_df = load_parquet(PAIR, "H1")
     h4_df = load_parquet(PAIR, "H4")
-    d_df  = load_parquet(PAIR, "D")
-    w_df  = load_parquet(PAIR, "W")
+    d_df = load_parquet(PAIR, "D")
+    w_df = load_parquet(PAIR, "W")
 
-    close    = h1_df["close"]
+    close = h1_df["close"]
     h1_index = close.index
-    atr14    = compute_atr14(h1_df)  # ATR on H1 data
+    atr14 = compute_atr14(h1_df)  # ATR on H1 data
 
-    n_total   = len(close)
+    n_total = len(close)
     split_idx = int(n_total * IS_FRAC)
-    is_close  = close.iloc[:split_idx]
+    is_close = close.iloc[:split_idx]
     oos_close = close.iloc[split_idx:]
-    is_atr    = atr14.iloc[:split_idx]
-    oos_atr   = atr14.iloc[split_idx:]
+    is_atr = atr14.iloc[:split_idx]
+    oos_atr = atr14.iloc[split_idx:]
     oos_start = oos_close.index[0]
 
-    print(f"  H1 bars: {n_total:,}  |  IS: {len(is_close):,} ({is_close.index[0].date()} to {is_close.index[-1].date()})")
-    print(f"  OOS: {len(oos_close):,} ({oos_close.index[0].date()} to {oos_close.index[-1].date()})")
+    print(
+        f"  H1 bars: {n_total:,}  |  IS: {len(is_close):,} "
+        f"({is_close.index[0].date()} to {is_close.index[-1].date()})"
+    )
+    print(
+        f"  OOS: {len(oos_close):,} ({oos_close.index[0].date()} to {oos_close.index[-1].date()})"
+    )
 
     # Position sizing stats
     atr_mean = atr14.mean()
     avg_units = RISK_PER_TRADE / atr_mean
     avg_notional = avg_units * close.mean()
     avg_leverage = avg_notional / INIT_EQUITY
-    avg_margin   = avg_notional * 0.02
+    avg_margin = avg_notional * 0.02
     print(f"\n  Typical position sizing (avg ATR={atr_mean:.5f}):")
     print(f"    Units/trade:   {avg_units:,.0f} EUR")
     print(f"    Notional:      ${avg_notional:,.0f}")
@@ -725,7 +797,12 @@ def main() -> None:
     print(f"    Margin (2%):   ${avg_margin:,.0f}  (of ${INIT_EQUITY:,.0f} account)")
 
     # Native closes for Stage 2 (each TF's own close)
-    native_closes = {"H1": h1_df["close"], "H4": h4_df["close"], "D": d_df["close"], "W": w_df["close"]}
+    native_closes = {
+        "H1": h1_df["close"],
+        "H4": h4_df["close"],
+        "D": d_df["close"],
+        "W": w_df["close"],
+    }
 
     # Pre-compute default TF signals
     print("\n  Pre-computing default TF signals...")
@@ -738,7 +815,9 @@ def main() -> None:
     best_params = run_stage2(best_s1, base_tf_signals, is_close, is_atr, native_closes, h1_index)
 
     # OOS validation
-    oos_stats = validate_oos(best_params, best_s1, native_closes, oos_close, oos_atr, h1_index, oos_start)
+    oos_stats = validate_oos(
+        best_params, best_s1, native_closes, oos_close, oos_atr, h1_index, oos_start
+    )
 
     # Report
     print_report(oos_stats, best_params, best_s1, oos_close)
@@ -746,7 +825,10 @@ def main() -> None:
 
     # Top 10 Stage 1
     print("\n  Top 10 Stage 1 IS combinations:")
-    print(f"  {'Threshold':>10} {'H1':>5} {'H4':>5} {'D':>5} {'W':>5} {'Sharpe':>8} {'Return':>8} {'Trades':>7}")
+    print(
+        f"  {'Threshold':>10} {'H1':>5} {'H4':>5} {'D':>5} {'W':>5}"
+        f" {'Sharpe':>8} {'Return':>8} {'Trades':>7}"
+    )
     print("  " + "-" * 58)
     for _, row in s1_df.head(10).iterrows():
         print(

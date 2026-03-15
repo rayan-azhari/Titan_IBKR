@@ -176,7 +176,8 @@ def fetch_timeframe(
     df = _parse_and_save(app, output_path)
     if df is not None:
         print(
-            f"    Saved. Total rows: {len(df)}. Range: {df['timestamp'].min().date()} -> {df['timestamp'].max().date()}"
+            f"    Saved. Total rows: {len(df)}. "
+            f"Range: {df['timestamp'].min().date()} -> {df['timestamp'].max().date()}"
         )
 
 
