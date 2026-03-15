@@ -25,6 +25,12 @@ new_york  = 0.00018        # ~1.8 pips
 tokyo     = 0.00020        # ~2.0 pips (best for AUD — Asia session)
 off_hours = 0.00040        # ~4.0 pips
 
+[USD_CAD]
+london    = 0.00010        # ~1.0 pip (tight — strong CAD liquidity in London/NY)
+new_york  = 0.00015        # ~1.5 pips
+tokyo     = 0.00025        # ~2.5 pips
+off_hours = 0.00035        # ~3.5 pips
+
 [slippage]
 model = "sqrt"             # Square-root market impact model
 base_impact = 0.0001       # Base impact factor

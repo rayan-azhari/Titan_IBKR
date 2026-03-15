@@ -13,11 +13,13 @@ dependencies = [
     "joblib>=1.4",
     "pyarrow>=15.0",
     "python-dotenv>=1.0",
+    "yfinance>=0.2",
     "backtesting>=0.3.3",
     "vectorbt>=0.26",
     "plotly>=5.20",
     "nautilus_trader>=1.200",
     "numba>=0.59",
+    "statsmodels>=0.14",
 ]
 
 [project.optional-dependencies]

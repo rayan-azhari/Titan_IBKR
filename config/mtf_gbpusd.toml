@@ -1,0 +1,38 @@
+# ========================================================
+# mtf_gbpusd.toml -- MTF Confluence Config for GBP_USD
+# ========================================================
+# Optimised via run_pair_sweep.py (greedy Stage 3).
+# Pair: GBP_USD
+# OOS LONG Sharpe:  3.056
+# OOS SHORT Sharpe: 2.842
+# Combined Sharpe:  2.358
+# Gates passed: NO -- review before live
+
+confirmation_threshold = 0.10
+atr_stop_mult = 2.5
+
+[weights]
+H1 = 0.10
+H4 = 0.25
+D  = 0.60
+W  = 0.05
+
+[H1]
+fast_ma = 10
+slow_ma = 30
+rsi_period = 10
+
+[H4]
+fast_ma = 10
+slow_ma = 30
+rsi_period = 7
+
+[D]
+fast_ma = 5
+slow_ma = 20
+rsi_period = 14
+
+[W]
+fast_ma = 13
+slow_ma = 26
+rsi_period = 14

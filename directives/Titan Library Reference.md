@@ -1,135 +1,145 @@
 # Titan Library Reference
 
+> Last updated: 2026-03-14
+
 **Package Name:** `titan-ibkr-algo`
 **Import Name:** `titan`
 **Version:** 0.1.0
 
-The `titan` package is the core library powering the Titan IBKR Algo system. It contains reusable business logic, quantitative models, and infrastructure adapters, completely decoupled from execution scripts.
+The `titan` package is the core library powering the Titan IBKR Algo system. It contains reusable
+business logic, quantitative models, and infrastructure adapters, decoupled from execution scripts.
 
 ---
 
-## 🏗️ Architecture Philosophy
+## Architecture Philosophy
 
 The Titan library follows a **Strict Layered Architecture** to ensure stability and reproducibility.
 
 ### 1. The "No Scripts" Rule
-*   `titan/` contains **only** functions, classes, and constants.
-*   It **never** contains code that runs immediately on import (no `if __name__ == "__main__"`).
-*   It **never** modifies `sys.path`.
+
+- `titan/` contains **only** functions, classes, and constants.
+- It **never** contains code that runs immediately on import (no `if __name__ == "__main__"`).
+- It **never** modifies `sys.path`.
 
 ### 2. Dependency Flow
-Dependencies flow **inwards** towards the core models.
-*   ❌ `titan.models` should NOT import from `titan.strategies` (Circles).
-*   ✅ `titan.strategies` imports from `titan.models` and `titan.indicators`.
-*   ✅ `scripts/` import from everything.
+
+Dependencies flow **inwards** towards core models:
+- `titan.strategies` imports from `titan.models` and `titan.indicators` ✓
+- `titan.models` does NOT import from `titan.strategies` (no circles) ✗
+- `scripts/` may import from everything ✓
 
 ### 3. Configuration Injection
-To keep the library testable:
-*   Functions should accept configuration (dictionaries or objects) as arguments.
-*   They should **avoid** loading files from `../../config` directly where possible.
+
+Functions accept configuration as arguments (dicts or config objects). They avoid loading
+files from `config/` directly where possible — keeps the library testable.
 
 ---
 
-## 📚 Modules Reference
+## Installation
 
-### 1. `titan.adapters` (Nautilus-IBKR Adapter)
+```bash
+# From the project root — always use uv, never bare pip
+uv sync
+```
 
-This module implements the custom **IBKR V20 Adapter** built for the Titan-IBKR-Algo project. It serves as the bridge between the event-driven **NautilusTrader** engine and **IBKR's REST/Streaming APIs**.
+> [!IMPORTANT]
+> Never use `pip install -e .` or `pip install`. All dependency management in this project
+> goes through `uv`. This is a non-negotiable workspace rule.
 
-> **📘 Full Documentation:** See the [Titan-IBKR Adapter Guide](Titan-IBKR%20Adapter%20Guide.md) for detailed architecture, usage, and troubleshooting.
+---
 
-#### Key Components
-*   **DataClient (`titan/adapters/ibkr/data.py`):** Streams real-time price ticks.
-*   **ExecutionClient (`titan/adapters/ibkr/execution.py`):** Handles order submission and reconciliation.
-*   **Instruments (`titan/adapters/ibkr/instruments.py`):** Maps IBKR symbols to Nautilus instruments.
+## Modules Reference
+
+### 1. `titan.adapters` — IBKR via NautilusTrader
+
+IBKR connectivity is handled by **NautilusTrader's built-in Interactive Brokers adapter** —
+not a custom REST client. Do not use `ibkrpyV20` or any standalone IBKR REST library.
+
+The adapter is configured via `InteractiveBrokersDataClientConfig` and
+`InteractiveBrokersExecClientConfig` from `nautilus_trader.adapters.interactive_brokers.config`.
+
+Key objects:
+- `IBContract` — defines the instrument (secType, symbol, currency, exchange)
+- `IB` — venue key constant (use this, not the string `"IBKR"`)
+- `IBMarketDataTypeEnum.REALTIME` / `DELAYED_FROZEN` — market data mode
+
+> **Full documentation:** See `directives/Titan-IBKR Adapter Guide.md` and
+> `directives/IBKR & NautilusTrader API Reference.md`.
 
 ---
 
 ### 2. `titan.data`
+
 Utilities for fetching, validating, and managing historical data.
-*   **`titan.data.ibkr`**: primitives for IBKR API data requests (candles, instruments).
-    *   *Usage:* Used by `scripts/download_data.py` (which runs automatically in live strategies) to sync history.
-    *   `fetch_candles(client, instrument, granularity, ...)`: Robust pagination for history.
-*   **`titan.data.validation`**: Data integrity checks.
-    *   `check_gaps(df)`: Detects missing candles.
-    *   `check_outliers(df)`: flags suspicious price spikes.
+
+- **`titan.data.ibkr`**: Primitives for IBKR history requests via the NautilusTrader adapter.
+  - Used by `scripts/download_data.py` (called automatically by live runners at startup).
+- **`titan.data.validation`**: Data integrity checks.
+  - `check_gaps(df)`: Detects missing candles.
+  - `check_outliers(df)`: Flags suspicious price spikes.
+
+---
 
 ### 3. `titan.indicators`
-High-performance technical indicators optimized for both Numba (backtesting) and standard Python (live).
-*   **`titan.indicators.gaussian_filter`**: Ehlers-based non-linear indicators (Gaussian Channel).
-*   **`titan.indicators.common`**: Shared logic for standard indicators (SMA, EMA, RSI). [Planned/In-Progress]
+
+High-performance technical indicators optimized for both Numba (backtesting) and Python (live).
+
+- **`titan.indicators.gaussian_filter`**: Ehlers-based Gaussian Channel indicator (Numba `@njit`).
+  - Used as a filter in ORB strategy (`use_gauss` per-ticker config).
+  - Params: `period`, `poles`, `sigma` (from `config/gaussian_channel_config.toml`).
+- **`titan.indicators.common`**: Shared standard indicators (SMA, EMA, RSI). [In progress]
+
+---
 
 ### 4. `titan.models`
-Quantitative models that model market physics and trading costs.
-*   **`titan.models.spread`**: Time-varying spread and slippage estimation.
-    *   `build_spread_series(df, pair)`: Estimates spread based on session (Tokyo/London/NY).
-    *   `estimate_slippage(units, volume)`: Impact model based on square-root law.
+
+Quantitative models for market physics and trading costs.
+
+- **`titan.models.spread`**: Time-varying spread and slippage estimation.
+  - `build_spread_series(df, pair)`: Session-based spread model (Tokyo/London/NY).
+  - `estimate_slippage(units, volume)`: Square-root impact model.
+
+---
 
 ### 5. `titan.strategies`
+
 Production-grade strategy logic, separated from the execution harness.
-*   **`titan.strategies.mtf`**: Multi-Timeframe Confluence logic.
-*   **`titan.strategies.ml`**: Machine Learning signal generation and feature engineering.
-    *   *Note:* Ensure `titan.strategies.ml.features` matches training code exactly to avoid drift.
+
+- **`titan.strategies.orb`**: Opening Range Breakout — 7 US equities, bracket orders, EOD flatten.
+- **`titan.strategies.mtf`**: Multi-Timeframe Confluence — EUR/USD, H1/H4/D/W, 2-layer exit.
+- **`titan.strategies.ml`**: Machine Learning signal generation + feature engineering.
+  - `titan.strategies.ml.features` must match training code exactly to avoid feature drift.
+
+---
 
 ### 6. `titan.utils`
+
 Operational utilities for production handling.
-*   **`titan.utils.ops`**: Emergency operations.
-    *   `cancel_all_orders()`: Wipes pending orders.
-    *   `close_all_positions()`: Flattens the account.
-*   **`titan.utils.notification`**: Slack alerting integration.
+
+- **`titan.utils.ops`**: Emergency operations (cancel orders, close positions).
+- **`titan.utils.notification`**: Slack alerting integration.
 
 ---
 
-## 📦 Installation
+## Development Guidelines
 
-The package is designed to be installed in **editable mode** within your development environment.
+1. **Strict Separation**: Never import from `scripts/` or `research/` into `titan/`.
+2. **No `sys.path`**: Do not use `sys.path.insert` in library code. Use proper package installation.
+3. **Type Hints**: All `titan/` functions must be fully type-hinted.
+4. **Config Injection**: Pass configuration to functions; do not load files from global paths inside library code.
+5. **NautilusTrader API**: Use factory methods only — `Price.from_str()`, `Quantity.from_str()`, `Quantity.from_int()`. No direct constructors.
+6. **Financial types**: `decimal.Decimal` or NautilusTrader native types (`Price`, `Quantity`). No bare floats for price or volume.
+
+---
+
+## Pre-Push Gates
+
+Run these before every push:
 
 ```bash
-# From the project root
-pip install -e .
+uv run ruff check . --fix
+uv run ruff format .
+uv run pytest tests/ -v
 ```
 
----
-
-## 🚀 Usage Examples
-
-### Fetching Data
-```python
-from titan.data.ibkr import fetch_candles, candles_to_dataframe
-import ibkrpyV20
-
-client = ibkrpyV20.API(access_token="...")
-candles = fetch_candles(client, "EUR_USD", "H1", count=500)
-df = candles_to_dataframe(candles)
-print(df.head())
-```
-
-### Checking Data Quality
-```python
-from titan.data.validation import check_gaps, check_outliers
-
-# Validate a DataFrame
-gap_count = check_gaps(df, "EUR_USD")
-spike_count = check_outliers(df, "EUR_USD", z_threshold=5.0)
-
-if gap_count == 0 and spike_count == 0:
-    print("Data is clean!")
-```
-
-### Emergency Flatten
-```python
-from titan.utils.ops import close_all_positions, cancel_all_orders
-
-# Emergency Switch
-cancel_all_orders(client, account_id)
-close_all_positions(client, account_id)
-```
-
----
-
-## 🛠️ Development Guidelines
-
-1.  **Strict Separation**: Never import from `scripts/` or `research/` into `titan/`. The library must be self-contained.
-2.  **No `sys.path`**: Do not use `sys.path.insert` in library code. Rely on proper package installation.
-3.  **Type Hints**: All library functions must be fully type-hinted.
-4.  **Config Injection**: Prefer passing configuration (dicts/objects) to functions rather than loading files from global paths inside the library.
+All three must pass.

@@ -2,7 +2,13 @@
 -----------------
 
 Multi-Timeframe Confluence Strategy for NautilusTrader.
-Implements the "Signal Only" logic with Volatility-Adjusted Risk Sizing.
+Validated in Round 3 backtesting (OOS Sharpe 2.936 at 2.5x ATR stop).
+
+Exit logic:
+  - Primary: signal reversal (confluence score crosses threshold)
+  - Secondary: 2.5x ATR hard stop from entry price (placed as STOP_MARKET order)
+
+Sizing: 1% equity risk per 2.5x ATR move (matches actual stop distance).
 """
 
 import tomllib
@@ -14,11 +20,11 @@ from nautilus_trader.config import StrategyConfig
 from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, TimeInForce
+from nautilus_trader.model.events import OrderFilled
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Quantity
+from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.trading.strategy import Strategy
 
-# Reuse robust indicator implementations
 from titan.strategies.ml.features import atr, ema, rsi, sma, wma
 
 
@@ -26,54 +32,52 @@ class MTFConfluenceConfig(StrategyConfig):
     """Configuration for MTF Strategy."""
 
     instrument_id: str
-    bar_types: dict[str, str]  # Map: "H1": "EUR/USD-1h", etc.
+    bar_types: dict[str, str]  # Map: "H1": "EUR/USD.IDEALPRO-1-HOUR-MID-EXTERNAL"
     config_path: str = "config/mtf.toml"
-    risk_pct: float = 0.01  # 1% Risk per trade
-    leverage_cap: float = 5.0  # Max 5x leverage
-    warmup_bars: int = 1000  # History to load
+    risk_pct: float = 0.01
+    leverage_cap: float = 5.0
+    warmup_bars: int = 1000
 
 
 class MTFConfluenceStrategy(Strategy):
     """Executes trades based on Multi-Timeframe Confluence.
 
-    Logic:
-    1.  Subscribe to H1, H4, D, W bars.
-    2.  On every bar close, update history and re-calculate Signal for that TF.
-    3.  Compute Weighted Confluence Score.
-    4.  Signal-Based Exits (No Trailing Stop).
-    5.  Sizing: 1% Equity Risk per 2 ATR move.
+    Round 3 validated logic (H1/H4/D/W, SMA, OOS Sharpe 2.936):
+    1. Subscribe to H1, H4, D, W bars.
+    2. On each bar, update history and recalculate signal for that TF.
+    3. Compute weighted confluence score.
+    4. Entry: score crosses ±threshold.
+    5. Primary exit: signal reversal (score returns to neutral or flips).
+    6. Hard stop: 2.5x ATR stop_market order placed on entry fill.
+    7. Sizing: 1% equity risk / (2.5 × ATR).
     """
 
     def __init__(self, config: MTFConfluenceConfig):
         super().__init__(config)
 
-        # Load optimization params
         self.toml_cfg = self._load_toml(config.config_path)
-
-        # Identifier
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
 
-        # Map BarType -> TF Key (e.g. "EUR/USD-1h" -> "H1")
-        self.bar_type_map = {}
+        self.bar_type_map: dict[BarType, str] = {}
         for tf, periodicity in config.bar_types.items():
             bt = BarType.from_str(periodicity)
             self.bar_type_map[bt] = tf
 
-        # State buffers
-        self.history = {tf: [] for tf in ["M5", "H1", "H4", "D", "W"]}
-
-        # Current Signal State (-1.0 to +1.0) for each TF
-        # Initialize to 0 (Neutral)
-        self.signals = {tf: 0.0 for tf in ["M5", "H1", "H4", "D", "W"]}
-
-        # Raw indicator values for the status dashboard
-        self.indicator_state = {
+        self.history: dict[str, list] = {tf: [] for tf in ["M5", "H1", "H4", "D", "W"]}
+        self.signals: dict[str, float] = {tf: 0.0 for tf in ["M5", "H1", "H4", "D", "W"]}
+        self.indicator_state: dict[str, dict] = {
             tf: {"fast_ma": None, "slow_ma": None, "rsi": None}
             for tf in ["M5", "H1", "H4", "D", "W"]
         }
 
-        # Latest ATR (H1 or used TF) for volatility-adjusted sizing
-        self.latest_atr = None
+        self.latest_atr: float | None = None
+
+        # ATR stop multiplier — read from TOML, default 2.5 (Round 3 optimal)
+        self._atr_stop_mult: float = float(self.toml_cfg.get("atr_stop_mult", 2.5))
+
+        # Track order IDs to distinguish entries from stops in on_order_filled
+        self._entry_order_ids: set = set()
+        self._stop_order_ids: set = set()
 
     def _load_toml(self, path: str) -> dict:
         p = Path(path)
@@ -82,52 +86,38 @@ class MTFConfluenceStrategy(Strategy):
         with open(p, "rb") as fobj:
             return tomllib.load(fobj)
 
-    def on_start(self):
-        """Lifecycle: Strategy Started."""
-        self.log.info("MTF Strategy Started. Warming up...")
+    # ---------------------------------------------------------------------------
+    # Lifecycle
+    # ---------------------------------------------------------------------------
 
-        # Subscribe
+    def on_start(self) -> None:
+        self.log.info("MTF Strategy Started. Warming up...")
         for bt in self.bar_type_map.keys():
             self.subscribe_bars(bt)
-
-        # Warmup
         self._warmup_all()
+        self.log.info(f"Warmup complete. ATR stop mult: {self._atr_stop_mult}x. Ready for signals.")
 
-        self.log.info("Warmup complete. Ready for signals.")
-
-    def _warmup_all(self):
-        """Load history for all timeframes."""
-        # titan/strategies/mtf/strategy.py -> mtf -> strategies -> titan -> ROOT
+    def _warmup_all(self) -> None:
         project_root = Path(__file__).resolve().parents[3]
         data_dir = project_root / "data"
-
         self.log.info(f"Looking for warmup data in: {data_dir}")
 
-        # Iterate over our TFs
         for bt, tf in self.bar_type_map.items():
-            # Infer filename: EUR_USD_H1.parquet
-            # Parse spec from BarType object
             spec = bt.spec
             agg = spec.aggregation
             interval = spec.step
 
-            # Robust extraction of aggregation string
             agg_str = str(agg)
-            # Handle enum objects like Aggregation.MINUTE
             if hasattr(agg, "name"):
                 agg_str = agg.name
             elif hasattr(agg, "value"):
                 agg_str = str(agg.value)
-
             agg_str = agg_str.upper()
 
             suffix = "UNKNOWN"
-            # Logic: If it's a 5-minute bar, it maps to M5.
-            # Check interval first if Agg is MINUTE
             if "MINUTE" in agg_str:
                 if interval == 5:
                     suffix = "M5"
-                # Fallback: sometimes Aggregation is just MINUTE and relies on step
             elif "HOUR" in agg_str:
                 if interval == 1:
                     suffix = "H1"
@@ -138,7 +128,6 @@ class MTFConfluenceStrategy(Strategy):
             elif "WEEK" in agg_str:
                 suffix = "W"
 
-            # Additional Fallback based on BarType string (e.g. "EUR/USD-5-MINUTE-MID-INTERNAL")
             if suffix == "UNKNOWN":
                 bt_str = str(bt).upper()
                 if "5-MINUTE" in bt_str:
@@ -149,18 +138,18 @@ class MTFConfluenceStrategy(Strategy):
                     suffix = "H4"
                 elif "1-DAY" in bt_str:
                     suffix = "D"
+                elif "1-WEEK" in bt_str:
+                    suffix = "W"
 
             if suffix == "UNKNOWN":
-                msg = f"Unknown BarType spec usage: {bt} (Agg: {agg_str}, Interval: {interval})"
-                self.log.warning(msg)
+                self.log.warning(f"Unknown BarType: {bt} (Agg: {agg_str}, Step: {interval})")
                 continue
 
             pair_str = self.instrument_id.symbol.value.replace("/", "_")
             parquet_path = data_dir / f"{pair_str}_{suffix}.parquet"
 
             if not parquet_path.exists():
-                msg = f"Missing warmup file: {parquet_path}"
-                self.log.warning(msg)
+                self.log.warning(f"Missing warmup file: {parquet_path}")
                 continue
 
             self.log.info(f"Loading {tf} warmup from {parquet_path}")
@@ -170,7 +159,6 @@ class MTFConfluenceStrategy(Strategy):
                 self.log.error(f"Failed to load parquet: {e}")
                 continue
 
-            # Populate history
             for t, row in df.iterrows():
                 self.history[tf].append(
                     {
@@ -180,20 +168,19 @@ class MTFConfluenceStrategy(Strategy):
                         "low": float(row["low"]),
                     }
                 )
-
-            # Initial Signal Calc
-            self.log.info(f"DEBUG: Calculating signal for {tf}...")
             self._update_signal(tf)
 
-        self.log.info("DEBUG: Warmup loop finished.")
+        self.log.info("Warmup loop complete.")
 
-    def on_bar(self, bar: Bar):
-        """Lifecycle: New Bar Closed."""
+    # ---------------------------------------------------------------------------
+    # Bar handler
+    # ---------------------------------------------------------------------------
+
+    def on_bar(self, bar: Bar) -> None:
         tf = self.bar_type_map.get(bar.bar_type)
         if not tf:
-            return  # Unknown bar type
+            return
 
-        # Update History
         self.history[tf].append(
             {
                 "time": unix_nanos_to_dt(bar.ts_event),
@@ -203,116 +190,237 @@ class MTFConfluenceStrategy(Strategy):
             }
         )
 
-        # Limit buffer
         if len(self.history[tf]) > self.config.warmup_bars + 100:
             self.history[tf] = self.history[tf][-self.config.warmup_bars :]
 
-        # Recalculate Logic
         self._update_signal(tf)
-
-        # Evaluate Confluence (Trigger execution only on fastest TF usually?
-        # Or any? If D flips, we want to know. So Any.)
         self._evaluate_confluence(price=bar.close)
 
-    def _update_signal(self, tf: str):
-        """Calculate Technical Signal for a specific Timeframe."""
+    # ---------------------------------------------------------------------------
+    # Signal calculation
+    # ---------------------------------------------------------------------------
+
+    def _update_signal(self, tf: str) -> None:
         data = self.history[tf]
-        if len(data) < 50:  # Min needed for slow SMA
+        if len(data) < 50:
             return
 
         df = pd.DataFrame(data)
         close = df["close"]
 
-        # Load params
         params = self.toml_cfg.get(tf, {})
         fast_p = params.get("fast_ma", 10)
         slow_p = params.get("slow_ma", 20)
         rsi_p = params.get("rsi_period", 14)
-
-        # Determine MA Type (default SMA for backward compat)
         ma_type = self.toml_cfg.get("ma_type", "SMA").upper()
 
-        # Calc Indicators
         if ma_type == "EMA":
             s_fast = ema(close, fast_p)
             s_slow = ema(close, slow_p)
         elif ma_type == "WMA":
             s_fast = wma(close, fast_p)
             s_slow = wma(close, slow_p)
-        else:  # SMA
+        else:
             s_fast = sma(close, fast_p)
             s_slow = sma(close, slow_p)
 
         r = rsi(close, rsi_p)
 
-        # Store ATR if this is H1 (for sizing)
         if tf == "H1":
-            # Recalc ATR
-            # We need high/low in DF
             df["high"] = pd.Series([d["high"] for d in data], index=df.index)
             df["low"] = pd.Series([d["low"] for d in data], index=df.index)
-            # Use standard 14 ATR for sizing volatility measure
             atr_s = atr(df, 14)
             if not atr_s.empty:
                 self.latest_atr = float(atr_s.iloc[-1])
 
-        # Calc Signal Components (Last bar)
         last_fast = s_fast.iloc[-1]
         last_slow = s_slow.iloc[-1]
         last_rsi = r.iloc[-1]
 
-        trend_score = 0.5 if last_fast > last_slow else -0.5
-        mom_score = 0.5 if last_rsi > 50 else -0.5
-
-        # Store for dashboard
         self.indicator_state[tf] = {
             "fast_ma": last_fast,
             "slow_ma": last_slow,
             "rsi": last_rsi,
         }
+        self.signals[tf] = (0.5 if last_fast > last_slow else -0.5) + (
+            0.5 if last_rsi > 50 else -0.5
+        )
 
-        # Total Signal
-        self.signals[tf] = trend_score + mom_score  # Range: -1.0 to +1.0
+    # ---------------------------------------------------------------------------
+    # Confluence evaluation & execution
+    # ---------------------------------------------------------------------------
 
-    def _evaluate_confluence(self, price: Decimal):
-        """Combine signals and execute."""
+    def _evaluate_confluence(self, price: Decimal) -> None:
         weights = self.toml_cfg.get("weights", {"H1": 0.1, "H4": 0.25, "D": 0.6, "W": 0.05})
         threshold = self.toml_cfg.get("confirmation_threshold", 0.10)
 
-        score = 0.0
-        for tf, weight in weights.items():
-            score += self.signals[tf] * weight
+        score = sum(self.signals[tf] * w for tf, w in weights.items())
 
-        # Determine Bias
         if score >= threshold:
-            bias = 1
-            signal_label = "LONG"
+            bias, signal_label = 1, "LONG"
         elif score <= -threshold:
-            bias = -1
-            signal_label = "SHORT"
+            bias, signal_label = -1, "SHORT"
         else:
-            bias = 0
-            signal_label = "FLAT"
+            bias, signal_label = 0, "FLAT"
 
-        # Current position state
         positions = self.cache.positions(instrument_id=self.instrument_id)
         position = positions[-1] if positions else None
         pos_label = "FLAT"
         if position and position.is_open:
             pos_label = "LONG" if str(position.side) == "LONG" else "SHORT"
 
-        # --- Status Dashboard ---
-        self._log_status_dashboard(
-            price=price,
-            score=score,
-            threshold=threshold,
-            signal_label=signal_label,
-            pos_label=pos_label,
-            weights=weights,
+        self._log_status_dashboard(price, score, threshold, signal_label, pos_label, weights)
+        self._execute_bias(bias, price)
+
+    def _execute_bias(self, bias: int, price: Decimal) -> None:
+        instrument_id = self.instrument_id
+        positions = self.cache.positions(instrument_id=instrument_id)
+        position = positions[-1] if positions else None
+
+        current_dir = 0
+        if position and position.is_open:
+            current_dir = 1 if str(position.side) == "LONG" else -1
+
+        if bias == 1:
+            if current_dir == 1:
+                return
+            elif current_dir == -1:
+                self.log.info("Signal Flip: Short -> Long.")
+                self._cancel_stops()
+                self.close_all_positions(instrument_id)
+                self._open_position(OrderSide.BUY, price)
+            else:
+                self.log.info("Signal Entry: Long.")
+                self._open_position(OrderSide.BUY, price)
+
+        elif bias == -1:
+            if current_dir == -1:
+                return
+            elif current_dir == 1:
+                self.log.info("Signal Flip: Long -> Short.")
+                self._cancel_stops()
+                self.close_all_positions(instrument_id)
+                self._open_position(OrderSide.SELL, price)
+            else:
+                self.log.info("Signal Entry: Short.")
+                self._open_position(OrderSide.SELL, price)
+
+        elif bias == 0:
+            if current_dir != 0:
+                self.log.info(f"Signal Neutral. Closing position (dir={current_dir}).")
+                self._cancel_stops()
+                self.close_all_positions(instrument_id)
+
+    # ---------------------------------------------------------------------------
+    # Order management
+    # ---------------------------------------------------------------------------
+
+    def _open_position(self, side: OrderSide, price: Decimal) -> None:
+        """Size and submit market entry. Stop is placed in on_order_filled."""
+        if self.latest_atr is None or self.latest_atr == 0:
+            self.log.warning("ATR not ready. Skipping trade.")
+            return
+
+        accounts = self.cache.accounts()
+        if not accounts:
+            self.log.error("No account in cache. Cannot size position.")
+            return
+
+        account = accounts[0]
+        equity_money = account.balance_total(Currency.from_str("USD"))
+        equity = float(equity_money.as_double())
+
+        risk_amount = equity * self.config.risk_pct
+        # Size against actual stop distance so risk% is accurate
+        stop_dist = self.latest_atr * self._atr_stop_mult
+        if stop_dist == 0:
+            return
+
+        raw_units = risk_amount / stop_dist
+        if float(price) > 0:
+            max_units = (equity * self.config.leverage_cap) / float(price)
+            units = min(raw_units, max_units)
+        else:
+            units = 0
+
+        if int(units) <= 0:
+            self.log.warning("Calculated size is 0. Skipping trade.")
+            return
+
+        qty = Quantity.from_int(int(units))
+        order = self.order_factory.market(
+            instrument_id=self.instrument_id,
+            order_side=side,
+            quantity=qty,
+            time_in_force=TimeInForce.FOK,
+        )
+        self._entry_order_ids.add(order.client_order_id)
+        self.submit_order(order)
+        self.log.info(
+            f"Submitted {side} {qty} | ATR={self.latest_atr:.5f} | stop_dist={stop_dist:.5f}"
         )
 
-        # Execute
-        self._execute_bias(bias, price)
+    def on_order_filled(self, event: OrderFilled) -> None:
+        """Place ATR stop after entry fill; log when stop fires."""
+        if event.instrument_id != self.instrument_id:
+            return
+
+        cid = event.client_order_id
+
+        if cid in self._entry_order_ids:
+            self._entry_order_ids.discard(cid)
+            self._submit_atr_stop(
+                entry_side=event.order_side,
+                fill_px=event.last_px.as_double(),
+                qty=event.last_qty.as_double(),
+            )
+        elif cid in self._stop_order_ids:
+            self._stop_order_ids.discard(cid)
+            self.log.info(f"ATR stop triggered. Fill @ {event.last_px}.")
+
+    def _submit_atr_stop(self, entry_side: OrderSide, fill_px: float, qty: float) -> None:
+        """Submit a GTC STOP_MARKET at fill_px ± atr_stop_mult × ATR."""
+        if self.latest_atr is None or self.latest_atr == 0:
+            self.log.warning("ATR not ready — stop not placed.")
+            return
+
+        dist = self._atr_stop_mult * self.latest_atr
+
+        if entry_side == OrderSide.BUY:
+            stop_px = fill_px - dist
+            stop_side = OrderSide.SELL
+        else:
+            stop_px = fill_px + dist
+            stop_side = OrderSide.BUY
+
+        instrument = self.cache.instrument(self.instrument_id)
+        prec = instrument.price_precision
+        stop_price = Price.from_str(f"{stop_px:.{prec}f}")
+        stop_qty = Quantity.from_int(int(qty))
+
+        order = self.order_factory.stop_market(
+            instrument_id=self.instrument_id,
+            order_side=stop_side,
+            quantity=stop_qty,
+            trigger_price=stop_price,
+            time_in_force=TimeInForce.GTC,
+        )
+        self._stop_order_ids.add(order.client_order_id)
+        self.submit_order(order)
+        self.log.info(f"ATR stop placed @ {stop_price} ({self._atr_stop_mult}x ATR = {dist:.5f})")
+
+    def _cancel_stops(self) -> None:
+        """Cancel all open ATR stop orders before signal-based close."""
+        open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+        for order in open_orders:
+            if order.client_order_id in self._stop_order_ids:
+                self.cancel_order(order)
+                self._stop_order_ids.discard(order.client_order_id)
+                self.log.info(f"Cancelled ATR stop {order.client_order_id}.")
+
+    # ---------------------------------------------------------------------------
+    # Status dashboard
+    # ---------------------------------------------------------------------------
 
     def _log_status_dashboard(
         self,
@@ -322,148 +430,33 @@ class MTFConfluenceStrategy(Strategy):
         signal_label: str,
         pos_label: str,
         weights: dict,
-    ):
-        """Print a formatted multi-timeframe status dashboard."""
+    ) -> None:
         sep = "═" * 55
-        lines = [f"\n{sep}"]
-        lines.append(f"  MTF STATUS @ Price: {float(price):.5f}")
-        lines.append(f"{'─' * 55}")
+        lines = [f"\n{sep}", f"  MTF STATUS @ Price: {float(price):.5f}", f"{'─' * 55}"]
 
-        if not self.signals:
-            return
-
-        # Sort TFs for display (Slowest to Fastest usually looks best, or config order)
-        # We can use the keys from self.signals, filtered by what's actually in use
-        # or just hardcode the expected set for 5m strategy: D, H4, H1, M5
-        display_tfs = [tf for tf in ["D", "H4", "H1", "M5", "W"] if tf in self.signals]
-
+        display_tfs = [tf for tf in ["W", "D", "H4", "H1", "M5"] if tf in weights]
         for tf in display_tfs:
             st = self.indicator_state.get(tf)
             if not st:
                 continue
-
             sig = self.signals[tf]
             w = weights.get(tf, 0)
-
             if st["fast_ma"] is not None:
-                sma_dir = "BULL" if st["fast_ma"] > st["slow_ma"] else "BEAR"
+                ma_dir = "BULL" if st["fast_ma"] > st["slow_ma"] else "BEAR"
                 rsi_val = f"{st['rsi']:.1f}"
             else:
-                sma_dir = " ?? "
+                ma_dir = " ?? "
                 rsi_val = " ? "
-
-            weighted = sig * w
             lines.append(
-                f"  {tf:>2}  │  MA:  {sma_dir}  │  RSI: {rsi_val:>5}"
-                f"  │  Signal: {sig:+.1f}  │  Weighted: {weighted:+.3f}"
+                f"  {tf:>2}  │  MA: {ma_dir}  │  RSI: {rsi_val:>5}"
+                f"  │  Sig: {sig:+.1f}  │  Wtd: {sig * w:+.3f}"
             )
 
         lines.append(f"{'─' * 55}")
         lines.append(
             f"  CONFLUENCE: {score:+.3f}  │  Threshold: ±{threshold}  │  Signal: {signal_label}"
         )
-        lines.append(
-            f"  Position: {pos_label}  │  ATR(14): {self.latest_atr:.5f}"
-            if self.latest_atr
-            else f"  Position: {pos_label}  │  ATR: pending"
-        )
+        atr_str = f"{self.latest_atr:.5f}" if self.latest_atr else "pending"
+        lines.append(f"  Position: {pos_label}  │  ATR(14)H1: {atr_str}")
         lines.append(sep)
-
         self.log.info("\n".join(lines))
-
-    def _execute_bias(self, bias: int, price: Decimal):
-        """Manage Positions based on Bias (Signal Only)."""
-        instrument_id = self.instrument_id
-        positions = self.cache.positions(instrument_id=instrument_id)
-        position = positions[-1] if positions else None
-
-        # Current State
-        current_dir = 0
-        if position:
-            current_dir = 1 if position.side == OrderSide.BUY else -1
-
-        # 1. Check Entry/Reversal
-        if bias == 1:  # WANT LONG
-            if current_dir == 1:
-                return  # Hold
-            elif current_dir == -1:
-                self.log.info("Signal Flip: Short -> Long. Closing Short.")
-                self.close_all_positions(instrument_id)
-                self._open_position(OrderSide.BUY, price)
-            else:  # Flat
-                self.log.info("Signal Entry: Long.")
-                self._open_position(OrderSide.BUY, price)
-
-        elif bias == -1:  # WANT SHORT
-            if current_dir == -1:
-                return  # Hold
-            elif current_dir == 1:
-                self.log.info("Signal Flip: Long -> Short. Closing Long.")
-                self.close_all_positions(instrument_id)
-                self._open_position(OrderSide.SELL, price)
-            else:  # Flat
-                self.log.info("Signal Entry: Short.")
-                self._open_position(OrderSide.SELL, price)
-
-        elif bias == 0:  # NEUTRAL
-            if current_dir != 0:
-                self.log.info(f"Signal Neutral. Closing position ({current_dir}).")
-                self.close_all_positions(instrument_id)
-
-    def _open_position(self, side: OrderSide, price: Decimal):
-        """Calculate Size and Submit Order."""
-        if self.latest_atr is None or self.latest_atr == 0:
-            self.log.warning("ATR not yet ready. Skipping trade.")
-            return
-
-        # 1% Risk Sizing
-        # Units = (Equity * Risk%) / (2 * ATR)
-
-        # Get Account (Dynamic lookup)
-        # In live mode, we should look for the account associated
-        # with the execution client or just grab the first one.
-        # self.cache.accounts() returns a list of Account objects directly.
-        accounts = self.cache.accounts()
-        if not accounts:
-            self.log.error("No account found in cache! Cannot size position.")
-            return
-
-        account = accounts[0]
-
-        # Use balance_total() to get Money object, then cast to float
-        # This includes free + locked (Equity)
-        equity_money = account.balance_total()
-        equity = float(equity_money.as_double())
-
-        risk_amount = equity * self.config.risk_pct
-        stop_loss_dist = float(self.latest_atr) * 2.0
-
-        if stop_loss_dist == 0:
-            return
-
-        raw_units = risk_amount / stop_loss_dist
-
-        # Cap Leverage
-        if float(price) > 0:
-            max_units = (equity * self.config.leverage_cap) / float(price)
-            units = min(raw_units, max_units)
-        else:
-            units = 0
-
-        # Round to integer (IBKR requirement usually, or lots?)
-        # IBKR accepts units (int).
-        qty = Quantity.from_int(int(units))
-
-        if int(units) <= 0:
-            self.log.warning("Calculated size is 0.")
-            return
-
-        # Place Order
-        order = self.order_factory.market(
-            instrument_id=self.instrument_id,
-            order_side=side,
-            quantity=qty,
-            time_in_force=TimeInForce.FOK,
-        )
-        self.submit_order(order)
-        self.log.info(f"Submitted {side} {qty} (ATR: {self.latest_atr:.5f})")

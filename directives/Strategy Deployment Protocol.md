@@ -1,185 +1,174 @@
 # Strategy Deployment Protocol
 
-This document outlines the systematic process for moving a strategy from the **Research Phase** (VectorBT/Backtesting) to **Live Deployment** (NautilusTrader/IBKR).
+> Last updated: 2026-03-14
+
+This document outlines the systematic process for moving a strategy from the **Research Phase**
+(VectorBT backtesting) to **Live Deployment** (NautilusTrader/IBKR).
+
+---
 
 ## 1. Prerequisites (Research Completion)
-Before deployment, a strategy must pass the **Optimization Protocol**:
-- **Protocol**: `directives/MTF Optimization Protocol.md`
-- **Output**: A confirmed set of parameters (e.g., MA Type, Thresholds, Weights, Indicator Settings) that have been passed through In-Sample/Out-of-Sample validation.
+
+Before deployment, a strategy must pass all robustness gates:
+
+- **OOS/IS Sharpe ratio ≥ 0.5** (MTF: 0.98 ✓, ORB: verified ✓)
+- **OOS Sharpe ≥ 1.5** for live deployment (MTF Round 3: 2.936 ✓)
+- Parameters locked in `config/<strategy>.toml` — do NOT deploy with in-memory values
+
+See `directives/MTF Optimization Protocol.md` for the MTF optimization process.
 
 ---
 
 ## 2. Code Adaptation (Research → Production)
-Research code (often vectorized, typically `research/`) needs to be ported to the Event-Driven Engine (`titan/strategies/`).
 
-### A. Feature Engineering
-- **Location**: `titan/strategies/ml/features.py`
-- **Action**: Ensure all indicators used in research are implemented here as *reusable functions*.
-- **Requirement**: Must support streaming/incremental updates or be efficient enough to recalculate on each bar (depending on engine architecture).
-    - *Example*: During the MTF-5m deployment, we added `wma` logic here to match the research findings.
+Research code (vectorized `research/`) must be ported to the event-driven engine (`titan/strategies/`).
 
-### B. Strategy Logic Class
-- **Location**: `titan/strategies/mtf/strategy.py` (or similar)
-- **Action**: Update the `NautilusTrader` strategy class to:
-    1.  **Load Parameters**: Accept the optimized params via `Config` object or TOML file.
-    2.  **Subscribe**: Subscribe effectively to the necessary BarTypes (Timeframes).
-    3.  **Calculate**: Use the features from Step A to generate signals exactly as done in research.
-    - *Critical*: Ensure `on_bar` logic handles multiple timeframes correctly (buffering, synchronization).
+### A. Strategy Logic Class
 
-### C. Configuration
+- **Location**: `titan/strategies/<name>/strategy.py`
+- **Key requirements**:
+  1. Load parameters via `Config` object and TOML file (e.g., `config/mtf.toml`)
+  2. Subscribe to the correct `BarType`s for each timeframe
+  3. Implement `on_bar` handler — buffer multi-timeframe bars, recalculate signal on each new bar
+  4. Signal logic must exactly replicate the research backtest (same MA, same threshold, same weights)
+
+*MTF example (production)*: `titan/strategies/mtf/strategy.py` — H1/H4/D/W bars, SMA, weighted score ≥ ±0.10.
+
+### B. Configuration
+
 - **Location**: `config/<strategy_name>.toml`
-- **Action**: Create a dedicated TOML file for the specific optimization (e.g., `mtf_5m.toml`).
-- **Content**:
-    - Global params (MA Type, Thresholds).
-    - Weights.
-    - Per-Timeframe indicator settings.
-    - Risk parameters (Risk %, Max Leverage).
+- **Content**: global params (MA type, threshold), weights, per-timeframe indicator settings, risk parameters
+
+*MTF live config*: `config/mtf.toml` — validated Round 3 parameters.
 
 ---
 
 ## 3. Data Hygiene & Warmup
-**Critical**: Strategies require historical data to calculate initial indicators (MA, RSI, ATR) before the first live tick arrives. Without this, the strategy will either crash or wait hours/days to accumulate enough data.
 
-### A. The Data Source
-- **Script**: `scripts/download_data.py`
-- **Function**: Downloads OHLCV data from IBKR and saves it as Parquet files in `data/`.
-- **Naming Convention**: `data/{SYMBOL}_{GRANULARITY}.parquet` (e.g., `EUR_USD_M5.parquet`).
-    - *Note*: The strategy looks for these **exact** filenames.
+Strategies require historical data to calculate initial indicators before the first live tick.
+Without warmup, the strategy will either crash or show `??` in the dashboard.
 
-### B. Warmup Logic
-- **Integration**: The runner script (`scripts/run_live_mtf_5m.py`) calls `download_data.py` *before* starting the trading node.
-- **Verification**:
-    - The runner prints: `📥 Checking for latest data...`
-    - If successful: `✅ Data download finished.`
-    - If failed: It logs a warning but proceeds with existing disk data.
-- **Strategy Loading**:
-    - Inside `MTFConfluenceStrategy._warmup_all()`, the code explicitly loads the tail of these parquet files into `self.history`.
-    - **Debug Check**: If the dashboard shows "??", it means this loading step failed (file missing or empty).
+### Data Download
+
+```bash
+# ORB stocks (M5 + D)
+uv run python scripts/download_data.py
+
+# EUR/USD for MTF (H1, H4, D, W)
+uv run python scripts/download_data_mtf.py
+```
+
+Saves Parquet files to `data/` using naming convention `data/{SYMBOL}_{GRANULARITY}.parquet`
+(e.g., `EUR_USD_H1.parquet`, `EUR_USD_D.parquet`).
+
+### Warmup Logic
+
+The runner script calls the appropriate download script before starting the NautilusTrader node (`download_data_mtf.py` for MTF, `download_data.py` for ORB).
+The strategy's `_warmup_all()` method loads the tail of these files at startup.
+
+**MTF expected warmup sequence:**
+```
+Loading H1 warmup from data/EUR_USD_H1.parquet
+Loading H4 warmup from data/EUR_USD_H4.parquet
+Loading D  warmup from data/EUR_USD_D.parquet
+Loading W  warmup from data/EUR_USD_W.parquet
+Warmup complete. ATR stop mult: 2.5x. Ready for signals.
+```
 
 ---
 
 ## 4. Execution Infrastructure
 
-### A. Runner Script
-- **Location**: `scripts/run_live_<strategy>.py`
-- **Action**: Create a dedicated runner script.
-    - **Logging**: Configure specific file logging to capture strategy signals.
-    - **Data Warmup**: Include a step to download/verify historical data (`scripts/download_data.py`) to ensure the strategy has context on startup.
-    - **Instrument Loading**: Fetch tradable instruments from the live provider.
-    - **Node Configuration**: Set up `TradingNode` with `IBKRDataClient` and `IBKRExecutionClient`.
+### Runner Script
 
-### B. Environment
-- **Credentials**: Ensure `.env` has valid `IBKR_ACCOUNT_ID` and `IBKR_ACCESS_TOKEN`.
-- **Mode**: Set `IBKR_ENVIRONMENT=practice` for initial testing.
+**Location**: `scripts/run_live_<strategy>.py`
 
----
+Required elements in every runner:
+1. **Logging**: File handler to `.tmp/logs/` + stream handler for stdout
+2. **Data warmup**: Call the download script before node.build() (`download_data_mtf.py` for MTF, `download_data.py` for ORB)
+3. **IBContract**: Define the correct contract for each instrument
+4. **Node ordering**: `node.build()` → `node.trader.add_strategy()` → `node.run()`
+5. **market_data_type**: Infer from port — REALTIME for live (4001/7496), DELAYED_FROZEN for paper (4002/7497)
+6. **Venue key**: Use `IB` constant from `nautilus_trader.adapters.interactive_brokers.common`, not the string `"IBKR"`
 
-## 4. Verification & Launch
+*MTF runner*: `scripts/run_live_mtf.py` (H1/H4/D/W bars, `config/mtf.toml`, client_id=3)
+*ORB runner*: `scripts/run_live_orb.py` (5M + 1D bars per ticker, `config/orb_live.toml`, client_id from `.env`)
 
-### A. Dry Run / Paper Trading
-1.  **Start Script**: `python scripts/run_live_<strategy>.py`
-2.  **Verify Warmup**: Check logs (`DEBUG` level) to ensure historical data is loaded from disk.
-3.  **Verify Dashboard**: Ensure the terminal output shows populated indicators (not "??") and active signal weights.
-4.  **Confirm Execution**: Wait for a signal (or force one in logic temporarily) to verify `_open_position` accesses the account and calculates size correctly.
-
-### B. Live Monitoring
-- **Logs**: Monitor `.tmp/logs/` for errors or unhandled exceptions.
-- **Process**: Run via a process manager (e.g., `systemd`, `supervisord`, or `nohup`) for long-term execution on a server.
-
-## 5. Server Persistence (VPS Deployment)
-When deploying to a remote server (Linux), you must ensure the process continues running after you close your SSH terminal.
-
-### Option A: Using `tmux` (Interactive Management)
-`tmux` creates a "virtual terminal" that lives on the server. Even if you disconnect, the session stays alive.
-
-#### Standard Workflow
-1.  **Create Session**: `tmux new -s titan` (Name it `titan` for easy identification).
-2.  **Run Strategy**: `python scripts/run_live_mtf_5m.py`
-3.  **Detach**: Press `Ctrl+B`, release, then press `D`. You are now back in your main shell.
-4.  **Re-attach**: `tmux attach -t titan` (or `tmux a` for short).
-
-#### Pro Management Commands
-- **List Sessions**: `tmux ls` (See all background terminals).
-- **Kill Session**: `tmux kill-session -t titan` (Hard stop).
-- **Scroll/Search Mode**: Press `Ctrl+B`, then `[`.
-    - Use arrow keys or `PageUp/PageDown`.
-    - Press `Q` to return to live view.
-- **Multiple Windows**:
-    - `Ctrl+B` then `C`: Create a new window (e.g., one for logs, one for `top`).
-    - `Ctrl+B` then `0-9`: Switch between windows.
-
----
-
-### Option B: Using `systemd` (Production Grade)
-`systemd` treats your strategy as a "System Service." It handles auto-restarts on crashes and starts automatically if the server reboots.
-
-#### 1. Prepare the Service File
-Create a file at `/etc/systemd/system/titan-mtf.service` (requires `sudo`):
+### Environment
 
 ```ini
-[Unit]
-Description=Titan MTF Strategy 5m
-After=network.target
-
-[Service]
-Type=simple
-User=youruser
-Group=youruser
-WorkingDirectory=/path/to/Titan-IBKR
-
-# Virtual Environment Path
-ExecStart=/path/to/Titan-IBKR/.venv/bin/python scripts/run_live_mtf_5m.py
-
-# Auto-Restart Logic
-Restart=always
-RestartSec=15
-
-# Security/Environment (Mandatory check)
-Environment="PYTHONPATH=/path/to/Titan-IBKR"
-Environment="IBKR_ACCOUNT_ID=YOUR_ID"
-Environment="IBKR_ACCESS_TOKEN=YOUR_TOKEN"
-Environment="IBKR_ENVIRONMENT=practice"
-
-# Resource Limits (Optional)
-CPUQuota=50%
-MemoryLimit=1G
-
-[Install]
-WantedBy=multi-user.target
+# .env — required variables
+IBKR_HOST=127.0.0.1
+IBKR_PORT=4002          # 4002=Gateway Paper, 4001=Gateway Live, 7497=TWS Paper, 7496=TWS Live
+IBKR_CLIENT_ID=3        # MTF uses 3; ORB uses value from .env (default 20)
+IBKR_ACCOUNT_ID=DUxxxxxxx
 ```
 
-#### 2. Service Management
-- **Reload Config**: `sudo systemctl daemon-reload` (Do this after every change to the `.service` file).
-- **Enable on Boot**: `sudo systemctl enable titan-mtf`
-- **Start/Stop/Restart**:
-    - `sudo systemctl start titan-mtf`
-    - `sudo systemctl stop titan-mtf`
-    - `sudo systemctl restart titan-mtf`
-- **Check Health**: `sudo systemctl status titan-mtf` (Check the `Active: active (running)` line).
+---
 
-#### 3. Advanced Log Analysis (`journalctl`)
-Systemd logs everything your strategy prints to `stdout`.
-- **Live Tail**: `sudo journalctl -u titan-mtf -f`
-- **Since Boot**: `sudo journalctl -u titan-mtf -b`
-- **Time Window**: `sudo journalctl -u titan-mtf --since "1 hour ago"`
-- **Errors Only**: `sudo journalctl -u titan-mtf -p err`
+## 5. Verification & Launch
+
+### Paper Trading (always first)
+
+```bash
+# MTF
+uv run python scripts/run_live_mtf.py
+
+# ORB
+uv run python scripts/run_live_orb.py
+```
+
+Check:
+1. Warmup completes with no `[ERROR]` lines
+2. Dashboard shows populated indicators (not `??`)
+3. First trade opens and closes correctly (check logs for `ATR stop placed`, position close events)
+4. `Ctrl+C` shuts down gracefully
+
+### Live Trading (after clean paper session)
+
+Switch `.env` to live port, confirm IBKR account type:
+```ini
+IBKR_PORT=4001   # Gateway Live
+```
+
+> [!CAUTION]
+> Never switch to live while an open position exists on the paper account.
+> Always verify account type in TWS before running.
 
 ---
 
-## 6. Monitoring & Health Checks
-Once live on a VPS, use these "Quick Checks" to ensure your strategy hasn't stalled:
+## 6. Server Persistence
 
-1.  **Process Check**: `ps aux | grep python` (Ensure the `run_live_mtf_5m.py` process is visible).
-2.  **Log Heartbeat**: Check if new log lines are appearing every 5 minutes (on bar close).
-3.  **IBKR Dashboard**: Occasionally cross-reference your "Signal: LONG" in logs with your actual IBKR web account to verify the position exists.
-4.  **CPU/Memory**: Use `htop` to ensure the strategy isn't leaking memory or hitting 100% CPU (which might indicate an infinite loop).
+For long-term deployment, use one of these methods (see `directives/Deployment Options.md` for full details):
+
+### Option A: tmux (testing / first week)
+
+```bash
+tmux new -s titan
+uv run python scripts/run_live_mtf.py
+# Ctrl+B then D to detach; tmux attach -t titan to re-attach
+```
+
+### Option B: systemd (production VPS)
+
+```ini
+# /etc/systemd/system/titan-mtf.service
+[Service]
+WorkingDirectory=/path/to/Titan-IBKR
+ExecStart=/path/to/.venv/bin/python scripts/run_live_mtf.py
+Restart=always
+RestartSec=15
+EnvironmentFile=/path/to/Titan-IBKR/.env
+```
 
 ---
 
-## Checklist
-- [ ] Optimization complete & params locked?
-- [ ] Features implemented in shared logic?
-- [ ] Strategy class updated to read params?
-- [ ] Config TOML created?
-- [ ] Runner script created with Logging & Warmup?
-- [ ] Dry run successful (Data loaded, Dashboard active)?
+## Deployment Checklist
+
+- [ ] OOS Sharpe ≥ 1.5 and OOS/IS ratio ≥ 0.5 confirmed in backtest
+- [ ] Parameters locked in `config/<strategy>.toml`
+- [ ] Warmup data downloaded (`scripts/download_data_mtf.py` for MTF, `scripts/download_data.py` for ORB)
+- [ ] Paper session completed — startup sequence clean, at least one trade
+- [ ] `.env` correct for target environment (paper vs live port)
+- [ ] Kill switch tested: `uv run python scripts/kill_switch.py`
+- [ ] Log monitoring in place (`tail -f .tmp/logs/...`)

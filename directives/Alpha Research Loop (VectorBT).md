@@ -1,80 +1,130 @@
 # Directive: Alpha Research Loop (VectorBT)
 
+> Last updated: 2026-03-14
+
 ## Goal
 
-Identify and optimise a viable **daily swing trading** strategy for **EUR/USD**, **GBP/USD**, and **AUD/USD** using vectorised backtesting on higher timeframes.
+Identify and optimise a viable **swing trading** strategy for **EUR/USD** using vectorised
+backtesting on higher timeframes. The MTF Confluence strategy is the primary validated output
+of this loop (Round 3, OOS Sharpe 2.936 — see `directives/MTF Optimization Protocol.md`).
 
 ## Timeframes
 
 | Granularity | Use Case |
 |---|---|
-| **H1** | Lowest timeframe — entry/exit timing |
-| **H4** | Primary analysis frame |
-| **D** | Trend confirmation |
-| **W** | Regime filter (trending vs ranging) |
+| **H1** | Entry timing |
+| **H4** | Swing confirmation |
+| **D** | Primary trend bias |
+| **W** | Long-term regime filter |
 
 ## Inputs
 
-- Instrument list from `config/instruments.toml`
-- Parameter ranges (e.g., RSI 10–25, MA 20–100)
+- Parameter ranges (e.g., RSI 10–25, MA 20–100, thresholds, weights)
+- Historical Parquet files from `data/` (downloaded by `scripts/download_data.py`)
+
+---
 
 ## Execution Steps
 
 ### 1. Data Ingestion
 
-Run `scripts/download_data.py` to pull **2+ years of H1/H4/D/W OHLC data**.
-Store in `data/` as Parquet (automatically handles pagination and resume).
+Pull 2+ years of H1/H4/D/W OHLC data:
+```bash
+uv run python scripts/download_data_mtf.py
+```
+
+Stores in `data/` as Parquet files (`EUR_USD_H1.parquet`, `EUR_USD_H4.parquet`, etc.).
 
 ### 2. Data Validation
 
-Run `titan/data/validation.py` to check for gaps, duplicates, and outlier spikes.
+Check for gaps, duplicates, and outlier spikes:
+```bash
+uv run python titan/data/validation.py
+```
 
 ### 3. Strategy Optimisation (In-Sample)
 
-- **Researcher Agent** runs `research/alpha_loop/run_vbt_optimisation.py`.
-- Uses open-source `vectorbt` (free) — no Pro license needed.
-- Data is split **70% in-sample / 30% out-of-sample**.
-- Optimisation runs on IS data only.
+Run the MTF optimisation pipeline (3 stages, greedy):
+```bash
+# Stage 1: MA type + threshold
+uv run python research/mtf/run_mtf_optimisation.py
+
+# Stage 2: Timeframe weights
+uv run python research/mtf/run_mtf_stage2.py
+
+# Stage 3: Per-timeframe indicator periods
+uv run python research/mtf/run_mtf_stage3.py
+```
+
+Data is split **70% in-sample / 30% out-of-sample**. Optimisation runs on IS data only.
+Best parameters are auto-saved to `.tmp/mtf_state.json` between stages.
 
 ### 4. Out-of-Sample Validation
 
-- Best candidates from IS are tested on the held-out OOS data.
-- **Reject** any candidate whose OOS Sharpe drops below 50% of IS Sharpe (overfitting signal).
+Best IS candidates are tested on the held-out OOS data.
 
-### 5. Candidate Selection
+**Reject** any candidate whose OOS Sharpe drops below 50% of IS Sharpe (overfitting signal).
 
-- Generate **Sharpe Ratio Heatmap** (plotly).
-- **Architect Agent** identifies the "Plateau of Stability".
+Additional gates (see `resources/VectorBT Credible Backtesting Guide.md`):
+- Slippage stress test (5 levels)
+- ATR stop sensitivity sweep (8 multipliers)
+- Monte Carlo (N=1,000)
+- Rolling Walk-Forward Optimisation (2yr anchor / 6mo windows)
 
-### 6. Multi-Timeframe Confluence (MTF)
+### 5. ATR Stop Sensitivity Sweep
 
-- Run `scripts/run_backtest_mtf.py`.
-- Tests strategies that require alignment across H1, H4, D, and W timeframes.
-- Generates `mtf_confluence_{IS/OOS}.html` reports.
+Separate sweep to find optimal hard stop distance. Run after Stage 3:
+```bash
+uv run python research/mtf/run_atr_sweep.py
+```
 
-### 6.5. Gaussian Channel Optimisation
+Result: `atr_stop_mult = 2.5` (OOS Sharpe 2.936 — see `directives/MTF Optimization Protocol.md`).
 
-- Run `research/gaussian/run_optimisation.py`.
-- Sweeps Ehlers Gaussian Channel parameters (Period × Poles × Sigma) on EUR/USD H1.
-- Saves optimised parameters to `config/gaussian_channel_config.toml`.
-- Generates a Sharpe heatmap in `.tmp/reports/`.
+### 6. MTF Confluence Backtest Report
 
-### 7. Parity Transfer
+Generate the full IS/OOS report:
+```bash
+uv run python scripts/run_backtest_meta.py
+```
 
-- Convert optimal parameters into `config/strategy_config.toml`.
+Generates HTML reports in `.tmp/reports/`.
+
+### 6.5. Gaussian Channel (Research Complete)
+
+The Gaussian Channel indicator research is complete:
+- Implementation: `titan/indicators/gaussian_filter.py` (Numba `@njit`)
+- Optimisation script: `research/gaussian/run_optimisation.py`
+- Config: `config/gaussian_channel_config.toml`
+- **Current use:** Deployed as a per-ticker filter in the ORB strategy (`use_gauss` flag).
+- **Not a standalone strategy** — Gaussian Channel Confluence strategy was deprecated after
+  the MTF strategy proved superior on the same data.
+
+### 7. Parameter Lock
+
+Once validation passes, write the final configuration:
+```bash
+# Parameters auto-saved by Stage 3; manually verify config/mtf.toml matches .tmp/mtf_state.json
+cat config/mtf.toml
+```
 
 ### 8. VBT → ML Bridge (Feature Selection)
 
-- Run `research/alpha_loop/run_feature_selection.py`.
-- Sweeps 7 indicator families + MTF confluence filters across parameter ranges.
-- Scores candidates by **Stability** = `min(IS, OOS) / max(IS, OOS)`.
-- Writes winning parameters to `config/features.toml` for the ML pipeline.
+If pursuing the ML strategy after locking MTF parameters:
+```bash
+uv run python research/ml/run_feature_selection.py
+```
+
+Sweeps 7 indicator families. Writes winning parameters to `config/features.toml` for ML pipeline.
 
 > [!NOTE]
-> **Upgrade path:** If parameter space grows too large for the free VectorBT, upgrade to VectorBT Pro for `@vbt.chunked` memory management. The API is compatible.
+> An ML meta-overlay on top of MTF was tested and **rejected** (OOS Sharpe 0.83 vs raw 2.73).
+> The ML pipeline is independent of MTF and targets its own instrument/timeframe setup.
+
+---
 
 ## Outputs
 
-- Optimised strategy configuration
-- Performance heatmap *(Artifact)*
-- OOS validation report
+- `config/mtf.toml` — locked optimised parameters (Round 3 validated)
+- `.tmp/reports/mtf_stage*.csv` — per-stage scoreboards
+- `.tmp/reports/mtf_meta_*.html` — IS/OOS equity curves
+- `config/features.toml` — ML feature parameters (if ML path taken)
