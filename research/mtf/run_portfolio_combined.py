@@ -48,10 +48,12 @@ ATR_PERIOD = 14
 MAX_LEVERAGE = 5.0
 H4_BARS_PER_YEAR = 2190
 
-PAIRS = [
-    ("EUR_USD", PROJECT_ROOT / "config" / "mtf_eurusd.toml"),
-    ("USD_CHF", PROJECT_ROOT / "config" / "mtf_usdchf.toml"),
-]
+
+def _resolve_config(pair: str) -> Path:
+    """Return config path for pair, falling back to generic mtf.toml."""
+    pair_lower = pair.lower().replace("_", "")
+    pair_cfg = PROJECT_ROOT / "config" / f"mtf_{pair_lower}.toml"
+    return pair_cfg if pair_cfg.exists() else PROJECT_ROOT / "config" / "mtf.toml"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -222,14 +224,29 @@ def maxdd_from_equity(val: pd.Series) -> float:
 
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="MTF two-pair combined portfolio simulation.")
+    parser.add_argument("--pair1", default="EUR_USD", help="First pair (default: EUR_USD)")
+    parser.add_argument("--pair2", default="USD_CHF", help="Second pair (default: USD_CHF)")
+    args = parser.parse_args()
+
+    pair1 = args.pair1.upper()
+    pair2 = args.pair2.upper()
+    pairs = [(pair1, _resolve_config(pair1)), (pair2, _resolve_config(pair2))]
+
+    label = f"{pair1.replace('_', '/')} + {pair2.replace('_', '/')}"
+    pair1_key = pair1
+    pair2_key = pair2
+
     print("=" * 72)
-    print("  MTF COMBINED PORTFOLIO: EUR/USD + USD/CHF")
+    print(f"  MTF COMBINED PORTFOLIO: {label}")
     print(f"  Total capital: ${INIT_CASH:,.0f}  |  Split: 50/50 (${HALF_CASH:,.0f} each)")
     print("  Exit: signal-only  |  Risk: 1% equity per trade per pair")
     print("=" * 72)
 
     results: dict[str, dict] = {}
-    for pair, cfg_path in PAIRS:
+    for pair, cfg_path in pairs:
         print(f"\n  Computing {pair}...")
         results[pair] = run_pair(pair, cfg_path)
         r = results[pair]
@@ -238,8 +255,8 @@ def main() -> None:
             f"  Return={r['total_return']:.2%}  Trades={r['trades']}"
         )
 
-    eur = results["EUR_USD"]
-    chf = results["USD_CHF"]
+    eur = results[pair1_key]
+    chf = results[pair2_key]
 
     # ── Align via outer join + ffill (H4 timestamps differ per pair) ──
     aligned = (
@@ -375,7 +392,7 @@ def main() -> None:
         go.Scatter(
             x=val_eur.index,
             y=val_eur * 2,
-            name="EUR/USD (scaled to $100k)",
+            name=f"{pair1.replace('_', '/')} (scaled to $100k)",
             line={"color": "royalblue", "dash": "dot", "width": 1.5},
         )
     )
@@ -383,7 +400,7 @@ def main() -> None:
         go.Scatter(
             x=val_chf.index,
             y=val_chf * 2,
-            name="USD/CHF (scaled to $100k)",
+            name=f"{pair2.replace('_', '/')} (scaled to $100k)",
             line={"color": "tomato", "dash": "dot", "width": 1.5},
         )
     )
@@ -397,7 +414,7 @@ def main() -> None:
     )
     fig.update_layout(
         title=(
-            f"EUR/USD + USD/CHF Combined Portfolio  |  "
+            f"{label} Combined Portfolio  |  "
             f"Corr={corr:+.3f}  |  "
             f"Combined Sharpe={combined_sharpe:.3f}  MaxDD={combined_maxdd:.2%}"
         ),
@@ -407,7 +424,8 @@ def main() -> None:
         hovermode="x unified",
     )
 
-    html_path = REPORTS_DIR / "mtf_combined_eurusd_usdchf.html"
+    slug = f"{pair1_key.lower()}_{pair2_key.lower()}"
+    html_path = REPORTS_DIR / f"mtf_combined_{slug}.html"
     fig.write_html(str(html_path))
     print(f"\n  Report saved: {html_path}")
     print("\nDone.")
