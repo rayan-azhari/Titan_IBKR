@@ -151,8 +151,13 @@ def compute_confluence(pair: str, cfg: dict) -> tuple[pd.Series, pd.DataFrame]:
     return signals, primary_df
 
 
-def run_pair(pair: str, config_path: Path) -> dict:
-    """Run signal-only portfolio for one pair on HALF_CASH. Returns metrics dict."""
+def run_pair(pair: str, config_path: Path, risk_base: str = "half") -> dict:
+    """Run signal-only portfolio for one pair on HALF_CASH. Returns metrics dict.
+
+    risk_base controls position sizing:
+      'half'  — risk 1% of $50k per trade ($500) — default, conservative
+      'full'  — risk 1% of $100k per trade ($1000) — 2x leverage on same capital
+    """
     cfg = load_config(config_path)
     threshold = cfg.get("confirmation_threshold", 0.10)
     stop_atr_mult = float(cfg.get("atr_stop_mult", 2.0))
@@ -166,7 +171,8 @@ def run_pair(pair: str, config_path: Path) -> dict:
     atr = compute_atr(primary_df, ATR_PERIOD)
     conf_sh = confluence.shift(1).fillna(0.0)
 
-    risk_amt = HALF_CASH * RISK_PER_TRADE
+    risk_capital = INIT_CASH if risk_base == "full" else HALF_CASH
+    risk_amt = risk_capital * RISK_PER_TRADE
     stop_dist = stop_atr_mult * atr
     raw_units = risk_amt / stop_dist
     max_units = (HALF_CASH * MAX_LEVERAGE) / close
@@ -223,6 +229,48 @@ def maxdd_from_equity(val: pd.Series) -> float:
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _simulate(pair1: str, pair2: str, risk_base: str) -> dict:
+    """Run both pairs and return combined metrics dict."""
+    pairs = [(pair1, _resolve_config(pair1)), (pair2, _resolve_config(pair2))]
+    results: dict[str, dict] = {}
+    for pair, cfg_path in pairs:
+        results[pair] = run_pair(pair, cfg_path, risk_base=risk_base)
+
+    r1 = results[pair1]
+    r2 = results[pair2]
+
+    aligned = (
+        pd.concat(
+            [r1["val"].rename("p1"), r2["val"].rename("p2")],
+            axis=1,
+            join="outer",
+        )
+        .ffill()
+        .dropna()
+    )
+    val1 = aligned["p1"]
+    val2 = aligned["p2"]
+    val_combined = val1 + val2
+
+    corr = float(val1.pct_change().dropna().corr(val2.pct_change().dropna()))
+    total_swap = r1["swap_drag"] + r2["swap_drag"]
+
+    return {
+        "r1": r1,
+        "r2": r2,
+        "val_combined": val_combined,
+        "val1": val1,
+        "val2": val2,
+        "corr": corr,
+        "total_swap": total_swap,
+        "combined_return": (val_combined.iloc[-1] - INIT_CASH) / INIT_CASH,
+        "combined_adj_return": (val_combined.iloc[-1] - total_swap - INIT_CASH) / INIT_CASH,
+        "combined_sharpe": sharpe_from_equity(val_combined),
+        "combined_maxdd": maxdd_from_equity(val_combined),
+        "combined_final_eq": val_combined.iloc[-1],
+    }
+
+
 def main() -> None:
     import argparse
 
@@ -233,201 +281,161 @@ def main() -> None:
 
     pair1 = args.pair1.upper()
     pair2 = args.pair2.upper()
-    pairs = [(pair1, _resolve_config(pair1)), (pair2, _resolve_config(pair2))]
-
     label = f"{pair1.replace('_', '/')} + {pair2.replace('_', '/')}"
-    pair1_key = pair1
-    pair2_key = pair2
+    slug = f"{pair1.lower()}_{pair2.lower()}"
 
-    print("=" * 72)
-    print(f"  MTF COMBINED PORTFOLIO: {label}")
-    print(f"  Total capital: ${INIT_CASH:,.0f}  |  Split: 50/50 (${HALF_CASH:,.0f} each)")
-    print("  Exit: signal-only  |  Risk: 1% equity per trade per pair")
-    print("=" * 72)
-
-    results: dict[str, dict] = {}
-    for pair, cfg_path in pairs:
-        print(f"\n  Computing {pair}...")
-        results[pair] = run_pair(pair, cfg_path)
-        r = results[pair]
-        print(
-            f"    Sharpe={r['sharpe']:.3f}  MaxDD={r['maxdd']:.2%}"
-            f"  Return={r['total_return']:.2%}  Trades={r['trades']}"
-        )
-
-    eur = results[pair1_key]
-    chf = results[pair2_key]
-
-    # ── Align via outer join + ffill (H4 timestamps differ per pair) ──
-    aligned = (
-        pd.concat(
-            [eur["val"].rename("eur"), chf["val"].rename("chf")],
-            axis=1,
-            join="outer",
-        )
-        .ffill()
-        .dropna()
-    )
-    val_eur = aligned["eur"]
-    val_chf = aligned["chf"]
-    val_combined = val_eur + val_chf
-
-    # ── Correlation of bar-level returns ─────────────────────────────
-    ret_eur = val_eur.pct_change().dropna()
-    ret_chf = val_chf.pct_change().dropna()
-    corr = float(ret_eur.corr(ret_chf))
-
-    # ── Combined metrics ──────────────────────────────────────────────
-    total_swap = eur["swap_drag"] + chf["swap_drag"]
-    combined_return = (val_combined.iloc[-1] - INIT_CASH) / INIT_CASH
-    combined_adj_return = (val_combined.iloc[-1] - total_swap - INIT_CASH) / INIT_CASH
-    combined_sharpe = sharpe_from_equity(val_combined)
-    combined_maxdd = maxdd_from_equity(val_combined)
-
-    # ── Individual metrics scaled to $100k for fair comparison ────────
-    # Sharpe is scale-invariant; return/DD are already correct.
-    # Final equity is on $50k base — scale x2 for $100k comparison.
-    def scaled_final(r: dict) -> float:
-        return r["final_eq"] * 2
-
-    # ── Print table ───────────────────────────────────────────────────
-    print("\n" + "=" * 80)
-    print("  DIVERSIFICATION ANALYSIS")
     print("=" * 80)
-    print(f"\n  H4-bar return correlation:  {corr:+.4f}")
-    if corr < -0.15:
-        verdict = "GENUINE negative correlation — expect meaningful DD reduction."
-    elif corr < 0.05:
-        verdict = "Near-zero — modest smoothing, limited DD benefit."
-    else:
-        verdict = "Positive correlation — pairs move together. Minimal diversification."
-    print(f"  Interpretation: {verdict}\n")
+    print(f"  MTF COMBINED PORTFOLIO: {label}")
+    print(f"  Capital: ${INIT_CASH:,.0f} total  |  50/50 split (${HALF_CASH:,.0f} each)")
+    print("  Signal-only exit  |  Risk: 1% per trade")
+    print("=" * 80)
 
-    w = 18
-    h = f"  {'Metric':<24} {'EUR/USD':>{w}} {'USD/CHF':>{w}} {'Combined':>{w}}"
-    sep = "  " + "-" * (24 + w * 3 + 6)
-    note = "(each $50k)   (each $50k)  ($100k total)"
-    print(f"  {'':24} {note}")
-    print(h)
+    # ── Run both risk modes ───────────────────────────────────────────
+    print(f"\n  [A] Conservative: risk 1% of ${HALF_CASH:,.0f} per pair = $500/trade each")
+    sim_half = _simulate(pair1, pair2, risk_base="half")
+
+    print(f"\n  [B] Full risk:    risk 1% of ${INIT_CASH:,.0f} per pair = $1,000/trade each")
+    sim_full = _simulate(pair1, pair2, risk_base="full")
+
+    # ── Correlation (same for both — sizing doesn't affect signal timing) ──
+    corr = sim_half["corr"]  # identical in both modes
+
+    # ── Print comparison table ────────────────────────────────────────
+    print("\n" + "=" * 80)
+    print(f"  RESULTS  |  Correlation of H4 returns: {corr:+.4f}")
+    print("=" * 80)
+
+    w = 20
+    print(
+        f"\n  {'Metric':<26} {'[A] Conservative':>{w}} {'[B] Full Risk (2% total)':>{w}}"
+        f"  {'Diff':>10}"
+    )
+    sep = "  " + "-" * (26 + w * 2 + 14)
     print(sep)
 
-    def row(label: str, v1: str, v2: str, vc: str) -> None:
-        print(f"  {label:<24} {v1:>{w}} {v2:>{w}} {vc:>{w}}")
+    def row(lbl: str, va: str, vb: str, diff: str = "") -> None:
+        print(f"  {lbl:<26} {va:>{w}} {vb:>{w}}  {diff:>10}")
+
+    a, b = sim_half, sim_full
 
     row(
-        "Total Return",
-        f"{eur['total_return']:.2%}",
-        f"{chf['total_return']:.2%}",
-        f"{combined_return:.2%}",
+        "Combined Total Return",
+        f"{a['combined_return']:.2%}",
+        f"{b['combined_return']:.2%}",
+        f"{b['combined_return'] - a['combined_return']:+.2%}",
     )
     row(
-        "Adj Return (swap)",
-        f"{eur['adj_return']:.2%}",
-        f"{chf['adj_return']:.2%}",
-        f"{combined_adj_return:.2%}",
+        "Combined Adj Return (swap)",
+        f"{a['combined_adj_return']:.2%}",
+        f"{b['combined_adj_return']:.2%}",
+        f"{b['combined_adj_return'] - a['combined_adj_return']:+.2%}",
     )
     row(
-        "Sharpe",
-        f"{eur['sharpe']:.3f}",
-        f"{chf['sharpe']:.3f}",
-        f"{combined_sharpe:.3f}",
+        "Combined Sharpe",
+        f"{a['combined_sharpe']:.3f}",
+        f"{b['combined_sharpe']:.3f}",
+        f"{b['combined_sharpe'] - a['combined_sharpe']:+.3f}",
     )
     row(
-        "Max Drawdown",
-        f"{eur['maxdd']:.2%}",
-        f"{chf['maxdd']:.2%}",
-        f"{combined_maxdd:.2%}",
+        "Combined Max Drawdown",
+        f"{a['combined_maxdd']:.2%}",
+        f"{b['combined_maxdd']:.2%}",
+        f"{b['combined_maxdd'] - a['combined_maxdd']:+.2%}",
     )
     row(
-        "Trades",
-        str(eur["trades"]),
-        str(chf["trades"]),
-        str(eur["trades"] + chf["trades"]),
-    )
-    row(
-        "Final Equity",
-        f"${eur['final_eq']:,.0f}",
-        f"${chf['final_eq']:,.0f}",
-        f"${val_combined.iloc[-1]:,.0f}",
+        "Combined Final Equity",
+        f"${a['combined_final_eq']:,.0f}",
+        f"${b['combined_final_eq']:,.0f}",
+        f"${b['combined_final_eq'] - a['combined_final_eq']:+,.0f}",
     )
     print(sep)
     row(
-        "Swap Cost ($)",
-        f"-${eur['swap_drag']:,.0f}",
-        f"-${chf['swap_drag']:,.0f}",
-        f"-${total_swap:,.0f}",
+        "Total Swap Cost",
+        f"-${a['total_swap']:,.0f}",
+        f"-${b['total_swap']:,.0f}",
+        f"${b['total_swap'] - a['total_swap']:+,.0f}",
     )
 
-    # ── Diversification verdict ───────────────────────────────────────
-    best_ind_dd = max(eur["maxdd"], chf["maxdd"])  # max = least negative = smaller DD
-    dd_delta = abs(combined_maxdd) - abs(best_ind_dd)
-    sharpe_delta = combined_sharpe - max(eur["sharpe"], chf["sharpe"])
-
-    print("\n  -- Diversification verdict ------------------------------------------")
-    print(f"  Correlation:          {corr:+.4f}")
-    print(
-        f"  Combined MaxDD:       {combined_maxdd:.2%}  "
-        f"vs best individual: {best_ind_dd:.2%}  "
-        f"({'better' if dd_delta < 0 else 'worse'} by {abs(dd_delta):.2%})"
+    print(f"\n  {pair1.replace('_', '/')} individual:")
+    row(
+        "  Sharpe",
+        f"{a['r1']['sharpe']:.3f}",
+        f"{b['r1']['sharpe']:.3f}",
+        f"{b['r1']['sharpe'] - a['r1']['sharpe']:+.3f}",
     )
-    print(
-        f"  Combined Sharpe:      {combined_sharpe:.3f}  "
-        f"vs best individual: {max(eur['sharpe'], chf['sharpe']):.3f}  "
-        f"({'better' if sharpe_delta > 0 else 'worse'} by {abs(sharpe_delta):.3f})"
+    row(
+        "  Max Drawdown",
+        f"{a['r1']['maxdd']:.2%}",
+        f"{b['r1']['maxdd']:.2%}",
+        f"{b['r1']['maxdd'] - a['r1']['maxdd']:+.2%}",
+    )
+    print(f"\n  {pair2.replace('_', '/')} individual:")
+    row(
+        "  Sharpe",
+        f"{a['r2']['sharpe']:.3f}",
+        f"{b['r2']['sharpe']:.3f}",
+        f"{b['r2']['sharpe'] - a['r2']['sharpe']:+.3f}",
+    )
+    row(
+        "  Max Drawdown",
+        f"{a['r2']['maxdd']:.2%}",
+        f"{b['r2']['maxdd']:.2%}",
+        f"{b['r2']['maxdd'] - a['r2']['maxdd']:+.2%}",
     )
 
-    if corr < -0.15 and dd_delta < 0:
-        conclusion = "REAL — negative correlation materially reduces drawdown."
-    elif corr < 0.05 and dd_delta < 0:
-        conclusion = "MODEST — near-zero correlation provides some smoothing."
-    else:
-        conclusion = "ILLUSORY — pairs too correlated to provide meaningful benefit."
-    print(f"\n  Conclusion: {conclusion}")
-    print("  " + "-" * 68)
+    print("""
+  Summary:
+    Sharpe is scale-invariant — doubling position size leaves it unchanged.
+    Returns roughly double (2x leverage on same capital base).
+    MaxDD roughly doubles — you are taking on 2% total portfolio risk per bar.
+    Swap costs roughly double (larger average position value).
+    Correlation is unchanged — signal timing is independent of size.
+    """)
 
-    # ── Plot ──────────────────────────────────────────────────────────
+    # ── Plot: both modes + individuals ───────────────────────────────
     fig = go.Figure()
-    # Scale individuals to $100k for visual comparison
     fig.add_trace(
         go.Scatter(
-            x=val_eur.index,
-            y=val_eur * 2,
-            name=f"{pair1.replace('_', '/')} (scaled to $100k)",
-            line={"color": "royalblue", "dash": "dot", "width": 1.5},
+            x=a["val_combined"].index,
+            y=a["val_combined"],
+            name="[A] Combined — conservative (1% of $50k)",
+            line={"color": "steelblue", "width": 2},
         )
     )
     fig.add_trace(
         go.Scatter(
-            x=val_chf.index,
-            y=val_chf * 2,
-            name=f"{pair2.replace('_', '/')} (scaled to $100k)",
-            line={"color": "tomato", "dash": "dot", "width": 1.5},
+            x=b["val_combined"].index,
+            y=b["val_combined"],
+            name="[B] Combined — full risk (1% of $100k)",
+            line={"color": "seagreen", "width": 2},
         )
     )
     fig.add_trace(
         go.Scatter(
-            x=val_combined.index,
-            y=val_combined,
-            name="Combined 50/50",
-            line={"color": "seagreen", "width": 2.5},
+            x=a["val1"].index,
+            y=a["val1"] * 2,
+            name=f"{pair1.replace('_', '/')} only (scaled, conservative)",
+            line={"color": "royalblue", "dash": "dot", "width": 1.2},
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=a["val2"].index,
+            y=a["val2"] * 2,
+            name=f"{pair2.replace('_', '/')} only (scaled, conservative)",
+            line={"color": "tomato", "dash": "dot", "width": 1.2},
         )
     )
     fig.update_layout(
-        title=(
-            f"{label} Combined Portfolio  |  "
-            f"Corr={corr:+.3f}  |  "
-            f"Combined Sharpe={combined_sharpe:.3f}  MaxDD={combined_maxdd:.2%}"
-        ),
+        title=(f"{label}  |  Conservative vs Full-Risk  |  Corr={corr:+.3f}"),
         yaxis_title="Equity ($)",
         xaxis_title="Date",
-        legend={"orientation": "h", "y": -0.15},
+        legend={"orientation": "h", "y": -0.2},
         hovermode="x unified",
     )
-
-    slug = f"{pair1_key.lower()}_{pair2_key.lower()}"
     html_path = REPORTS_DIR / f"mtf_combined_{slug}.html"
     fig.write_html(str(html_path))
-    print(f"\n  Report saved: {html_path}")
+    print(f"  Report saved: {html_path}")
     print("\nDone.")
 
 
