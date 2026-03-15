@@ -1,6 +1,6 @@
 # MTF Strategy User Guide
 
-> Last updated: 2026-03-14
+> Last updated: 2026-03-15
 
 ## Overview
 
@@ -10,9 +10,9 @@ in either direction, the strategy enters a position and places a hard ATR stop. 
 closed when the score returns to neutral, reverses, or the ATR stop is triggered.
 
 **Instrument:** EUR/USD on IDEALPRO (`EUR/USD.IDEALPRO`)
-**Timeframes:** H1 (entry timing), H4 (swing), D/Daily (primary trend), W/Weekly (regime)
-**Validated OOS Sharpe:** 2.936 | OOS CAGR: +29.44% | Max Drawdown: −5.12%
-**Config:** `config/mtf.toml` | **Runner:** `scripts/run_live_mtf.py`
+**Timeframes:** H1 (entry timing), H4 (swing), D/Daily (primary trend), W/Weekly (macro regime)
+**Validated OOS Sharpe (combined):** 1.943 | Swap-adj CAGR: ~8%/yr | Max Drawdown: ~10%
+**Config:** `config/mtf_eurusd.toml` | **Runner:** `scripts/run_live_mtf.py`
 
 Unlike ORB (intraday, EOD flatten), MTF holds positions across sessions. There is **no end-of-day
 flatten** — positions close when the signal changes or the stop fires.
@@ -138,12 +138,12 @@ Do not close Tab 1 — closing it kills the strategy.
 ls -t .tmp/logs/mtf_stdout_*.log | head -1
 
 # Stream it live (replace filename with actual)
-tail -f .tmp/logs/mtf_stdout_20260314_091500.log
+tail -f .tmp/logs/mtf_stdout_20260315_091500.log
 ```
 
 Filter for only important events:
 ```bash
-tail -f .tmp/logs/mtf_stdout_20260314_091500.log | grep -i "Signal\|ATR stop\|FILLED\|REJECTED\|ERROR\|WARN"
+tail -f .tmp/logs/mtf_stdout_20260315_091500.log | grep -i "Signal\|ATR stop\|FILLED\|REJECTED\|ERROR\|WARN"
 ```
 
 ---
@@ -178,7 +178,7 @@ MTF Strategy Started. Warming up...
   Loading H4 warmup from data/EUR_USD_H4.parquet
   Loading D  warmup from data/EUR_USD_D.parquet
   Loading W  warmup from data/EUR_USD_W.parquet
-Warmup complete. ATR stop mult: 2.5x. Ready for signals.
+Warmup complete. ATR stop mult: 4.0x. Ready for signals.
 ```
 
 If all 4 steps complete without `[ERROR]` lines, the strategy is healthy and watching for signals.
@@ -195,24 +195,33 @@ warmup data is missing — see Common Errors below.
 The strategy computes a weighted score across all timeframes:
 
 ```
-Score = 0.60 × Signal_D + 0.25 × Signal_H4 + 0.10 × Signal_H1 + 0.05 × Signal_W
+Score = 0.55 × Signal_D + 0.30 × Signal_W + 0.10 × Signal_H1 + 0.05 × Signal_H4
 ```
 
 Each timeframe signal ∈ {−1.0, −0.5, 0.0, +0.5, +1.0}:
-- **MA component**: fast SMA > slow SMA → +0.5, else −0.5
+- **MA component**: fast WMA > slow WMA → +0.5, else −0.5
 - **RSI component**: RSI > 50 → +0.5, else −0.5
 - **Sum**: −1.0 to +1.0 per timeframe
 
-**Entry:** Long if Score ≥ +0.10 | Short if Score ≤ −0.10
+**Entry (next bar):** Long if Score ≥ +0.10 | Short if Score ≤ −0.10
 
-### Indicator Parameters (from `config/mtf.toml`)
+### Why the Strategy Trades H4 Bars But Is Driven by Daily/Weekly
+
+The strategy **subscribes to H4 bars** to get price updates throughout the day, but the confluence
+score is dominated by **Daily (55%) and Weekly (30%) signals**. H4 has only 5% weight.
+
+In practice, the score rarely changes within a single day — Daily and Weekly MAs move slowly.
+Most entries happen when the Daily WMA crossover fires, and H4/H1 happen to agree.
+Expect roughly 1–2 signals per week, not per day.
+
+### Indicator Parameters (from `config/mtf_eurusd.toml`)
 
 | TF | MA Type | Fast | Slow | RSI Period |
 |---|---|---|---|---|
-| H1 | SMA | 10 | 30 | 21 |
-| H4 | SMA | 10 | 50 | 21 |
-| D | SMA | 13 | 20 | 14 |
-| W | SMA | 13 | 21 | 10 |
+| H1 | WMA | 10 | 50 | 14 |
+| H4 | WMA | 10 | 40 | 14 |
+| D  | WMA | 10 | 20 | 7 |
+| W  | WMA | 8  | 21 | 14 |
 
 ### Exit Logic (Two-Layer)
 
@@ -222,20 +231,18 @@ then position is closed at market.
 
 **Layer 2 — Hard ATR stop (secondary):**
 A GTC `STOP_MARKET` order is placed immediately after the entry fills at:
-- Long: `fill_price − 2.5 × ATR(14, H1)`
-- Short: `fill_price + 2.5 × ATR(14, H1)`
+- Long: `fill_price − 4.0 × ATR(14, H1)`
+- Short: `fill_price + 4.0 × ATR(14, H1)`
 
 This order remains open until cancelled by a signal exit or triggered by price.
 
 ### Position Sizing
 
 ```
-stop_dist = 2.5 × ATR(14, H1)
+stop_dist = 4.0 × ATR(14, H1)
 units     = (equity × 0.01) / stop_dist          # 1% equity risk per trade
 units     = min(units, equity × 5.0 / price)     # 5× leverage cap
 ```
-
-This sizes each trade so the 2.5× ATR stop represents exactly 1% of equity loss if hit.
 
 ---
 
@@ -245,26 +252,26 @@ Full lifecycle of a trade from entry to exit:
 
 ```
 # 1. Signal fires
-Score=0.73 [D=+1.0 H4=+1.0 H1=+0.5 W=+0.5]. Opening LONG.
+Score=+0.73 [D=+1.0 W=+1.0 H4=+0.5 H1=+0.5]. Opening LONG.
 Submitting LONG 87000 EUR/USD.IDEALPRO @ market.
 
 # 2. Entry fills
-ORDER FILLED: O-20260314-... side=BUY qty=87000 px=1.08450 commission=3.22
+ORDER FILLED: O-20260315-... side=BUY qty=87000 px=1.08450 commission=3.22
 
 # 3. ATR stop placed
-ATR stop placed @ 1.08200 (2.5x ATR = 0.00250). Order: O-20260314-...-stop
+ATR stop placed @ 1.08050 (4.0x ATR = 0.00400). Order: O-20260315-...-stop
 
 # 4a. Signal reversal exit (winning or scratch trade)
-Score=0.05 [D=+0.5 H4=+0.5 H1=-0.5 W=+0.5]. Signal Neutral. Closing position.
+Score=+0.05 [D=+0.5 W=+0.5 H4=-0.5 H1=-0.5]. Signal Neutral. Closing position.
 # or:
 Score=-0.13. Signal Flip: Long -> Short. Closing position.
-Cancelling ATR stop order O-20260314-...-stop
-ORDER FILLED: O-20260314-... side=SELL qty=87000 px=1.09120 commission=3.22
+Cancelling ATR stop order O-20260315-...-stop
+ORDER FILLED: O-20260315-... side=SELL qty=87000 px=1.09120 commission=3.22
 POSITION CLOSED: realized_pnl=+$582.90
 
 # 4b. ATR stop triggered (losing trade)
-ATR stop triggered. Fill @ 1.08200.
-POSITION CLOSED: realized_pnl=-$217.50
+ATR stop triggered. Fill @ 1.08050.
+POSITION CLOSED: realized_pnl=-$348.00
 ```
 
 ### Log Levels
@@ -345,10 +352,6 @@ protecting you. The strategy will detect the open position at startup and resume
 
 ### Dashboard shows `??` for MA/RSI values
 
-```
-H1: fast=?? slow=?? rsi=?? | Score=??
-```
-
 Warmup parquet files are missing or empty. Run:
 ```bash
 uv run python scripts/download_data_mtf.py
@@ -359,11 +362,10 @@ Then restart the strategy. All four parquet files must exist:
 
 ### No trades in long sessions
 
-This is **expected behaviour**. The threshold of ±0.10 is conservative. When EUR/USD is in a
-sideways/ranging regime, the Daily and H4 signals often cancel each other and the score stays
-in the neutral zone (−0.10 to +0.10). Wait for a trending regime.
+This is **expected behaviour**. The threshold of ±0.10 is conservative. EUR/USD Daily and Weekly
+MAs move slowly — the score often stays in the neutral zone during range-bound regimes.
 
-Average trade frequency: ~78 trades/year (~1.5 per week).
+Average trade frequency: ~1.5 trades/week.
 
 ### Error 326 — Client ID already in use
 
@@ -433,35 +435,36 @@ Client ID assignments:
 | `download_data_mtf.py` | 11 (hardcoded) | EUR/USD warmup data — called automatically by runner |
 | `download_data.py` | 10 (hardcoded) | ORB stocks data — run separately pre-market |
 
-### `config/mtf.toml` — Strategy Parameters
+### `config/mtf_eurusd.toml` — Strategy Parameters
 
 ```toml
+ma_type = "WMA"
 confirmation_threshold = 0.10   # Score must exceed ±0.10 to enter
-atr_stop_mult = 2.5             # Hard stop = 2.5 × ATR(14, H1) from entry
+atr_stop_mult = 4.0             # Hard stop = 4.0 × ATR(14, H1) from entry
 
 [weights]
 H1 = 0.10   # Entry timing (10%)
-H4 = 0.25   # Swing confirmation (25%)
-D  = 0.60   # Primary trend — dominant driver (60%)
-W  = 0.05   # Long-term regime context (5%)
+H4 = 0.05   # Swing confirmation (5%)
+D  = 0.55   # Primary trend — dominant driver (55%)
+W  = 0.30   # Long-term macro regime filter (30%)
 
 [H1]
-fast_ma = 10 | slow_ma = 30 | rsi_period = 21
+fast_ma = 10 | slow_ma = 50 | rsi_period = 14
 
 [H4]
-fast_ma = 10 | slow_ma = 50 | rsi_period = 21
+fast_ma = 10 | slow_ma = 40 | rsi_period = 14
 
 [D]
-fast_ma = 13 | slow_ma = 20 | rsi_period = 14
+fast_ma = 10 | slow_ma = 20 | rsi_period = 7
 
 [W]
-fast_ma = 13 | slow_ma = 21 | rsi_period = 10
+fast_ma = 8 | slow_ma = 21 | rsi_period = 14
 ```
 
 > [!CAUTION]
-> Do NOT manually edit `config/mtf.toml` to change weights or MA periods. These values were
-> validated through 3 rounds of optimization (OOS Sharpe 2.936). Any change requires a full
-> re-backtest with OOS validation before deploying.
+> Do NOT manually edit `config/mtf_eurusd.toml` to change weights or MA periods. These values
+> were validated through a 6-stage optimization pipeline (Combined OOS Sharpe 1.943). Any change
+> requires a full re-backtest with OOS validation before deploying.
 
 ### `scripts/run_live_mtf.py` — Runner Settings
 

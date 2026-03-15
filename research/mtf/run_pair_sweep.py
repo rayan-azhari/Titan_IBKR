@@ -1,15 +1,18 @@
-"""run_pair_sweep.py — Stage 3 greedy sweep for any FX pair.
+"""run_pair_sweep.py — Stage 3 greedy sweep for any FX pair / instrument.
 
 Seeds baseline parameters from config/mtf.toml (EUR/USD validated config),
 then sweeps fast_ma / slow_ma / rsi_period per timeframe using the same
 greedy D -> H4 -> H1 -> W order as the EUR/USD Stage 3 optimisation.
 
 Saves results to:
-  config/mtf_{pair_lower}.toml          (best params)
+  config/mtf_{pair_lower}.toml             (best params)
   .tmp/reports/mtf_{pair_lower}_sweep.csv  (full scoreboard)
 
 Usage:
     uv run python research/mtf/run_pair_sweep.py --pair GBP_USD
+    uv run python research/mtf/run_pair_sweep.py --pair GBP_USD --load-state
+    uv run python research/mtf/run_pair_sweep.py --pair GBP_USD \\
+        --threshold 0.15 --w-H1 0.10 --w-H4 0.25 --w-D 0.60 --w-W 0.05
 """
 
 import argparse
@@ -37,10 +40,10 @@ except ImportError:
 from titan.models.spread import build_spread_series  # noqa: E402
 
 # ─────────────────────────────────────────────────────────────────────
-# Fixed from EUR/USD Stage 1-2 (apply as-is to new pair first)
+# Defaults (EUR/USD Stage 1-2 winners) — overridden by CLI or state
 # ─────────────────────────────────────────────────────────────────────
-THRESHOLD = 0.10
-WEIGHTS = {"H1": 0.10, "H4": 0.25, "D": 0.60, "W": 0.05}
+DEFAULT_THRESHOLD = 0.10
+DEFAULT_WEIGHTS = {"H1": 0.10, "H4": 0.25, "D": 0.60, "W": 0.05}
 SWEEP_ORDER = ["D", "H4", "H1", "W"]
 
 PARAM_GRIDS = {
@@ -84,7 +87,7 @@ def load_data(pair: str, gran: str) -> pd.DataFrame | None:
     return df
 
 
-def load_baseline_params() -> dict:
+def load_baseline_params(tfs: list[str]) -> dict:
     with open(BASELINE_CONFIG, "rb") as f:
         cfg = tomllib.load(f)
     return {
@@ -93,7 +96,7 @@ def load_baseline_params() -> dict:
             "slow_ma": cfg.get(tf, {}).get("slow_ma", 50),
             "rsi_period": cfg.get(tf, {}).get("rsi_period", 14),
         }
-        for tf in WEIGHTS
+        for tf in tfs
     }
 
 
@@ -125,12 +128,16 @@ def extract_stats(pf) -> dict:
     }
 
 
-def run_backtest(close: pd.Series, confluence: pd.Series, fees: float) -> tuple[dict, dict]:
+def run_backtest(
+    close: pd.Series, confluence: pd.Series, fees: float, threshold: float
+) -> tuple[dict, dict]:
+    # Shift by 1: signal fires at close of bar i, order fills at bar i+1
+    conf_sh = confluence.shift(1).fillna(0.0)
     long_stats = extract_stats(
         vbt.Portfolio.from_signals(
             close,
-            entries=confluence >= THRESHOLD,
-            exits=confluence < 0,
+            entries=conf_sh >= threshold,
+            exits=conf_sh < 0,
             init_cash=10_000,
             fees=fees,
             freq="4h",
@@ -141,8 +148,8 @@ def run_backtest(close: pd.Series, confluence: pd.Series, fees: float) -> tuple[
             close,
             entries=pd.Series(False, index=close.index),
             exits=pd.Series(False, index=close.index),
-            short_entries=confluence <= -THRESHOLD,
-            short_exits=confluence > 0,
+            short_entries=conf_sh <= -threshold,
+            short_exits=conf_sh > 0,
             init_cash=10_000,
             fees=fees,
             freq="4h",
@@ -157,15 +164,66 @@ def run_backtest(close: pd.Series, confluence: pd.Series, fees: float) -> tuple[
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MTF pair sweep (Stage 3).")
+    parser = argparse.ArgumentParser(description="MTF Stage 3: greedy per-TF param sweep.")
     parser.add_argument(
         "--pair",
         default="GBP_USD",
-        help="FX pair in BASE_QUOTE format, e.g. GBP_USD (default: GBP_USD)",
+        help="Instrument in BASE_QUOTE format, e.g. GBP_USD (default: GBP_USD)",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help=f"Confirmation threshold (default: load from state or {DEFAULT_THRESHOLD})",
+    )
+    parser.add_argument("--w-H1", type=float, default=None, dest="w_H1", help="H1 weight")
+    parser.add_argument("--w-H4", type=float, default=None, dest="w_H4", help="H4 weight")
+    parser.add_argument("--w-D", type=float, default=None, dest="w_D", help="D weight")
+    parser.add_argument("--w-W", type=float, default=None, dest="w_W", help="W weight")
+    parser.add_argument(
+        "--load-state",
+        action="store_true",
+        help="Load Stage 1-2 results from state manager automatically",
     )
     args = parser.parse_args()
     pair = args.pair.upper()
-    pair_lower = pair.lower().replace("_", "")  # gbpusd
+    pair_lower = pair.lower().replace("_", "")
+
+    # Resolve threshold and weights: CLI > state > EUR/USD defaults
+    threshold = args.threshold
+    w_H1 = args.w_H1
+    w_H4 = args.w_H4
+    w_D = args.w_D
+    w_W = args.w_W
+
+    if args.load_state or any(v is None for v in [threshold, w_H1, w_H4, w_D, w_W]):
+        try:
+            import research.mtf.state_manager as state_manager
+
+            s1 = state_manager.get_stage1(pair=pair_lower)
+            s2 = state_manager.get_stage2(pair=pair_lower)
+            if s1 and threshold is None:
+                threshold = s1[1]
+            if s2:
+                saved_w = s2
+                if w_H1 is None:
+                    w_H1 = saved_w.get("H1")
+                if w_H4 is None:
+                    w_H4 = saved_w.get("H4")
+                if w_D is None:
+                    w_D = saved_w.get("D")
+                if w_W is None:
+                    w_W = saved_w.get("W")
+        except ImportError:
+            pass
+
+    THRESHOLD = threshold if threshold is not None else DEFAULT_THRESHOLD
+    WEIGHTS = {
+        "H1": w_H1 if w_H1 is not None else DEFAULT_WEIGHTS["H1"],
+        "H4": w_H4 if w_H4 is not None else DEFAULT_WEIGHTS["H4"],
+        "D": w_D if w_D is not None else DEFAULT_WEIGHTS["D"],
+        "W": w_W if w_W is not None else DEFAULT_WEIGHTS["W"],
+    }
 
     config_out = PROJECT_ROOT / "config" / f"mtf_{pair_lower}.toml"
     csv_out = REPORTS_DIR / f"mtf_{pair_lower}_sweep.csv"
@@ -195,8 +253,12 @@ def main() -> None:
     # IS/OOS split (70/30 on bar count)
     split = int(len(close) * 0.70)
     is_close, oos_close = close.iloc[:split], close.iloc[split:]
-    print(f"  IS bars:  {len(is_close)}  ({is_close.index[0].date()} to {is_close.index[-1].date()})")
-    print(f"  OOS bars: {len(oos_close)} ({oos_close.index[0].date()} to {oos_close.index[-1].date()})")
+    print(
+        f"  IS bars:  {len(is_close)}  ({is_close.index[0].date()} to {is_close.index[-1].date()})"
+    )
+    print(
+        f"  OOS bars: {len(oos_close)} ({oos_close.index[0].date()} to {oos_close.index[-1].date()})"
+    )
 
     # Load close series per TF
     tf_closes: dict[str, pd.Series] = {}
@@ -213,7 +275,7 @@ def main() -> None:
         sys.exit(1)
 
     # Seed baseline from EUR/USD validated config
-    best_params = load_baseline_params()
+    best_params = load_baseline_params(tfs)
     print(f"\n  Seeding from EUR/USD baseline ({BASELINE_CONFIG.name}):")
     for tf in SWEEP_ORDER:
         p = best_params[tf]
@@ -253,7 +315,9 @@ def main() -> None:
             )
             fixed_signals[tf] = sig.reindex(primary_index, method="ffill") * WEIGHTS[tf]
 
-        fixed_sum = sum(fixed_signals.values()) if fixed_signals else pd.Series(0.0, index=primary_index)
+        fixed_sum = (
+            sum(fixed_signals.values()) if fixed_signals else pd.Series(0.0, index=primary_index)
+        )
 
         best_cs = -999.0
         best_combo = None
@@ -272,8 +336,8 @@ def main() -> None:
             is_conf = confluence.iloc[:split]
             oos_conf = confluence.iloc[split:]
 
-            is_long, is_short = run_backtest(is_close, is_conf, avg_spread)
-            oos_long, oos_short = run_backtest(oos_close, oos_conf, avg_spread)
+            is_long, is_short = run_backtest(is_close, is_conf, avg_spread, THRESHOLD)
+            oos_long, oos_short = run_backtest(oos_close, oos_conf, avg_spread, THRESHOLD)
 
             lp = oos_long["sharpe"] / is_long["sharpe"] if is_long["sharpe"] != 0 else 0.0
             sp = oos_short["sharpe"] / is_short["sharpe"] if is_short["sharpe"] != 0 else 0.0
@@ -341,18 +405,26 @@ def main() -> None:
     is_conf = signals_sum.iloc[:split]
     oos_conf = signals_sum.iloc[split:]
 
-    is_long, is_short = run_backtest(is_close, is_conf, avg_spread)
-    oos_long, oos_short = run_backtest(oos_close, oos_conf, avg_spread)
+    is_long, is_short = run_backtest(is_close, is_conf, avg_spread, THRESHOLD)
+    oos_long, oos_short = run_backtest(oos_close, oos_conf, avg_spread, THRESHOLD)
 
     cs = (is_long["sharpe"] + is_short["sharpe"] + oos_long["sharpe"] + oos_short["sharpe"]) / 4
     lp = oos_long["sharpe"] / is_long["sharpe"] if is_long["sharpe"] != 0 else 0.0
     sp = oos_short["sharpe"] / is_short["sharpe"] if is_short["sharpe"] != 0 else 0.0
 
     print(f"\n  Combined Sharpe: {cs:.4f}")
-    print(f"  IS  LONG:  sharpe={is_long['sharpe']:.3f}  trades={is_long['trades']}  dd={is_long['dd']:.2%}")
-    print(f"  IS  SHORT: sharpe={is_short['sharpe']:.3f}  trades={is_short['trades']}  dd={is_short['dd']:.2%}")
-    print(f"  OOS LONG:  sharpe={oos_long['sharpe']:.3f}  trades={oos_long['trades']}  dd={oos_long['dd']:.2%}")
-    print(f"  OOS SHORT: sharpe={oos_short['sharpe']:.3f}  trades={oos_short['trades']}  dd={oos_short['dd']:.2%}")
+    print(
+        f"  IS  LONG:  sharpe={is_long['sharpe']:.3f}  trades={is_long['trades']}  dd={is_long['dd']:.2%}"
+    )
+    print(
+        f"  IS  SHORT: sharpe={is_short['sharpe']:.3f}  trades={is_short['trades']}  dd={is_short['dd']:.2%}"
+    )
+    print(
+        f"  OOS LONG:  sharpe={oos_long['sharpe']:.3f}  trades={oos_long['trades']}  dd={oos_long['dd']:.2%}"
+    )
+    print(
+        f"  OOS SHORT: sharpe={oos_short['sharpe']:.3f}  trades={oos_short['trades']}  dd={oos_short['dd']:.2%}"
+    )
     print(f"  Parity: L={lp:.2f}  S={sp:.2f}")
 
     # ── 7-Gate Validation ──
@@ -383,7 +455,7 @@ def main() -> None:
         "# " + "=" * 56,
         f"# mtf_{pair_lower}.toml -- MTF Confluence Config for {pair}",
         "# " + "=" * 56,
-        f"# Optimised via run_pair_sweep.py (greedy Stage 3).",
+        "# Optimised via run_pair_sweep.py (greedy Stage 3).",
         f"# Pair: {pair}",
         f"# OOS LONG Sharpe:  {oos_long['sharpe']:.3f}",
         f"# OOS SHORT Sharpe: {oos_short['sharpe']:.3f}",
@@ -412,6 +484,17 @@ def main() -> None:
 
     config_out.write_text("\n".join(config_lines), encoding="utf-8")
     print(f"\nSaved config -> {config_out}")
+
+    # Save Stage 3 params to state manager
+    try:
+        import research.mtf.state_manager as state_manager
+
+        state_manager.save_stage3(params=best_params, pair=pair_lower)
+    except ImportError:
+        pass
+
+    print("\nNext step:")
+    print(f"  uv run python research/mtf/run_stage4_atr.py --pair {pair}")
     print("Done.")
 
 

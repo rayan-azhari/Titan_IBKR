@@ -1,48 +1,78 @@
 # MTF Strategy Optimization Protocol (VectorBT)
 
-> **Status: COMPLETE — Round 3 Validated (2026-03-14)**
-> This document reflects the final validated configuration. All three stages have been run and the
-> resulting parameters are locked in `config/mtf.toml`. Do NOT re-run Stage 3 unless starting a
-> new research cycle with fresh data.
+> **Status: COMPLETE — Round 4 Validated (2026-03-15)**
+> Full 6-stage pipeline complete for EUR/USD. GBP/USD also validated (Combined Sharpe 1.331).
+> Locked configs: `config/mtf_eurusd.toml`, `config/mtf_gbpusd.toml`.
+> Do NOT re-run stages unless starting a new research cycle with fresh data.
 
 ---
 
 ## Overview
 
-The MTF Confluence strategy was optimized in three sequential stages using VectorBT backtesting
-on EUR/USD data (H1/H4/D/W timeframes, 2005–2026). Each stage locks a layer of parameters before
-the next stage begins, preventing look-ahead contamination across the search space.
+The MTF Confluence strategy is optimized in six sequential stages using VectorBT backtesting
+on 10 years of historical OHLCV data (H1/H4/D/W timeframes). Each stage locks a layer of
+parameters before the next stage begins, preventing look-ahead contamination across the search space.
 
-**Split:** 70% In-Sample (IS) / 30% Out-of-Sample (OOS)
-**Instrument:** EUR/USD on IDEALPRO
-**Timeframes:** H1, H4, D (Daily), W (Weekly)
-**Evaluation metric:** OOS Sharpe Ratio (full friction: 1.5 pip fees + 1.0 pip slippage + carry)
+**Split:** 70% In-Sample (IS) / 30% Out-of-Sample (OOS) — by bar count
+**Friction modelled:** fees (1.5 pip/side), slippage (1.0 pip/side), next-bar execution, swap cost
+**Evaluation metric:** OOS Sharpe Ratio (combined long + short)
+**Anti-look-ahead:** `.shift(1)` applied to confluence signal before all VBT backtests
+
+Pipeline is fully pair-agnostic. Any pair with parquet files in `data/` can be swept.
 
 ---
 
-## Stage 1 — Moving Average Type and Threshold
+## Running the Pipeline
 
-**Objective:** Determine the best MA type and confirmation threshold across all timeframes.
+### Option A — Full automated run (recommended)
 
-**Script:**
 ```bash
-uv run python research/mtf/run_mtf_optimisation.py
+uv run python scripts/run_mtf_pipeline.py --pair EUR_USD
+uv run python scripts/run_mtf_pipeline.py --pair GBP_USD
 ```
+
+This runs all 6 stages sequentially, passing outputs between stages via the state manager.
+Gate summary is printed at the end.
+
+### Option B — Stage by stage
+
+```bash
+uv run python research/mtf/run_optimisation.py --pair GBP_USD
+uv run python research/mtf/run_stage2.py        --pair GBP_USD --load-state
+uv run python research/mtf/run_pair_sweep.py    --pair GBP_USD --load-state
+uv run python research/mtf/run_stage4_atr.py    --pair GBP_USD
+uv run python research/mtf/run_portfolio.py     --pair GBP_USD
+uv run python scripts/robustness_mtf.py         --pair GBP_USD
+```
+
+### Resume from a specific stage
+
+```bash
+uv run python scripts/run_mtf_pipeline.py --pair EUR_USD --from-stage 4
+```
+
+---
+
+## Stage 1 — Moving Average Type and Confirmation Threshold
+
+**Objective:** Determine the best MA type and entry threshold across all timeframes simultaneously.
+
+**Script:** `research/mtf/run_optimisation.py --pair PAIR`
 
 **Parameters swept:**
 - MA Type: `SMA`, `EMA`, `WMA`
 - Confirmation Threshold: 0.05 to 0.85 (step 0.05)
 
-**Result (locked):**
-- **MA Type: SMA** — outperformed WMA and EMA on OOS Sharpe
-- **Threshold: 0.10** — conservative; ensures conviction before entry
+**Output:**
+- `.tmp/reports/mtf_stage1_{pair}_scoreboard.csv`
+- `.tmp/reports/mtf_stage1_{pair}_heatmap.html`
+- State saved to `.tmp/mtf_state_{pair}.json`
+
+**EUR/USD result (locked):** MA=WMA, Threshold=0.10
+**GBP/USD result (locked):** MA=SMA, Threshold=0.10
 
 > [!IMPORTANT]
-> WMA was the early frontrunner in IS. SMA won on OOS. This is why the IS/OOS check matters —
-> WMA was overfit to the training period.
-
-**Auto-save:** Best `MA_Type` and `Threshold` written to `.tmp/mtf_state.json`.
-**Report:** `.tmp/reports/mtf_stage1_scoreboard.csv`
+> WMA won EUR/USD OOS. SMA won GBP/USD OOS. This is pair-specific — always validate per pair.
 
 ---
 
@@ -50,169 +80,237 @@ uv run python research/mtf/run_mtf_optimisation.py
 
 **Objective:** Determine how much influence each timeframe has on the composite score.
 
-**Script:**
-```bash
-uv run python research/mtf/run_mtf_stage2.py
-```
+**Script:** `research/mtf/run_stage2.py --pair PAIR --load-state`
 
-**Auto-loads:** Stage 1 results from `.tmp/mtf_state.json`.
+**Auto-loads:** Stage 1 MA type and threshold from state.
 
-**Parameters swept:**
-- Weight distributions: Balanced, Trend-heavy, H1-heavy, D-heavy, and intermediate variants
-- Fixed: MA Type = SMA, Threshold = 0.10
+**Parameters swept:** Grid of H1/H4/D/W weight combinations that sum to 1.0.
 
-**Result (locked):**
+**Output:**
+- `.tmp/reports/mtf_stage2_{pair}_scoreboard.csv`
+- State updated with winning weights.
+
+**EUR/USD result (locked):**
+
 | Timeframe | Weight | Role |
 |---|---|---|
-| D (Daily) | **0.60** | Primary trend — dominant driver |
-| H4 | 0.25 | Swing confirmation |
+| D (Daily) | 0.55 | Primary trend bias |
+| W (Weekly) | 0.30 | Long-term macro regime |
+| H1 | 0.10 | Entry timing |
+| H4 | 0.05 | Minimal — swing noise at EUR/USD scale |
+
+**GBP/USD result (locked):**
+
+| Timeframe | Weight | Role |
+|---|---|---|
+| D (Daily) | 0.55 | Primary trend bias |
+| H4 | 0.30 | Swing confirmation |
 | H1 | 0.10 | Entry timing |
 | W (Weekly) | 0.05 | Long-term regime context |
-
-**Auto-save:** Winning weights written to `.tmp/mtf_state.json`.
-**Report:** `.tmp/reports/mtf_stage2_weights.csv`
 
 ---
 
 ## Stage 3 — Indicator Tuning (Per Timeframe)
 
 **Objective:** Tune `fast_ma`, `slow_ma`, and `rsi_period` for each timeframe individually
-using a greedy approach (optimize one timeframe at a time in order of importance).
+using a greedy approach (optimize one timeframe at a time in order of weight).
 
-**Script:**
-```bash
-uv run python research/mtf/run_mtf_stage3.py
-```
+**Script:** `research/mtf/run_pair_sweep.py --pair PAIR --load-state`
 
-**Auto-loads:** Stage 1 + Stage 2 results from `.tmp/mtf_state.json`.
+**Auto-loads:** Stage 1 + Stage 2 results from state.
 
 **Greedy optimization order:** D → H4 → H1 → W (highest weight first)
 
-**Result (locked):**
-| Timeframe | fast_ma | slow_ma | rsi_period |
-|---|---|---|---|
-| D | 13 | 20 | 14 |
-| H4 | 10 | 50 | 21 |
-| H1 | 10 | 30 | 21 |
-| W | 13 | 21 | 10 |
+**Output:**
+- `.tmp/reports/mtf_stage3_{pair}_scoreboard.csv`
+- Config written to `config/mtf_{pair_lower}.toml`
 
-**Report:** `.tmp/reports/mtf_stage3_params.csv`
+**EUR/USD result (locked):**
+
+| TF | fast_ma | slow_ma | rsi_period |
+|---|---|---|---|
+| D  | 10 | 20 | 7 |
+| H4 | 10 | 40 | 14 |
+| H1 | 10 | 50 | 14 |
+| W  | 8  | 21 | 14 |
+
+**GBP/USD result (locked):**
+
+| TF | fast_ma | slow_ma | rsi_period |
+|---|---|---|---|
+| D  | 5  | 20 | 10 |
+| H4 | 10 | 30 | 14 |
+| H1 | 20 | 100 | 21 |
+| W  | 10 | 21 | 7 |
 
 ---
 
 ## Stage 4 — ATR Stop Sensitivity Sweep
 
-**Objective:** Find the optimal ATR stop multiplier (hard stop distance from entry).
+**Objective:** Find the optimal ATR stop multiplier for the OOS period.
 
-This sweep was run post-Stage 3 as a separate sensitivity analysis.
+**Script:** `research/mtf/run_stage4_atr.py --pair PAIR`
 
-**Result:**
-| ATR Mult | OOS Sharpe | CAGR% | MaxDD% | Win Rate |
-|---|---|---|---|---|
-| 0.50 | 2.563 | 25.14 | −5.75 | 31.3% |
-| 1.00 | 2.732 | 27.14 | −5.59 | 40.3% |
-| 1.50 | 2.831 | 28.29 | −5.25 | 45.6% |
-| **2.50** | **2.936** | **29.44** | **−5.12** | **50.7%** |
-| 3.00 | 2.895 | 29.05 | −5.25 | 52.2% |
+**Multipliers swept:** 1.0, 1.5, 2.0, 2.5, 3.0, 4.0
 
-**Result (locked): `atr_stop_mult = 2.5`** — Sharpe peaks here. Tighter stops cut winners
-prematurely; 2.5× gives trades room to breathe while capping catastrophic loss.
+**Output:**
+- `.tmp/reports/mtf_stage4_{pair}_atr_sweep.csv`
+- `atr_stop_mult` updated in `config/mtf_{pair_lower}.toml`
 
-All 8 multipliers above 1.0 achieved Sharpe > 1.0 — the strategy is robust across the full range.
+**EUR/USD result (locked): `atr_stop_mult = 4.0`**
+**GBP/USD result (locked): `atr_stop_mult = 4.0`**
 
----
-
-## Meta-Filter Experiment — Discarded
-
-An XGBoost meta-model (trained to predict win probability) was tested as an additional filter.
-
-| Variant | Trades | Win Rate | OOS Sharpe |
-|---|---|---|---|
-| Raw signal (live config) | 506 | 40.3% | **2.732** |
-| Meta-Entry-Only | 247 | 38.9% | 1.839 |
-| Meta-Full (entry + exit) | 928 | 35.8% | 0.831 |
-
-**Verdict: DISCARDED.** The meta-model failed on both dimensions simultaneously:
-- Entry filter skipped good trades (−0.893 Sharpe vs raw)
-- Probability-gate exits caused churn: exited then re-entered the same position repeatedly
-
-**Do not re-introduce an ML overlay to this strategy without a fresh OOS test.**
+> [!IMPORTANT]
+> The trailing ATR stop consistently hurts trend-following strategies at tight multiples.
+> At 4.0×, the stop acts as catastrophic-loss insurance only — the primary exit is signal reversal.
+> The market often moves temporarily against a position before the trend confirms.
+> Signal-only (no stop) produces the best Sharpe; 4.0× stop is the live compromise.
 
 ---
 
-## Final Locked Configuration
+## Stage 5 — Portfolio Simulation
 
-All results written to `config/mtf.toml`:
+**Objective:** Full P&L simulation with all friction: fees, slippage, next-bar execution, swap costs.
+Also compares signal-only vs ATR stop scenarios side by side.
+
+**Script:** `research/mtf/run_portfolio.py --pair PAIR`
+
+**What it does:**
+- Applies swap cost drag from `config/spread.toml [swap]` (annual % on open position value)
+- Reads `atr_stop_mult` from `config/mtf_{pair_lower}.toml` (no hardcoding)
+- Plots 4 equity curves: raw stop, raw signal-only, swap-adj signal, swap-adj stop
+- Outputs extended comparison table: CAGR, Sharpe, MaxDD, Swap Cost, Adjusted Return, Final Equity
+
+**Output:** `.tmp/reports/mtf_{pair_lower}_comparison.html`
+
+**EUR/USD signal-only result:**
+
+| Metric | Value |
+|---|---|
+| OOS Sharpe (long) | 2.252 |
+| OOS Sharpe (short) | 1.958 |
+| Combined Sharpe | 1.943 |
+| Swap-adjusted CAGR | ~8%/yr |
+| Max Drawdown | ~10% |
+| Swap cost (10yr) | ~1.0%/yr drag |
+
+---
+
+## Stage 6 — Robustness (Monte Carlo + WFO)
+
+**Objective:** Stress-test the strategy against random trade-order shuffling and rolling OOS windows.
+
+**Script:** `scripts/robustness_mtf.py --pair PAIR`
+
+**Monte Carlo (N=1,000 trade shuffles):**
+- Gate: 5th-pct Sharpe > 0.5 AND >80% simulations profitable
+
+**Rolling WFO (2yr anchor / 6mo windows):**
+- Gate: >70% of windows positive AND max consecutive negative ≤ 2
+
+---
+
+## Quality Gates (7 gates — all must pass)
+
+| Gate | Threshold | Scope |
+|---|---|---|
+| OOS/IS Sharpe ratio | ≥ 0.5 | Both long and short |
+| OOS Sharpe | ≥ 1.0 | Both long and short |
+| Trades in OOS | ≥ 30 | Both long and short |
+| Win Rate | ≥ 40% | Both long and short |
+| Max Drawdown | ≤ 25% | Both long and short |
+| Monte Carlo 5th-pct Sharpe | > 0.5 AND >80% profitable | Combined |
+| WFO positive windows | >70% AND max consec. negative ≤ 2 | Combined |
+
+---
+
+## Final Locked Configs
+
+### EUR/USD — `config/mtf_eurusd.toml`
 
 ```toml
+ma_type = "WMA"
 confirmation_threshold = 0.10
-atr_stop_mult = 2.5          # Round 3 optimal: Sharpe 2.936
+atr_stop_mult = 4.0
 
 [weights]
 H1 = 0.10
-H4 = 0.25
-D  = 0.60
-W  = 0.05
+H4 = 0.05
+D  = 0.55
+W  = 0.30
 
 [H1]
 fast_ma = 10
-slow_ma = 30
+slow_ma = 50
+rsi_period = 14
+
+[H4]
+fast_ma = 10
+slow_ma = 40
+rsi_period = 14
+
+[D]
+fast_ma = 10
+slow_ma = 20
+rsi_period = 7
+
+[W]
+fast_ma = 8
+slow_ma = 21
+rsi_period = 14
+```
+
+### GBP/USD — `config/mtf_gbpusd.toml`
+
+```toml
+ma_type = "SMA"
+confirmation_threshold = 0.10
+atr_stop_mult = 4.0
+
+[weights]
+H1 = 0.10
+H4 = 0.30
+D  = 0.55
+W  = 0.05
+
+[H1]
+fast_ma = 20
+slow_ma = 100
 rsi_period = 21
 
 [H4]
 fast_ma = 10
-slow_ma = 50
-rsi_period = 21
-
-[D]
-fast_ma = 13
-slow_ma = 20
+slow_ma = 30
 rsi_period = 14
 
-[W]
-fast_ma = 13
-slow_ma = 21
+[D]
+fast_ma = 5
+slow_ma = 20
 rsi_period = 10
+
+[W]
+fast_ma = 10
+slow_ma = 21
+rsi_period = 7
 ```
 
 ---
 
-## Round 3 Validated OOS Performance
+## State Manager
 
-Full friction: 1.5 pip fees/side, 1.0 pip slippage/side, next-bar open fills, 2.5× ATR stop, asymmetric carry.
-
-| Metric | Value |
-|---|---|
-| OOS Sharpe | **2.936** |
-| IS Sharpe | 2.790 |
-| OOS/IS ratio | 0.98 ✓ |
-| OOS CAGR | +29.44% |
-| Carry-adjusted CAGR | ~+26%/yr |
-| OOS Max Drawdown | −5.12% |
-| OOS Win Rate | 50.7% |
-| OOS Trades | ~371 (6.4yr period) |
-
-### Robustness Gates (all passed)
-
-| Gate | Result |
-|---|---|
-| IS/OOS ratio ≥ 0.5 | 0.98 ✓ |
-| Slippage stress (5 levels, 0.5–3.0 pip) | Sharpe never below 1.0 ✓ |
-| ATR sensitivity (8 multipliers) | 8/8 above Sharpe 1.0 ✓ |
-| Monte Carlo (N=1,000) | 5th-pct Sharpe 1.80, 100% profitable ✓ |
-| Rolling WFO (2yr anchor / 6mo windows) | 35/38 windows positive (92%) ✓ |
-| Fixed-notional sizing test | Sharpe flat — edge is signal, not compounding ✓ |
+Per-pair state is persisted at `.tmp/mtf_state_{pair_lower}.json`.
+Each stage reads prior stage results automatically when `--load-state` is passed.
+This allows stages to be resumed independently without re-running the full pipeline.
 
 ---
 
 ## When to Re-Run Optimization
 
-Re-run all three stages if:
+Re-run all stages for a pair if:
 1. **Model is stale > 6 months** with degrading live performance
-2. **New timeframe is being tested** (e.g., adding M15 as entry trigger)
-3. **New instruments** beyond EUR/USD are added
+2. **New timeframe is being added** (e.g., M15 as entry trigger)
+3. **New instrument** beyond existing validated pairs
 
 > [!CAUTION]
-> Always re-run Stage 3 with **fresh OOS data** (extend the data window forward, maintain
-> the 70/30 split). Never re-optimize on the period you previously used as OOS — that is
-> look-ahead bias by another name.
+> Always run with **fresh OOS data** (extend data window forward, maintain the 70/30 split).
+> Never re-optimize on the period previously used as OOS — that is look-ahead bias by another name.

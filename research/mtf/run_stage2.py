@@ -1,12 +1,15 @@
 """run_mtf_stage2.py — Stage 2: Timeframe Weight Sweep.
 
-Sweeps H1/H4/D/W weight combinations while keeping SMA and threshold=0.10
-(best from Stage 1).  Uses IS/OOS validation with parity check.
+Sweeps H1/H4/D/W weight combinations while keeping MA type and threshold
+fixed from Stage 1.  Uses IS/OOS validation with parity check.
 
 Usage:
-    uv run python research/mtf/run_stage2.py
+    uv run python research/mtf/run_stage2.py                          # EUR/USD defaults
+    uv run python research/mtf/run_stage2.py --pair GBP_USD --load-state
+    uv run python research/mtf/run_stage2.py --pair GBP_USD --ma-type SMA --threshold 0.10
 """
 
+import argparse
 import sys
 import tomllib
 from itertools import product
@@ -15,13 +18,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 DATA_DIR = PROJECT_ROOT / "data"
 REPORTS_DIR = PROJECT_ROOT / ".tmp" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-CONFIG_PATH = PROJECT_ROOT / "config" / "mtf.toml"
 
 try:
     import vectorbt as vbt  # noqa: E402
@@ -30,12 +32,6 @@ except ImportError:
     sys.exit(1)
 
 from titan.models.spread import build_spread_series  # noqa: E402
-
-# ─────────────────────────────────────────────────────────────────────
-# Stage 1 winners (fixed)
-# ─────────────────────────────────────────────────────────────────────
-MA_TYPE = "SMA"
-THRESHOLD = 0.10
 
 # ─────────────────────────────────────────────────────────────────────
 # Weight grid — step 0.05, all 4 must sum to 1.0
@@ -73,9 +69,9 @@ def load_data(pair: str, gran: str) -> pd.DataFrame | None:
     return df
 
 
-def load_mtf_config() -> dict:
-    """Load mtf.toml."""
-    with open(CONFIG_PATH, "rb") as f:
+def load_mtf_config(config_path: Path) -> dict:
+    """Load a TOML config file."""
+    with open(config_path, "rb") as f:
         return tomllib.load(f)
 
 
@@ -117,16 +113,62 @@ def extract_stats(pf) -> dict:
 
 def main() -> None:
     """Sweep weight combos."""
-    pair = "EUR_USD"
-    mtf_config = load_mtf_config()
+    parser = argparse.ArgumentParser(description="MTF Stage 2: Timeframe Weight Sweep.")
+    parser.add_argument("--pair", default="EUR_USD", help="Instrument (default: EUR_USD)")
+    parser.add_argument(
+        "--ma-type",
+        default=None,
+        help="MA type from Stage 1 (default: load from state or SMA)",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help="Threshold from Stage 1 (default: load from state or 0.10)",
+    )
+    parser.add_argument(
+        "--load-state",
+        action="store_true",
+        help="Load Stage 1 results from state manager automatically",
+    )
+    args = parser.parse_args()
+    pair = args.pair.upper()
+    pair_lower = pair.lower().replace("_", "")
+
+    # Resolve MA type and threshold: CLI args > state file > defaults
+    ma_type = args.ma_type
+    threshold = args.threshold
+    if args.load_state or ma_type is None or threshold is None:
+        try:
+            import research.mtf.state_manager as state_manager
+
+            s1 = state_manager.get_stage1(pair=pair_lower)
+            if s1:
+                if ma_type is None:
+                    ma_type = s1[0]
+                if threshold is None:
+                    threshold = s1[1]
+        except ImportError:
+            pass
+    ma_type = ma_type or "SMA"
+    threshold = threshold if threshold is not None else 0.10
+
+    # Load config: prefer pair-specific, fall back to base EUR/USD config
+    pair_config = PROJECT_ROOT / "config" / f"mtf_{pair_lower}.toml"
+    base_config = PROJECT_ROOT / "config" / "mtf.toml"
+    config_path = pair_config if pair_config.exists() else base_config
+    mtf_config = load_mtf_config(config_path)
     tfs = ["H1", "H4", "D", "W"]
 
-    # Pre-compute per-TF signal series (independent of weights)
+    scoreboard_path = REPORTS_DIR / f"mtf_stage2_{pair_lower}_scoreboard.csv"
+    heatmap_path = REPORTS_DIR / f"mtf_stage2_{pair_lower}_heatmap.html"
+
     print("=" * 60)
     print("  Stage 2: Timeframe Weight Sweep")
     print("=" * 60)
-    print(f"  MA Type:    {MA_TYPE}")
-    print(f"  Threshold:  {THRESHOLD}")
+    print(f"  Pair:       {pair}")
+    print(f"  MA Type:    {ma_type}")
+    print(f"  Threshold:  {threshold}")
 
     # Load H4 as primary
     primary_df = load_data(pair, "H4")
@@ -144,19 +186,40 @@ def main() -> None:
     split = int(len(close) * 0.70)
     is_close, oos_close = close.iloc[:split], close.iloc[split:]
 
-    # Pre-compute resampled signals for each TF
+    # Pre-compute resampled signals for each TF (uses MA type from Stage 1)
     tf_signals: dict[str, pd.Series] = {}
     for tf in tfs:
         tf_config = mtf_config.get(tf, {})
         df = load_data(pair, tf)
         if df is None:
             continue
-        signal = compute_tf_signal(
-            df["close"],
-            tf_config.get("fast_ma", 20),
-            tf_config.get("slow_ma", 50),
-            tf_config.get("rsi_period", 14),
-        )
+        fast = tf_config.get("fast_ma", 20)
+        slow = tf_config.get("slow_ma", 50)
+        rsi_p = tf_config.get("rsi_period", 14)
+        # Honour the MA type from Stage 1 (not just SMA)
+        if ma_type == "EMA":
+            fast_s = df["close"].ewm(span=fast, adjust=False).mean()
+            slow_s = df["close"].ewm(span=slow, adjust=False).mean()
+        elif ma_type == "WMA":
+            import numpy as np
+
+            wf = np.arange(1, fast + 1, dtype=float)
+            ws = np.arange(1, slow + 1, dtype=float)
+            fast_s = (
+                df["close"].rolling(fast).apply(lambda x: float(np.dot(x, wf) / wf.sum()), raw=True)
+            )
+            slow_s = (
+                df["close"].rolling(slow).apply(lambda x: float(np.dot(x, ws) / ws.sum()), raw=True)
+            )
+        else:  # SMA
+            fast_s = df["close"].rolling(fast).mean()
+            slow_s = df["close"].rolling(slow).mean()
+        rsi = compute_rsi(df["close"], rsi_p)
+        import numpy as np
+
+        ma_sig = pd.Series(np.where(fast_s > slow_s, 0.5, -0.5), index=df.index)
+        rsi_sig = pd.Series(np.where(rsi > 50, 0.5, -0.5), index=df.index)
+        signal = ma_sig + rsi_sig
         tf_signals[tf] = signal.reindex(primary_index, method="ffill")
         bullish = (signal > 0).mean() * 100
         print(f"  {tf:3s}: {len(df)} bars, {bullish:.0f}% bullish")
@@ -174,12 +237,16 @@ def main() -> None:
         is_conf = confluence.iloc[:split]
         oos_conf = confluence.iloc[split:]
 
+        # Shift by 1: signal fires at close of bar i, order fills at bar i+1
+        is_conf_sh = is_conf.shift(1).fillna(0.0)
+        oos_conf_sh = oos_conf.shift(1).fillna(0.0)
+
         # IS backtest
         is_long = extract_stats(
             vbt.Portfolio.from_signals(
                 is_close,
-                entries=is_conf >= THRESHOLD,
-                exits=is_conf < 0,
+                entries=is_conf_sh >= threshold,
+                exits=is_conf_sh < 0,
                 init_cash=10_000,
                 fees=avg_spread,
                 freq="4h",
@@ -190,8 +257,8 @@ def main() -> None:
                 is_close,
                 entries=pd.Series(False, index=is_close.index),
                 exits=pd.Series(False, index=is_close.index),
-                short_entries=is_conf <= -THRESHOLD,
-                short_exits=is_conf > 0,
+                short_entries=is_conf_sh <= -threshold,
+                short_exits=is_conf_sh > 0,
                 init_cash=10_000,
                 fees=avg_spread,
                 freq="4h",
@@ -202,8 +269,8 @@ def main() -> None:
         oos_long = extract_stats(
             vbt.Portfolio.from_signals(
                 oos_close,
-                entries=oos_conf >= THRESHOLD,
-                exits=oos_conf < 0,
+                entries=oos_conf_sh >= threshold,
+                exits=oos_conf_sh < 0,
                 init_cash=10_000,
                 fees=avg_spread,
                 freq="4h",
@@ -214,8 +281,8 @@ def main() -> None:
                 oos_close,
                 entries=pd.Series(False, index=oos_close.index),
                 exits=pd.Series(False, index=oos_close.index),
-                short_entries=oos_conf <= -THRESHOLD,
-                short_exits=oos_conf > 0,
+                short_entries=oos_conf_sh <= -threshold,
+                short_exits=oos_conf_sh > 0,
                 init_cash=10_000,
                 fees=avg_spread,
                 freq="4h",
@@ -260,9 +327,8 @@ def main() -> None:
 
     # ── Results ──
     df = pd.DataFrame(results)
-    csv_path = REPORTS_DIR / "mtf_stage2_scoreboard.csv"
-    df.to_csv(csv_path, index=False)
-    print(f"\nFull scoreboard: {csv_path}")
+    df.to_csv(scoreboard_path, index=False)
+    print(f"\nFull scoreboard: {scoreboard_path}")
 
     # Filter: both parities > 0
     valid = df[(df.long_parity > 0) & (df.short_parity > 0)]
@@ -325,6 +391,22 @@ def main() -> None:
             f"IS_Sret={r.is_short_ret:.2%}  OOS_Sret={r.oos_short_ret:.2%}"
         )
 
+    # ── Save to State Manager ──
+    try:
+        import research.mtf.state_manager as state_manager
+
+        state_manager.save_stage2(
+            weights={
+                "H1": float(best.w_H1),
+                "H4": float(best.w_H4),
+                "D": float(best.w_D),
+                "W": float(best.w_W),
+            },
+            pair=pair_lower,
+        )
+    except ImportError:
+        print("WARNING: Could not import state_manager. State not saved.")
+
     # Heatmap (H4 vs D, aggregated across H1/W)
     try:
         import plotly.express as px
@@ -334,16 +416,17 @@ def main() -> None:
         fig = px.imshow(
             pivot,
             labels=dict(x="H4 Weight", y="D Weight", color="Combined Sharpe"),
-            title="Stage 2: Combined Sharpe — H4 vs D Weight",
+            title=f"Stage 2: Combined Sharpe — H4 vs D Weight ({pair})",
             color_continuous_scale="RdYlGn",
             aspect="auto",
         )
-        heatmap_path = REPORTS_DIR / "mtf_stage2_heatmap.html"
         fig.write_html(str(heatmap_path))
         print(f"\nHeatmap: {heatmap_path}")
     except ImportError:
         print("\nPlotly not installed — skipping heatmap.")
 
+    print("\nNext step:")
+    print(f"  uv run python research/mtf/run_pair_sweep.py --pair {pair} --load-state")
     print("\nDone.")
 
 

@@ -35,3 +35,13 @@ off_hours = 0.00035        # ~3.5 pips
 model = "sqrt"             # Square-root market impact model
 base_impact = 0.0001       # Base impact factor
 max_slippage_pips = 10     # Cap slippage at 10 pips
+
+[swap]
+# Annual financing drag as a fraction of position value (direction-agnostic).
+# Modelled as a symmetric cost because the strategy trades both long and short,
+# and rate differentials have flipped multiple times over a 10-year window.
+# Figures are conservative estimates covering both sides.
+EUR_USD = 0.010  # ~1.0% annual (historically tight rate differential)
+GBP_USD = 0.015  # ~1.5% annual (wider differential; GBP/USD more sensitive)
+AUD_USD = 0.020  # ~2.0% annual (AUD typically higher carry cost)
+USD_CAD = 0.012  # ~1.2% annual

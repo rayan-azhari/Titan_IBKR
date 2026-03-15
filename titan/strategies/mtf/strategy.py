@@ -2,13 +2,19 @@
 -----------------
 
 Multi-Timeframe Confluence Strategy for NautilusTrader.
-Validated in Round 3 backtesting (OOS Sharpe 2.936 at 2.5x ATR stop).
+Validated in Round 4 backtesting — EUR/USD, 10yr IS/OOS, full friction pipeline.
+
+Config: config/mtf_eurusd.toml
+  MA type : WMA (Weighted Moving Average)
+  Weights : D=0.55, H4=0.05, H1=0.10, W=0.30  (daily + weekly macro bias)
+  OOS Sharpe (combined long+short): 1.943
+  OOS CAGR   (signal-only, no ATR stop):  ~8%/yr after swap costs
 
 Exit logic:
-  - Primary: signal reversal (confluence score crosses threshold)
-  - Secondary: 2.5x ATR hard stop from entry price (placed as STOP_MARKET order)
+  - Primary:   signal reversal (confluence score returns to neutral or flips)
+  - Secondary: 4.0x ATR hard STOP_MARKET placed at entry fill (catastrophic insurance only)
 
-Sizing: 1% equity risk per 2.5x ATR move (matches actual stop distance).
+Sizing: 1% equity risk per 4.0x ATR move (matches stop distance in config).
 """
 
 import tomllib
@@ -33,7 +39,7 @@ class MTFConfluenceConfig(StrategyConfig):
 
     instrument_id: str
     bar_types: dict[str, str]  # Map: "H1": "EUR/USD.IDEALPRO-1-HOUR-MID-EXTERNAL"
-    config_path: str = "config/mtf.toml"
+    config_path: str = "config/mtf_eurusd.toml"
     risk_pct: float = 0.01
     leverage_cap: float = 5.0
     warmup_bars: int = 1000
@@ -42,14 +48,14 @@ class MTFConfluenceConfig(StrategyConfig):
 class MTFConfluenceStrategy(Strategy):
     """Executes trades based on Multi-Timeframe Confluence.
 
-    Round 3 validated logic (H1/H4/D/W, SMA, OOS Sharpe 2.936):
+    Round 4 validated logic (H1/H4/D/W, WMA, EUR/USD OOS Combined Sharpe 1.943):
     1. Subscribe to H1, H4, D, W bars.
     2. On each bar, update history and recalculate signal for that TF.
     3. Compute weighted confluence score.
-    4. Entry: score crosses ±threshold.
+    4. Entry: score crosses ±threshold on the *next* bar (no look-ahead).
     5. Primary exit: signal reversal (score returns to neutral or flips).
-    6. Hard stop: 2.5x ATR stop_market order placed on entry fill.
-    7. Sizing: 1% equity risk / (2.5 × ATR).
+    6. Hard stop: 4.0x ATR stop_market placed on entry fill (insurance only).
+    7. Sizing: 1% equity risk / (atr_stop_mult × ATR).
     """
 
     def __init__(self, config: MTFConfluenceConfig):

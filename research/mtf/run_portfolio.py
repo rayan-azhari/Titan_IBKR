@@ -3,13 +3,17 @@
 Simulates the MTF Confluence strategy with proper risk management:
 - Unified Long/Short Portfolio (reversals handled automatically)
 - Volatility-Adjusted Sizing (1% Equity Risk per trade)
-- Trailing Stop Loss (2.0 * ATR)
+- Trailing Stop Loss (atr_stop_mult from config, default 2.0 * ATR)
 - Leverage Cap (5.0x)
+- Overnight Swap Cost (annual % drag from config/spread.toml)
 
 Usage:
-    uv run python research/mtf/run_portfolio.py
+    uv run python research/mtf/run_portfolio.py                      # EUR/USD
+    uv run python research/mtf/run_portfolio.py --pair GBP_USD
+    uv run python research/mtf/run_portfolio.py --pair GBP_USD --config config/mtf_gbpusd.toml
 """
 
+import argparse
 import sys
 import tomllib
 from pathlib import Path
@@ -19,13 +23,12 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 DATA_DIR = PROJECT_ROOT / "data"
 REPORTS_DIR = PROJECT_ROOT / ".tmp" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-CONFIG_PATH = PROJECT_ROOT / "config" / "mtf.toml"
 
 try:
     import vectorbt as vbt  # noqa: E402
@@ -42,8 +45,8 @@ from titan.models.spread import build_spread_series  # noqa: E402
 INIT_CASH = 100_000.0  # $100k account
 RISK_PER_TRADE = 0.01  # 1% equity risk per trade
 ATR_PERIOD = 14  # For volatility sizing
-STOP_ATR_MULT = 2.0  # Stop loss distance multiplier
 MAX_LEVERAGE = 5.0  # Hard cap on position size
+H4_BARS_PER_YEAR = 2190  # 6 bars/day * 365
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -63,9 +66,32 @@ def load_data(pair: str, gran: str) -> pd.DataFrame | None:
     return df
 
 
-def load_mtf_config() -> dict:
-    with open(CONFIG_PATH, "rb") as f:
+def load_mtf_config(config_path: Path) -> dict:
+    with open(config_path, "rb") as f:
         return tomllib.load(f)
+
+
+def load_swap_annual_pct(pair: str) -> float:
+    """Return annual swap drag fraction for pair (from config/spread.toml)."""
+    spread_cfg = PROJECT_ROOT / "config" / "spread.toml"
+    try:
+        with open(spread_cfg, "rb") as f:
+            cfg = tomllib.load(f)
+        return float(cfg.get("swap", {}).get(pair, 0.015))
+    except FileNotFoundError:
+        return 0.015  # 1.5% annual fallback
+
+
+def compute_swap_drag(pf, swap_annual_pct: float) -> float:
+    """Estimate total overnight swap cost from per-bar position exposure.
+
+    Method: for each H4 bar, charge swap_annual_pct / H4_BARS_PER_YEAR
+    of the absolute position value in $. Direction-agnostic.
+    Returns total drag in $ terms.
+    """
+    pos_value = pf.asset_value().abs()
+    swap_per_bar = swap_annual_pct / H4_BARS_PER_YEAR
+    return float((pos_value * swap_per_bar).sum())
 
 
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
@@ -142,17 +168,40 @@ def compute_confluence(pair: str, mtf_config: dict) -> tuple[pd.Series, pd.DataF
 
 
 def main() -> None:
-    pair = "EUR_USD"
+    parser = argparse.ArgumentParser(description="MTF Portfolio Simulation (risk-managed).")
+    parser.add_argument("--pair", default="EUR_USD", help="Instrument (default: EUR_USD)")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to TOML config (default: auto-detect from pair)",
+    )
+    args = parser.parse_args()
+    pair = args.pair.upper()
+    pair_lower = pair.lower().replace("_", "")
+
+    if args.config:
+        config_path = Path(args.config)
+        if not config_path.is_absolute():
+            config_path = PROJECT_ROOT / config_path
+    else:
+        pair_cfg = PROJECT_ROOT / "config" / f"mtf_{pair_lower}.toml"
+        config_path = pair_cfg if pair_cfg.exists() else PROJECT_ROOT / "config" / "mtf.toml"
+
     print("=" * 60)
     print("  MTF Portfolio Simulation (Risk-Managed)")
     print("=" * 60)
+    print(f"  Pair:           {pair}")
     print(f"  Initial Equity: ${INIT_CASH:,.0f}")
     print(f"  Risk Per Trade: {RISK_PER_TRADE:.1%}")
-    print(f"  Using params from: {CONFIG_PATH}")
+    print(f"  Using params from: {config_path.name}")
 
     # 1. Load Config & Confluence
-    cfg = load_mtf_config()
+    cfg = load_mtf_config(config_path)
     threshold = cfg.get("confirmation_threshold", 0.10)
+    stop_atr_mult = float(cfg.get("atr_stop_mult", 2.0))
+    swap_annual_pct = load_swap_annual_pct(pair)
+    print(f"  ATR Stop Mult:  {stop_atr_mult}x")
+    print(f"  Swap Annual:    {swap_annual_pct:.1%}")
     confluence, primary_df = compute_confluence(pair, cfg)
 
     close = primary_df["close"]
@@ -163,22 +212,22 @@ def main() -> None:
     atr = compute_atr(primary_df, ATR_PERIOD)
 
     # 3. Generate Signals
-    # Long: >= threshold
-    # Short: <= -threshold
-    entries_long = confluence >= threshold
-    entries_short = confluence <= -threshold
+    # Shift by 1: signal fires at close of bar i, order fills at bar i+1
+    conf_sh = confluence.shift(1).fillna(0.0)
+    entries_long = conf_sh >= threshold
+    entries_short = conf_sh <= -threshold
 
     # Exits: Neutrality or Reversal will be handled by Portfolio logic
     # But explicitly, we exit if confluence crosses zero against us
     # VBT handles reversals if we provide both entries and short_entries
 
     # 4. Position Sizing Logic (Fixed Risk Amount based on Initial Equity)
-    # Stop Distance = 2.0 * ATR
+    # Stop Distance = atr_stop_mult * ATR
     # Risk Amount = INIT_CASH * RISK_PER_TRADE ($1,000)
     # Units = Risk Amount / Stop Distance
 
     risk_amt = INIT_CASH * RISK_PER_TRADE
-    stop_dist = STOP_ATR_MULT * atr
+    stop_dist = stop_atr_mult * atr
 
     # Calculate Stop Loss % (needed for sl_stop argument)
     stop_loss_pct = stop_dist / close
@@ -201,15 +250,15 @@ def main() -> None:
     print(f"  Avg Spread Cost: {avg_spread:.5f}")
 
     # Run 1: With Trailing Stop
-    print("\nRunning Scenario 1: Trailing Stop (2.0 ATR)...")
+    print(f"\nRunning Scenario 1: Trailing Stop ({stop_atr_mult}x ATR)...")
     pf_stop = vbt.Portfolio.from_signals(
         close=close,
         high=high,
         low=low,
         entries=entries_long,
         short_entries=entries_short,
-        exits=(confluence < 0),
-        short_exits=(confluence > 0),
+        exits=(conf_sh < 0),
+        short_exits=(conf_sh > 0),
         size=target_units,
         size_type="amount",
         init_cash=INIT_CASH,
@@ -227,8 +276,8 @@ def main() -> None:
         low=low,
         entries=entries_long,
         short_entries=entries_short,
-        exits=(confluence < 0),
-        short_exits=(confluence > 0),
+        exits=(conf_sh < 0),
+        short_exits=(conf_sh > 0),
         size=target_units,
         size_type="amount",
         init_cash=INIT_CASH,
@@ -238,14 +287,18 @@ def main() -> None:
     )
 
     # 6. Analyze & Compare
+    swap_stop = compute_swap_drag(pf_stop, swap_annual_pct)
+    swap_signal = compute_swap_drag(pf_signal, swap_annual_pct)
+
     print("\n" + "=" * 80)
-    print(f"  COMPARISON: Trailing Stop ({STOP_ATR_MULT}x ATR) vs Signal Only")
+    print(f"  COMPARISON: Trailing Stop ({stop_atr_mult}x ATR) vs Signal Only")
+    print(f"  (Swap cost modelled at {swap_annual_pct:.1%}/yr on open position value)")
     print("=" * 80)
 
     headers = ["Metric", "With Stop", "Signal Only", "Diff"]
-    row_fmt = "{:<15} {:<15} {:<15} {:<15}"
+    row_fmt = "{:<20} {:<18} {:<18} {:<15}"
     print(row_fmt.format(*headers))
-    print("-" * 60)
+    print("-" * 71)
 
     def get_metrics(pf):
         return {
@@ -260,7 +313,12 @@ def main() -> None:
     m1 = get_metrics(pf_stop)
     m2 = get_metrics(pf_signal)
 
-    # helper for formatting
+    # Swap-adjusted final equity
+    m1_adj_eq = m1["Final Eq"] - swap_stop
+    m2_adj_eq = m2["Final Eq"] - swap_signal
+    m1_adj_ret = (m1_adj_eq - INIT_CASH) / INIT_CASH
+    m2_adj_ret = (m2_adj_eq - INIT_CASH) / INIT_CASH
+
     def fmt(val, is_pct=True):
         return f"{val:.2%}" if is_pct else f"{val:.2f}"
 
@@ -309,18 +367,71 @@ def main() -> None:
             f"${m2['Final Eq'] - m1['Final Eq']:,.0f}",
         )
     )
+    print("-" * 71)
+    print(
+        row_fmt.format(
+            "Swap Cost ($)",
+            f"-${swap_stop:,.0f}",
+            f"-${swap_signal:,.0f}",
+            f"${swap_signal - swap_stop:,.0f}",
+        )
+    )
+    print(
+        row_fmt.format(
+            "Adj Return",
+            fmt(m1_adj_ret),
+            fmt(m2_adj_ret),
+            f"{m2_adj_ret - m1_adj_ret:+.2%}",
+        )
+    )
+    print(
+        row_fmt.format(
+            "Adj Final Equity",
+            f"${m1_adj_eq:,.0f}",
+            f"${m2_adj_eq:,.0f}",
+            f"${m2_adj_eq - m1_adj_eq:,.0f}",
+        )
+    )
 
     # 7. Save Reports
-    pf_stop.trades.records_readable.to_csv(REPORTS_DIR / "trades_with_stop.csv", index=False)
-    pf_signal.trades.records_readable.to_csv(REPORTS_DIR / "trades_signal_only.csv", index=False)
+    pf_stop.trades.records_readable.to_csv(
+        REPORTS_DIR / f"trades_{pair_lower}_with_stop.csv", index=False
+    )
+    pf_signal.trades.records_readable.to_csv(
+        REPORTS_DIR / f"trades_{pair_lower}_signal_only.csv", index=False
+    )
 
-    # Plot both equity curves
+    # Plot equity curves (raw and swap-adjusted)
+    stop_val = pf_stop.value()
+    signal_val = pf_signal.value()
+    # Cumulative swap drag per bar (proportional to position value over time)
+    stop_swap_cum = (pf_stop.asset_value().abs() * (swap_annual_pct / H4_BARS_PER_YEAR)).cumsum()
+    signal_swap_cum = (
+        pf_signal.asset_value().abs() * (swap_annual_pct / H4_BARS_PER_YEAR)
+    ).cumsum()
+
     fig = make_subplots(rows=1, cols=1)
-    fig.add_trace(go.Scatter(x=pf_stop.value().index, y=pf_stop.value(), name="With Stop"))
-    fig.add_trace(go.Scatter(x=pf_signal.value().index, y=pf_signal.value(), name="Signal Only"))
-    fig.update_layout(title="Equity Curve Comparison", yaxis_title="Equity ($)")
+    fig.add_trace(go.Scatter(x=stop_val.index, y=stop_val, name=f"Stop {stop_atr_mult}x ATR"))
+    fig.add_trace(go.Scatter(x=signal_val.index, y=signal_val, name="Signal Only"))
+    fig.add_trace(
+        go.Scatter(
+            x=signal_val.index,
+            y=signal_val - signal_swap_cum,
+            name="Signal Only (swap-adj)",
+            line={"dash": "dot"},
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=stop_val.index,
+            y=stop_val - stop_swap_cum,
+            name=f"Stop {stop_atr_mult}x (swap-adj)",
+            line={"dash": "dot"},
+        )
+    )
+    fig.update_layout(title=f"Equity Curve Comparison — {pair}", yaxis_title="Equity ($)")
 
-    html_path = REPORTS_DIR / "mtf_comparison.html"
+    html_path = REPORTS_DIR / f"mtf_{pair_lower}_comparison.html"
     fig.write_html(str(html_path))
     print(f"\nSaved comparison report to {html_path}")
 

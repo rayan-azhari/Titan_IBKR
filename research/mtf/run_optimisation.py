@@ -7,9 +7,11 @@ avoid overfitting.
 Directive: Alpha Research Loop (VectorBT).md  —  Step 6 (MTF Confluence)
 
 Usage:
-    uv run python research/mtf/run_optimisation.py
+    uv run python research/mtf/run_optimisation.py                  # EUR/USD
+    uv run python research/mtf/run_optimisation.py --pair GBP_USD   # any pair
 """
 
+import argparse
 import sys
 import tomllib
 from pathlib import Path
@@ -17,13 +19,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 DATA_DIR = PROJECT_ROOT / "data"
 REPORTS_DIR = PROJECT_ROOT / ".tmp" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-CONFIG_PATH = PROJECT_ROOT / "config" / "mtf.toml"
 
 try:
     import vectorbt as vbt
@@ -59,9 +60,10 @@ def load_data(pair: str, granularity: str) -> pd.DataFrame | None:
     return df
 
 
-def load_mtf_config() -> dict:
-    """Load multi-timeframe confluence config from config/mtf.toml."""
-    with open(CONFIG_PATH, "rb") as f:
+def load_mtf_config(config_path: Path | None = None) -> dict:
+    """Load multi-timeframe confluence config from a TOML file."""
+    path = config_path or (PROJECT_ROOT / "config" / "mtf.toml")
+    with open(path, "rb") as f:
         return tomllib.load(f)
 
 
@@ -171,7 +173,7 @@ def compute_confluence(
         if weight == 0:
             continue
 
-        df = load_data(tf_pair := pair, tf)  # noqa: F841
+        df = load_data(pair, tf)
         if df is None:
             continue
 
@@ -211,13 +213,19 @@ def run_backtest(
 ) -> dict:
     """Run long/short backtest with given threshold.
 
+    Signals are shifted by 1 bar so a signal generated at bar i close
+    executes at bar i+1 (next-bar execution, no same-bar look-ahead).
+
     Returns:
         Dict with 'long' and 'short' VBT Portfolio objects.
     """
+    # Shift by 1: signal fires at close of bar i, order fills at bar i+1
+    conf_sh = confluence.shift(1).fillna(0.0)
+
     long_pf = vbt.Portfolio.from_signals(
         close,
-        entries=confluence >= threshold,
-        exits=confluence < 0,
+        entries=conf_sh >= threshold,
+        exits=conf_sh < 0,
         init_cash=10_000,
         fees=fees,
         freq="4h",
@@ -227,8 +235,8 @@ def run_backtest(
         close,
         entries=pd.Series(False, index=close.index),
         exits=pd.Series(False, index=close.index),
-        short_entries=confluence <= -threshold,
-        short_exits=confluence > 0,
+        short_entries=conf_sh <= -threshold,
+        short_exits=conf_sh > 0,
         init_cash=10_000,
         fees=fees,
         freq="4h",
@@ -256,15 +264,33 @@ def extract_stats(pf) -> dict:
 
 def main() -> None:
     """Entry point: sweep threshold x ma_type, report best combos."""
-    pair = "EUR_USD"
-    mtf_config = load_mtf_config()
+    parser = argparse.ArgumentParser(description="MTF Stage 1: Threshold x MA-Type Sweep.")
+    parser.add_argument(
+        "--pair",
+        default="EUR_USD",
+        help="FX pair or instrument in BASE_QUOTE format (default: EUR_USD)",
+    )
+    args = parser.parse_args()
+    pair = args.pair.upper()
+    pair_lower = pair.lower().replace("_", "")
+
+    # Load config: prefer pair-specific, fall back to base EUR/USD config
+    pair_config = PROJECT_ROOT / "config" / f"mtf_{pair_lower}.toml"
+    base_config = PROJECT_ROOT / "config" / "mtf.toml"
+    config_path = pair_config if pair_config.exists() else base_config
+    mtf_config = load_mtf_config(config_path)
+
     valid_tfs = {"M1", "M5", "M15", "M30", "H1", "H2", "H4", "H8", "D", "W", "M"}
     timeframes = [k for k in mtf_config.get("weights", {}) if k in valid_tfs]
+
+    scoreboard_path = REPORTS_DIR / f"mtf_stage1_{pair_lower}_scoreboard.csv"
+    heatmap_path = REPORTS_DIR / f"mtf_stage1_{pair_lower}_heatmap.html"
 
     print("=" * 60)
     print("  Stage 1: Threshold x MA-Type Sweep")
     print("=" * 60)
     print(f"  Pair:       {pair}")
+    print(f"  Config:     {config_path.name}")
     print(f"  Timeframes: {', '.join(timeframes)}")
     print(f"  Thresholds: {len(THRESHOLDS)} values ({THRESHOLDS[0]} .. {THRESHOLDS[-1]})")
     print(f"  MA types:   {', '.join(MA_TYPES)}")
@@ -276,8 +302,7 @@ def main() -> None:
     for ma_idx, ma_type in enumerate(MA_TYPES):
         print(f"\n--- {ma_type} ({ma_idx + 1}/{len(MA_TYPES)}) ---")
 
-        # Compute confluence once per MA type (threshold changes don't
-        # affect the indicator, only the entry/exit signals)
+        # Compute confluence once per MA type (threshold doesn't affect indicators)
         confluence, primary_df = compute_confluence(pair, mtf_config, timeframes, ma_type)
         close = primary_df["close"]
 
@@ -350,9 +375,8 @@ def main() -> None:
 
     # ── Results ──
     df = pd.DataFrame(results)
-    csv_path = REPORTS_DIR / "mtf_stage1_scoreboard.csv"
-    df.to_csv(csv_path, index=False)
-    print(f"\nFull scoreboard: {csv_path}")
+    df.to_csv(scoreboard_path, index=False)
+    print(f"\nFull scoreboard: {scoreboard_path}")
 
     # ── Best overall (by combined Sharpe, filter: both parities > 0) ──
     valid = df[(df["long_parity"] > 0) & (df["short_parity"] > 0)]
@@ -424,11 +448,10 @@ def main() -> None:
         fig = px.imshow(
             df.pivot(index="ma_type", columns="threshold", values="combined_sharpe"),
             labels=dict(x="Threshold", y="MA Type", color="Combined Sharpe"),
-            title="Stage 1: Combined Sharpe — MA Type vs Threshold",
+            title=f"Stage 1: Combined Sharpe — MA Type vs Threshold ({pair})",
             color_continuous_scale="RdYlGn",
             aspect="auto",
         )
-        heatmap_path = REPORTS_DIR / "mtf_stage1_heatmap.html"
         fig.write_html(str(heatmap_path))
         print(f"\nHeatmap: {heatmap_path}")
     except ImportError:
@@ -441,10 +464,16 @@ def main() -> None:
         state_manager.save_stage1(
             ma_type=best["ma_type"],
             threshold=float(best["threshold"]),
+            pair=pair_lower,
         )
     except ImportError:
         print("WARNING: Could not import state_manager. State not saved.")
 
+    print("\nNext step:")
+    print(
+        f"  uv run python research/mtf/run_stage2.py --pair {pair} "
+        f"--ma-type {best['ma_type']} --threshold {best['threshold']:.2f}"
+    )
     print("\nDone.")
 
 

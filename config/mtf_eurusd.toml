@@ -1,38 +1,39 @@
 # ========================================================
-# mtf_gbpusd.toml -- MTF Confluence Config for GBP_USD
+# mtf_eurusd.toml -- MTF Confluence Config for EUR_USD
 # ========================================================
 # Optimised via run_pair_sweep.py (greedy Stage 3).
-# Pair: GBP_USD
-# OOS LONG Sharpe:  1.947
-# OOS SHORT Sharpe: 1.471
-# Combined Sharpe:  1.331
+# Pair: EUR_USD
+# OOS LONG Sharpe:  2.252
+# OOS SHORT Sharpe: 1.958
+# Combined Sharpe:  1.943
 # Gates passed: YES
 
+ma_type = "WMA"
 confirmation_threshold = 0.10
 atr_stop_mult = 4.0
 
 [weights]
 H1 = 0.10
-H4 = 0.30
+H4 = 0.05
 D  = 0.55
-W  = 0.05
+W  = 0.30
 
 [H1]
-fast_ma = 20
-slow_ma = 100
-rsi_period = 21
+fast_ma = 10
+slow_ma = 50
+rsi_period = 14
 
 [H4]
 fast_ma = 10
-slow_ma = 30
+slow_ma = 40
 rsi_period = 14
 
 [D]
-fast_ma = 5
+fast_ma = 10
 slow_ma = 20
-rsi_period = 10
+rsi_period = 7
 
 [W]
-fast_ma = 10
+fast_ma = 8
 slow_ma = 21
-rsi_period = 7
+rsi_period = 14

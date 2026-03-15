@@ -38,7 +38,9 @@ from ibapi.wrapper import EWrapper
 
 IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
 IBKR_PORT = int(os.getenv("IBKR_PORT", 4002))
-IBKR_CLIENT_ID = 11  # Fixed — must not conflict with ORB (20), check_balance (99), download_data (10)
+IBKR_CLIENT_ID = (
+    11  # Fixed — must not conflict with ORB (20), check_balance (99), download_data (10)
+)
 
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -47,10 +49,10 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # H1/H4 are capped at 1Y per IBKR request — require chunking for multi-year fetches.
 # D/W support multi-year durations in a single request.
 TIMEFRAMES = [
-    ("H1", "1 hour",  "1 Y", True),
+    ("H1", "1 hour", "1 Y", True),
     ("H4", "4 hours", "1 Y", True),
-    ("D",  "1 day",   None,  False),
-    ("W",  "1 week",  None,  False),
+    ("D", "1 day", None, False),
+    ("W", "1 week", None, False),
 ]
 
 
@@ -122,11 +124,7 @@ def _parse_and_save(app: IBKRHistoricalDataApp, output_path: Path) -> pd.DataFra
         existing = pd.read_parquet(output_path)
         if not pd.api.types.is_datetime64_any_dtype(existing["timestamp"]):
             existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
-        df = (
-            pd.concat([existing, df])
-            .drop_duplicates(subset="timestamp")
-            .sort_values("timestamp")
-        )
+        df = pd.concat([existing, df]).drop_duplicates(subset="timestamp").sort_values("timestamp")
 
     # Drop future-timestamped rows (data artefact)
     df = df[df["timestamp"] <= pd.Timestamp.now(timezone.utc)]
@@ -177,7 +175,9 @@ def fetch_timeframe(
 
     df = _parse_and_save(app, output_path)
     if df is not None:
-        print(f"    Saved. Total rows: {len(df)}. Range: {df['timestamp'].min().date()} -> {df['timestamp'].max().date()}")
+        print(
+            f"    Saved. Total rows: {len(df)}. Range: {df['timestamp'].min().date()} -> {df['timestamp'].max().date()}"
+        )
 
 
 def main() -> None:
@@ -229,7 +229,9 @@ def main() -> None:
                 else:
                     end_ts = now_utc - timedelta(days=365 * chunk)
                     end_dt = end_ts.strftime("%Y%m%d-%H:%M:%S")
-                fetch_timeframe(app, req_id, pair, symbol, currency, suffix, bar_size, chunk_duration, end_dt)
+                fetch_timeframe(
+                    app, req_id, pair, symbol, currency, suffix, bar_size, chunk_duration, end_dt
+                )
                 req_id += 1
                 time.sleep(2)  # IBKR pacing between requests
         else:

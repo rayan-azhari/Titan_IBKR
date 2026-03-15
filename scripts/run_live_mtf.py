@@ -5,10 +5,10 @@ Live trading runner for the Multi-Timeframe Confluence Strategy on EUR/USD.
 Connects to IBKR (Paper/Live), downloads fresh H1/H4/D/W candles via
 scripts/download_data_mtf.py, then launches the strategy.
 
-Config  : config/mtf.toml  (Round 3 validated — OOS Sharpe 2.936)
+Config  : config/mtf_eurusd.toml  (Round 4 validated — OOS Sharpe 1.943, Combined)
 TFs     : H1, H4, D, W
-MA type : SMA
-Stop    : 2.5× ATR(14, H1) hard STOP_MARKET
+MA type : WMA  (Weighted Moving Average)
+Stop    : 4.0× ATR(14, H1) hard STOP_MARKET (insurance only; primary exit = signal reversal)
 
 Last updated: 2026-03-15
 """
@@ -88,7 +88,7 @@ def main():
         sys.exit(1)
 
     logger.info("=" * 50)
-    logger.info("  MTF CONFLUENCE LIVE (M5) — IBKR GATEWAY")
+    logger.info("  MTF CONFLUENCE LIVE (EUR/USD) — IBKR GATEWAY")
     logger.info("=" * 50)
 
     # 1. Download latest EUR/USD warmup data (H1, H4, D, W)
@@ -153,17 +153,17 @@ def main():
     # instrument_id matches IBContract CASH EUR/USD on IDEALPRO
     INSTRUMENT_ID = "EUR/USD.IDEALPRO"
 
-    # config/mtf.toml: H1+H4+D+W, SMA, threshold=0.10 — validated in Round 3 backtest
-    # (OOS Sharpe 2.73 with full friction: slippage, carry, ATR stop, next-bar fills)
+    # config/mtf_eurusd.toml: H1+H4+D+W, WMA, threshold=0.10 — validated Round 4 backtest
+    # (Combined OOS Sharpe 1.943; CAGR ~8%/yr with full friction + swap costs + next-bar fills)
     strat_config = MTFConfluenceConfig(
         instrument_id=INSTRUMENT_ID,
         bar_types={
             "H1": f"{INSTRUMENT_ID}-1-HOUR-MID-EXTERNAL",
             "H4": f"{INSTRUMENT_ID}-4-HOUR-MID-EXTERNAL",
-            "D":  f"{INSTRUMENT_ID}-1-DAY-MID-EXTERNAL",
-            "W":  f"{INSTRUMENT_ID}-1-WEEK-MID-EXTERNAL",
+            "D": f"{INSTRUMENT_ID}-1-DAY-MID-EXTERNAL",
+            "W": f"{INSTRUMENT_ID}-1-WEEK-MID-EXTERNAL",
         },
-        config_path="config/mtf.toml",
+        config_path="config/mtf_eurusd.toml",
         risk_pct=0.01,
         leverage_cap=5.0,
         warmup_bars=1000,
