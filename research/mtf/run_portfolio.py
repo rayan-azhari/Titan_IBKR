@@ -435,6 +435,16 @@ def main() -> None:
     fig.write_html(str(html_path))
     print(f"\nSaved comparison report to {html_path}")
 
+    # Generate comprehensive 6-panel visualisation (non-blocking)
+    import subprocess
+
+    vis_script = PROJECT_ROOT / "scripts" / "visualise_mtf.py"
+    if vis_script.exists():
+        subprocess.run(
+            [sys.executable, str(vis_script), "--pair", pair, "--scenario", "signal"],
+            check=False,
+        )
+
     print("\nDone.")
 
 
