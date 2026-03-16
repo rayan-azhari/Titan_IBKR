@@ -1,147 +1,136 @@
-# Deployment Options: Docker vs. Systemd vs. Tmux
+# Deployment Options: Systemd vs Docker vs Tmux
 
-This guide outlines the three primary methods for deploying Titan strategies, comparing their pros, cons, and appropriate use cases. It also provides detailed setup instructions, particularly for **Tmux** on a VPS.
-
-## 📊 Comparison Matrix
-
-| Feature | **Docker** 🐳 | **Systemd** ⚙️ | **Tmux** 🖥️ |
-| :--- | :--- | :--- | :--- |
-| **Best For** | Production / Cloud Scaling | Production / Single VPS | Testing / Debugging / Short-term |
-| **Reliability** | ⭐⭐⭐⭐⭐ (Isolated, Auto-restart) | ⭐⭐⭐⭐⭐ (Native OS Service) | ⭐⭐ (Manual, No auto-restart) |
-| **Setup Complexity** | High (Images, Volumes) | Medium (Service files) | Low (Just a command) |
-| **Portability** | High (Runs anywhere) | Low (Tied to OS/Paths) | Low (Tied to current session) |
-| **Live Monitoring** | Logs only (`docker logs`) | Logs only (`journalctl`) | **Interactive** (See console output) |
-| **Auto-Start on Boot** | Yes (`--restart always`) | Yes (`enable`) | No (Manual start required) |
+> Last updated: 2026-03-16
 
 ---
 
-## 🏆 The Titan Gold Standard: Best Practice
+## Comparison Matrix
 
-For a long-term, profitable trading operation, stability is paramount. The recommended architecture for Titan is:
-
-### 1. Infrastructure: Cloud VPS (Compute Engine)
-*   **Provider**: Google Cloud Platform (GCE) or AWS EC2.
-*   **Region**: `europe-west2` (London) or `us-east1` (New York). **Crucial**: Choose the region closest to IBKR's matching engine (usually New York or London) to minimize latency.
-*   **Spec**: 2 vCPU, 4GB RAM (minimum for ML models).
-
-### 2. Deployment Method: Docker 🐳
-*   **Why**: Docker guarantees that if it works on your machine, it works on the server. No "it works on my machine" bugs.
-*   **Workflow**:
-    1.  **Develop Locally**: Test changes -> Commit & Push to GitHub.
-    2.  **Deploy on Server**: SSH into VPS -> `git pull` -> `uv run scripts/build_docker.py` -> `docker restart titan`.
-
-### 3. Process Management: Docker Restart Policy
-*   Ensure the container always comes back after a crash or reboot:
-    ```bash
-    docker run --restart always ...
-    ```
-
-### 4. Monitoring: The "Guardian" Pattern
-*   Do not stare at logs 24/7.
-*   Run a lightweight "Guardian" script (or use a tool like UptimeRobot) that pings your strategy's health endpoint or tails logs for "ERROR".
-*   If the strategy goes silent for 5 minutes -> **PagerDuty / Slack Alert**.
+| Feature | **Systemd** ⚙️ | **Docker** 🐳 | **Tmux** 🖥️ |
+|---|---|---|---|
+| **Best for** | Production VPS (recommended) | Multi-strategy scale-out | Testing / first 48h monitoring |
+| **Reliability** | ★★★★★ — native OS service, IB Gateway dependency ordering | ★★★★★ — isolated environment | ★★ — no auto-restart |
+| **IB Gateway headless** | Native (Xvfb + IBC) | Complex (display forwarding in container) | Native |
+| **Auto-start on boot** | Yes (`systemctl enable`) | Yes (`--restart always`) | No |
+| **Graceful shutdown** | SIGTERM → watchdog → no-restart | SIGTERM → container stop | Ctrl+C |
+| **Log access** | `journalctl -u mtf-watchdog` | `docker logs titan` | Live in terminal |
+| **Setup complexity** | Medium | High (IB Gateway in Docker is painful) | Low |
 
 ---
 
-## 1. 🐳 Docker (The Production Standard)
+## Recommended: Systemd on VPS
 
-**Why use it?**
-Docker ensures the strategy runs in the *exact* same environment on your server as it does on your local machine. It isolates dependencies and prevents conflicts.
+The **watchdog + systemd** stack is the production standard for this codebase.
 
-**How to use:**
-1.  **Build**:
-    ```bash
-    uv run python scripts/build_docker.py
-    ```
-2.  **Run**:
-    ```bash
-    docker run -d \
-      --name titan-live \
-      --restart always \
-      --env-file .env \
-      -v $(pwd)/data:/app/data \
-      -v $(pwd)/.tmp/logs:/app/.tmp/logs \
-      titan-ibkr-algo
-    ```
+```
+ibgateway.service   (IB Gateway via IBC auto-login + Xvfb)
+      ↓ Requires
+mtf-watchdog.service   (scripts/watchdog_mtf.py)
+      ↓ spawns subprocess
+scripts/run_live_mtf.py   (restarted by watchdog on any crash/disconnect)
+```
 
----
+**Full setup instructions:** `directives/VPS Deployment Guide.md`
 
-## 2. ⚙️ Systemd (The VPS Standard)
+Quick reference — service unit skeleton:
 
-**Why use it?**
-Systemd is built into Linux. It treats your strategy like a background service (like a web server). If the strategy crashes or the server reboots, Systemd automatically restarts it.
-
-**How to use:**
-Create `/etc/systemd/system/titan.service`:
 ```ini
+# /etc/systemd/system/mtf-watchdog.service
 [Unit]
-Description=Titan Strategy
-After=network.target
+Description=MTF Confluence Strategy Watchdog
+After=ibgateway.service
+Requires=ibgateway.service
 
 [Service]
-User=root
-WorkingDirectory=/root/Titan-IBKR
-ExecStart=/root/.local/bin/uv run python scripts/run_live_mtf.py
-Restart=always
-RestartSec=5
-EnvironmentFile=/root/Titan-IBKR/.env
+Type=simple
+User=titan
+WorkingDirectory=/home/titan/Titan-IBKR
+ExecStart=/home/titan/Titan-IBKR/.venv/bin/python scripts/watchdog_mtf.py
+Restart=on-failure
+RestartSec=30s
+KillSignal=SIGTERM
+TimeoutStopSec=90s
 
 [Install]
 WantedBy=multi-user.target
 ```
 
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable ibgateway mtf-watchdog
+sudo systemctl start ibgateway && sleep 90 && sudo systemctl start mtf-watchdog
+```
+
 ---
 
-## 3. 🖥️ Tmux (Interactive / Testing)
+## Docker (Multi-Strategy Scale-Out)
 
-**Why use it?**
-Tmux allows you to detach from a terminal session without killing the processes running inside it.
+Docker is the right choice if you are running multiple strategies simultaneously
+and want environment isolation between them. IB Gateway headless in Docker requires
+a virtual display passthrough, which adds complexity.
 
-**The "Local PC vs. VPS" Question**
-*   **Can I run it on my Local PC?** Yes, but **not recommended** for live trading.
-    *   *Risks:* Power outages, internet disconnects, Windows updates rebooting your PC.
-    *   *Use Case:* Development testing only.
-*   **Do I need a VPS?** **YES.**
-    *   *Why:* A VPS (Virtual Private Server) runs 24/7 in a datacenter with redundant power and internet.
-    *   *Cost:* ~$5-10/mo (DigitalOcean, Vultr, Hetzner).
-    *   *Latency:* VPS servers are often physically closer to IBKR's servers (NY/London), executing trades faster than your home PC.
+```bash
+# Build
+uv run python scripts/build_docker.py
 
-### 🛑 Detailed Tmux Workflow on VPS
+# Run with restart policy
+docker run -d \
+  --name mtf-live \
+  --restart always \
+  --env-file .env \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.tmp/logs:/app/.tmp/logs \
+  titan-ibkr-algo \
+  python scripts/watchdog_mtf.py
+```
 
-1.  **Connect to VPS**:
-    ```bash
-    ssh user@your-vps-ip
-    ```
-2.  **Start a New Session**:
-    ```bash
-    tmux new -s titan
-    ```
-    *You are now inside a "virtual" terminal.*
-3.  **Run the Strategy**:
-    ```bash
-    cd Titan-IBKR
-    uv run python scripts/run_live_mtf.py
-    ```
-    *You will see the strategy logs and dashboard updating in real-time.*
-4.  **Detach (Leave it running)**:
-    *   Press `Ctrl` + `B`
-    *   Release both keys.
-    *   Press `D`.
-    *   *You are now back in your main SSH session. The strategy is still running in the background.*
-5.  **Disconnect from VPS**:
-    ```bash
-    exit
-    ```
-    *You can now turn off your computer. The VPS and Strategy keep running.*
+> [!IMPORTANT]
+> The container's `CMD` should be `watchdog_mtf.py`, not `run_live_mtf.py`.
+> Docker's `--restart always` handles container-level crashes; the watchdog
+> handles IB disconnect/maintenance-window restarts within the container.
 
-6.  **Re-Check (Monitoring)**:
-    *   SSH back into the VPS.
-    *   Attach to the session:
-        ```bash
-        tmux attach -t titan
-        ```
-    *   *You are back in the "virtual" terminal, seeing the live logs exactly as you left them.*
+---
 
-### ⚠️ Critical Warning for Tmux
-If the server reboots (maintenance) or the python script crashes, **Tmux will NOT restart it automatically**.
-*   **Recommendation**: Use Tmux for the first 24-48 hours to monitor a new strategy. Once stable, switch to **Systemd** or **Docker** for long-term peace of mind.
+## Tmux (Testing / First 48h)
+
+Use tmux when you want to **watch the live logs interactively** during initial
+deployment before handing off to systemd.
+
+```bash
+# Start a named session
+tmux new -s titan
+
+# Inside the session — start the watchdog (not run_live_mtf.py directly)
+cd ~/Titan-IBKR
+.venv/bin/python scripts/watchdog_mtf.py
+
+# Detach (leave running): Ctrl+B then D
+# Re-attach later: tmux attach -t titan
+```
+
+> [!WARNING]
+> Tmux does **not** auto-restart if the server reboots. Use it for the first
+> 24–48 hours to observe behaviour, then migrate to systemd.
+
+---
+
+## Operational Commands (Systemd)
+
+```bash
+# Status
+sudo systemctl status mtf-watchdog ibgateway
+
+# Graceful stop
+sudo systemctl stop mtf-watchdog
+
+# Emergency flat + stop
+.venv/bin/python scripts/kill_switch.py && sudo systemctl stop mtf-watchdog
+
+# Deploy update
+git pull && uv sync && sudo systemctl restart mtf-watchdog
+
+# View logs
+journalctl -u mtf-watchdog -f
+tail -f .tmp/logs/mtf_live_*.log
+grep "Attempt" .tmp/logs/watchdog.log | tail -20   # restart history
+```
