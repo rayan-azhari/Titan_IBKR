@@ -125,6 +125,7 @@ def main():
         ibg_client_id=ib_client_id,
         market_data_type=mkt_data_type,
         instrument_provider=inst_config,
+        connection_timeout=60,
     )
 
     exec_config = InteractiveBrokersExecClientConfig(
@@ -134,6 +135,7 @@ def main():
         account_id=ib_account_id,
         instrument_provider=inst_config,
         routing=RoutingConfig(default=True),
+        connection_timeout=60,
     )
 
     # 3. Configure Node

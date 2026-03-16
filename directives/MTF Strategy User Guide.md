@@ -1,6 +1,6 @@
 # MTF Strategy User Guide
 
-> Last updated: 2026-03-15
+> Last updated: 2026-03-16
 
 ## Overview
 
@@ -12,7 +12,7 @@ closed when the score returns to neutral, reverses, or the ATR stop is triggered
 **Instrument:** EUR/USD on IDEALPRO (`EUR/USD.IDEALPRO`)
 **Timeframes:** H1 (entry timing), H4 (swing), D/Daily (primary trend), W/Weekly (macro regime)
 **Validated OOS Sharpe (combined):** 1.943 | Swap-adj CAGR: ~8%/yr | Max Drawdown: ~10%
-**Config:** `config/mtf_eurusd.toml` | **Runner:** `scripts/run_live_mtf.py`
+**Config:** `config/mtf_eurusd.toml` | **Runner:** `scripts/run_live_mtf.py` | **Watchdog:** `scripts/watchdog_mtf.py`
 
 Unlike ORB (intraday, EOD flatten), MTF holds positions across sessions. There is **no end-of-day
 flatten** — positions close when the signal changes or the stop fires.
@@ -110,25 +110,36 @@ If this fails, check: Gateway is running, API is enabled, Read-Only is unchecked
 
 ## Daily Workflow
 
-### Starting the Strategy
+### Starting the Strategy (Recommended — Watchdog Mode)
 
 EUR/USD trades nearly 24/5 — you can start the MTF strategy any time the forex market is open
 (Sunday 17:00 ET through Friday 17:00 ET).
 
 Open **two terminal tabs** in Antigravity.
 
-In **Tab 1**, start the strategy with `tee` to capture full output:
+In **Tab 1**, start the **watchdog** (which auto-restarts the strategy on crash or IB disconnect):
 
 ```bash
 # bash (Antigravity terminal) — Tab 1
-uv run python scripts/run_live_mtf.py 2>&1 | tee .tmp/logs/mtf_stdout_$(date +%Y%m%d_%H%M%S).log
+uv run python scripts/watchdog_mtf.py 2>&1 | tee .tmp/logs/watchdog_stdout_$(date +%Y%m%d_%H%M%S).log
 ```
 
-> **Why `tee`?** NautilusTrader logs all framework events (connections, bar subscriptions, order
-> submissions, fills, ATR stops) to **stdout only** — they do not appear in `mtf_live_*.log`.
-> Using `tee` captures the full output to a timestamped file for post-session review.
+The watchdog:
+- Starts `run_live_mtf.py` as a subprocess
+- Waits **3 minutes** and restarts if it exits for any reason (crash, IB maintenance window)
+- If the process dies in under 30 seconds (config error), waits 60 seconds and warns before retrying
+- Logs all restart events to `.tmp/logs/watchdog.log`
+- Stops cleanly on `Ctrl+C` (will not restart after receiving the signal)
 
-Do not close Tab 1 — closing it kills the strategy.
+Stop the watchdog with `Ctrl+C`. The current strategy process exits gracefully.
+
+> **Manual run (without watchdog):**
+> ```bash
+> uv run python scripts/run_live_mtf.py 2>&1 | tee .tmp/logs/mtf_stdout_$(date +%Y%m%d_%H%M%S).log
+> ```
+> Use this for debugging only — the watchdog is preferred for unattended operation.
+
+Do not close Tab 1 — closing it kills the watchdog and strategy.
 
 ### Monitor Live — Tab 2
 
@@ -325,7 +336,27 @@ After a force kill, check TWS to confirm the GTC stop order is still active on y
 
 ---
 
-## Restarting
+## Autonomous Operation — Surviving the IB Nightly Maintenance Window
+
+IB Gateway/TWS performs a daily restart around **23:45 ET** (approx. 04:45 UTC). The strategy
+process will disconnect and exit. Three layers handle this automatically:
+
+| Layer | What it does | Setup required |
+|---|---|---|
+| **IB Gateway auto-restart** | Restarts Gateway after maintenance | `Configure → Settings → Auto restart` → enable, time = `23:30 ET` |
+| **NautilusTrader reconnect** | Retries connection for 60s on disconnect | Built into `run_live_mtf.py` (`connection_timeout=60`) |
+| **Watchdog** | Restarts the full process after exit | Run `watchdog_mtf.py` instead of `run_live_mtf.py` |
+
+With all three layers active, the strategy recovers without intervention.
+
+**On restart after a disconnect:**
+- NautilusTrader reconciliation (enabled by default) re-reads open positions and orders from IB
+- The strategy detects the existing position via `self.cache.positions()` — no duplicate entry
+- Open ATR stop orders are re-registered via `on_order_accepted` during reconciliation — signal exits work correctly
+
+---
+
+## Restarting Manually
 
 Before restarting after a crash, verify the old process is dead — otherwise you get Error 326
 (client ID already in use):
@@ -478,10 +509,11 @@ warmup_bars=1000    # Historical bars loaded per timeframe at startup
 
 ## Log File Location
 
-Two log files are created per run:
+Three log files are created per run:
 
 | File | What it captures |
 |---|---|
+| `.tmp/logs/watchdog.log` | Watchdog restart events — attempt count, exit codes, restart delays |
 | `.tmp/logs/mtf_live_YYYYMMDD_HHMMSS.log` | Runner startup messages (Python logger) |
 | `.tmp/logs/mtf_stdout_YYYYMMDD_HHMMSS.log` | **Full output** — connections, subscriptions, scores, orders, fills, stops (requires `tee` at startup — see above) |
 

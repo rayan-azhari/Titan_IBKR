@@ -25,7 +25,7 @@ import pandas as pd
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import OrderSide, TimeInForce
+from nautilus_trader.model.enums import OrderSide, OrderType, PriceType, TimeInForce
 from nautilus_trader.model.events import OrderFilled
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency, Price, Quantity
@@ -84,6 +84,8 @@ class MTFConfluenceStrategy(Strategy):
         # Track order IDs to distinguish entries from stops in on_order_filled
         self._entry_order_ids: set = set()
         self._stop_order_ids: set = set()
+        # Guard against multiple bars firing entries before position cache updates
+        self._entry_pending: bool = False
 
     def _load_toml(self, path: str) -> dict:
         p = Path(path)
@@ -323,6 +325,9 @@ class MTFConfluenceStrategy(Strategy):
 
     def _open_position(self, side: OrderSide, price: Decimal) -> None:
         """Size and submit market entry. Stop is placed in on_order_filled."""
+        if self._entry_pending:
+            self.log.debug("Entry already pending — skipping duplicate bar signal.")
+            return
         if self.latest_atr is None or self.latest_atr == 0:
             self.log.warning("ATR not ready. Skipping trade.")
             return
@@ -333,8 +338,25 @@ class MTFConfluenceStrategy(Strategy):
             return
 
         account = accounts[0]
-        equity_money = account.balance_total(Currency.from_str("USD"))
-        equity = float(equity_money.as_double())
+        currencies = list(account.balances().keys())
+        if not currencies:
+            self.log.error("Account has no balances. Cannot size position.")
+            return
+        acct_ccy = currencies[0]
+        equity_raw = float(account.balance_total(acct_ccy).as_double())
+
+        # Convert to USD for consistent sizing; fall back to raw balance with warning.
+        equity = equity_raw
+        if str(acct_ccy) != "USD":
+            try:
+                usd = Currency.from_str("USD")
+                fx = self.portfolio.exchange_rate(acct_ccy, usd, PriceType.MID)
+                if fx and fx > 0:
+                    equity = equity_raw * fx
+                else:
+                    raise ValueError("zero rate")
+            except Exception:
+                self.log.warning(f"No {acct_ccy}/USD FX rate cached; using raw balance for sizing.")
 
         risk_amount = equity * self.config.risk_pct
         # Size against actual stop distance so risk% is accurate
@@ -358,9 +380,10 @@ class MTFConfluenceStrategy(Strategy):
             instrument_id=self.instrument_id,
             order_side=side,
             quantity=qty,
-            time_in_force=TimeInForce.FOK,
+            time_in_force=TimeInForce.GTC,
         )
         self._entry_order_ids.add(order.client_order_id)
+        self._entry_pending = True
         self.submit_order(order)
         self.log.info(
             f"Submitted {side} {qty} | ATR={self.latest_atr:.5f} | stop_dist={stop_dist:.5f}"
@@ -375,6 +398,7 @@ class MTFConfluenceStrategy(Strategy):
 
         if cid in self._entry_order_ids:
             self._entry_order_ids.discard(cid)
+            self._entry_pending = False
             self._submit_atr_stop(
                 entry_side=event.order_side,
                 fill_px=event.last_px.as_double(),
@@ -423,6 +447,67 @@ class MTFConfluenceStrategy(Strategy):
                 self.cancel_order(order)
                 self._stop_order_ids.discard(order.client_order_id)
                 self.log.info(f"Cancelled ATR stop {order.client_order_id}.")
+
+    def on_stop(self) -> None:
+        """Cancel all open stops and close positions on shutdown."""
+        self.cancel_all_orders(self.instrument_id)
+        self.close_all_positions(self.instrument_id)
+        self.log.info("MTF Strategy stopped — orders cancelled, positions closed.")
+
+    # ---------------------------------------------------------------------------
+    # Order / position lifecycle event handlers
+    # ---------------------------------------------------------------------------
+
+    def on_order_submitted(self, event) -> None:
+        self.log.info(f"ORDER SUBMITTED: {event.client_order_id}")
+
+    def on_order_accepted(self, event) -> None:
+        self.log.info(f"ORDER ACCEPTED: {event.client_order_id} venue={event.venue_order_id}")
+        # Reconciliation fires on_order_accepted for existing open orders on restart.
+        # Re-register any stop orders we don't already know about.
+        order = self.cache.order(event.client_order_id)
+        if (
+            order is not None
+            and order.order_type == OrderType.STOP_MARKET
+            and event.client_order_id not in self._stop_order_ids
+            and event.client_order_id not in self._entry_order_ids
+        ):
+            self._stop_order_ids.add(event.client_order_id)
+            self.log.info(f"Reconciled stop order: {event.client_order_id}")
+
+    def on_order_rejected(self, event) -> None:
+        self.log.error(f"ORDER REJECTED: {event.client_order_id} — {event.reason}")
+        # Clear tracked IDs so state doesn't get stuck
+        if event.client_order_id in self._entry_order_ids:
+            self._entry_order_ids.discard(event.client_order_id)
+            self._entry_pending = False
+        self._stop_order_ids.discard(event.client_order_id)
+
+    def on_order_canceled(self, event) -> None:
+        self.log.info(f"ORDER CANCELLED: {event.client_order_id}")
+        self._stop_order_ids.discard(event.client_order_id)
+
+    def on_order_expired(self, event) -> None:
+        self.log.warning(f"ORDER EXPIRED: {event.client_order_id}")
+
+    def on_position_opened(self, event) -> None:
+        self.log.info(
+            f"POSITION OPENED: {event.position_id} "
+            f"side={event.entry.name} qty={event.quantity} avg_px={event.avg_px_open:.5f}"
+        )
+
+    def on_position_changed(self, event) -> None:
+        self.log.info(
+            f"POSITION CHANGED: {event.position_id} "
+            f"qty={event.quantity} unrealized_pnl={event.unrealized_pnl}"
+        )
+
+    def on_position_closed(self, event) -> None:
+        self.log.info(
+            f"POSITION CLOSED: {event.position_id} "
+            f"realized_pnl={event.realized_pnl} "
+            f"duration={event.duration_ns // 1_000_000_000}s"
+        )
 
     # ---------------------------------------------------------------------------
     # Status dashboard

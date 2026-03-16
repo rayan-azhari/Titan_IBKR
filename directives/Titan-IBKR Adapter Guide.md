@@ -41,7 +41,7 @@ The adapter is currently verified for the following functionality:
 
 | Feature | Status | Notes |
 | :--- | :--- | :--- |
-| **Market Orders** | ✅ Supported | Immediate fill or FOK (Fill-Or-Kill). |
+| **Market Orders** | ✅ Supported | Use `TimeInForce.GTC` for FX (IDEALPRO). `FOK` is **rejected** by IB for FX. `DAY` is valid for equities. |
 | **Limit Orders** | ✅ Supported | GTC (Good-Til-Cancelled). |
 | **Stop Orders** | ✅ Supported | Triggers market order when price is hit. |
 | **Market-If-Touched** | ✅ Supported | Like a Limit, but triggers Market order (slippage possible). |
@@ -271,6 +271,82 @@ This tests the `ibapi` connectivity to the local socket server.
     - For full TP/SL fill simulation, start the strategy before market open (connection established before 09:30 ET gets a live delayed stream).
     - On a live account (`REALTIME` data), TP/SL fills occur normally.
     - The 5-minute fallback in `test_bracket.py` (cancel + explicit close) provides a confirmed working close path regardless.
+
+**20. FX market orders reject with `FOK` time-in-force (IDEALPRO)**
+*   **Cause:** `TimeInForce.FOK` (Fill-or-Kill) is not valid for FX spot orders on IDEALPRO. IB rejects with error 201: *"The time-in-force FOK is invalid for this combination of exchange and security type."*
+*   **Symptom:** Market entry immediately rejected. Log shows `ORDER REJECTED` with error 201 on every bar signal.
+*   **Fix:** Use `TimeInForce.GTC` for FX market orders on IDEALPRO:
+    ```python
+    order = self.order_factory.market(
+        instrument_id=self.instrument_id,
+        order_side=side,
+        quantity=qty,
+        time_in_force=TimeInForce.GTC,   # ✅ valid for FX
+    )
+    ```
+*   **Note:** For equities on SMART, `TimeInForce.DAY` is the correct choice for market orders.
+
+**21. Account equity is `None` on GBP-denominated paper accounts**
+*   **Cause:** `account.balance_total(Currency.from_str("USD"))` returns `None` when the account holds GBP, not USD. IB paper accounts are created in the account's home currency (GBP for UK clients).
+*   **Symptom:** `AttributeError: 'NoneType' object has no attribute 'as_double'` in position sizing code.
+*   **Fix:** Detect currency dynamically, then FX-convert to USD for consistent sizing:
+    ```python
+    currencies = list(account.balances().keys())
+    acct_ccy = currencies[0]
+    equity_raw = float(account.balance_total(acct_ccy).as_double())
+
+    equity = equity_raw
+    if str(acct_ccy) != "USD":
+        try:
+            usd = Currency.from_str("USD")
+            fx = self.portfolio.exchange_rate(acct_ccy, usd, PriceType.MID)
+            if fx and fx > 0:
+                equity = equity_raw * fx
+            else:
+                raise ValueError("zero rate")
+        except Exception:
+            self.log.warning("No FX rate cached; using raw balance for sizing.")
+    ```
+*   **Note:** If no GBPUSD rate is cached (common at startup), position sizing uses raw GBP balance — ~20% undersized vs. USD-equivalent. This clears once the first quote tick is received.
+
+**22. Multiple bar timeframes firing duplicate entry signals before position cache updates**
+*   **Cause:** `on_bar` fires for every subscribed timeframe (H1, H4, D, W). If all four bars arrive before the position is reflected in `self.cache.positions()`, `_execute_bias` sees `current_dir=0` on each bar and submits multiple market entries.
+*   **Symptom:** 3–4 SELL MKT orders submitted simultaneously; multiple fills; oversized position.
+*   **Fix:** Add an `_entry_pending` flag set on order submission and cleared on fill or rejection:
+    ```python
+    def _open_position(self, side, price):
+        if self._entry_pending:
+            return  # duplicate bar guard
+        ...
+        self._entry_pending = True
+        self.submit_order(order)
+
+    def on_order_filled(self, event):
+        if event.client_order_id in self._entry_order_ids:
+            self._entry_pending = False
+            ...
+
+    def on_order_rejected(self, event):
+        if event.client_order_id in self._entry_order_ids:
+            self._entry_pending = False
+    ```
+
+**23. ATR stop orders lost across strategy restart (state not reconciled)**
+*   **Cause:** `_stop_order_ids` is an in-memory set reset to empty on every restart. After reconnect, NautilusTrader reconciliation re-accepts open stop orders but the strategy doesn't know they belong to it — `_cancel_stops()` silently skips them.
+*   **Symptom:** On signal flip after restart, position is closed but ATR stop order remains open in TWS — orphaned GTC stop that can re-open a position unexpectedly.
+*   **Fix:** Re-register stop orders during reconciliation via `on_order_accepted`:
+    ```python
+    def on_order_accepted(self, event):
+        order = self.cache.order(event.client_order_id)
+        if (
+            order is not None
+            and order.order_type == OrderType.STOP_MARKET
+            and event.client_order_id not in self._stop_order_ids
+            and event.client_order_id not in self._entry_order_ids
+        ):
+            self._stop_order_ids.add(event.client_order_id)
+            self.log.info(f"Reconciled stop order: {event.client_order_id}")
+    ```
 
 ---
 
