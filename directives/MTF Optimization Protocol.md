@@ -176,7 +176,7 @@ Also compares signal-only vs ATR stop scenarios side by side.
 **Script:** `research/mtf/run_portfolio.py --pair PAIR`
 
 **What it does:**
-- Applies swap cost drag from `config/spread.toml [swap]` (annual % on open position value)
+- Applies swap cost drag from `config/legacy/spread.toml [swap]` (annual % on open position value)
 - Reads `atr_stop_mult` from `config/mtf_{pair_lower}.toml` (no hardcoding)
 - Plots 4 equity curves: raw stop, raw signal-only, swap-adj signal, swap-adj stop
 - Outputs extended comparison table: CAGR, Sharpe, MaxDD, Swap Cost, Adjusted Return, Final Equity

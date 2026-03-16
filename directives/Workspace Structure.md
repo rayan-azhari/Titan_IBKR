@@ -47,6 +47,7 @@ research/
 ├── gaussian/           # Gaussian Channel research
 ├── ml/                 # ML training pipeline & Feature selection
 └── mtf/                # MTF strategy optimization
+    └── legacy/         # Archived 5m stage variants (superseded by run_pair_sweep.py)
 ```
 
 ### 3. `scripts/` ( The Control Panel)
@@ -54,15 +55,17 @@ research/
 
 ```text
 scripts/
-├── download_data.py    # Fetch history
-├── check_env.py        # Verify environment
-├── run_backtest_mtf.py # Run MTF backtest
-├── run_live_mtf.py     # Deploy MTF strategy Live
-├── run_live_ml.py      # Deploy ML strategy Live
-├── list_instruments.py # List available pairs
-├── spread_analysis.py  # Spread & Cost Analysis
-├── validate_data.py    # Data Integrity Check
-├── kill_switch.py      # Emergency Stop
+├── download_data.py        # Fetch history
+├── download_sp100.py       # Download S&P 100 symbols
+├── check_env.py            # Verify environment
+├── run_backtest_mtf.py     # Run MTF backtest
+├── run_live_mtf.py         # Deploy MTF strategy Live
+├── run_live_ml.py          # Deploy ML strategy Live
+├── list_instruments.py     # List available pairs
+├── spread_analysis.py      # Spread & Cost Analysis
+├── validate_data.py        # Data Integrity Check
+├── kill_switch.py          # Emergency Stop
+├── inspect_factory.py      # NautilusTrader order factory inspector
 └── verify_titan_install.py # Installation Check
 ```
 
@@ -74,4 +77,7 @@ scripts/
 | `instruments.toml` | Pairs to trade and download. |
 | `risk.toml` | Position sizing and drawdown limits. |
 | `mtf.toml` | Parameters for the MTF strategy. |
-| `features.toml` | Selected features for the ML model. |
+| `mtf_eurusd.toml`, `mtf_gbpusd.toml`, etc. | Per-pair MTF locked configs (6 forex pairs). |
+| `orb_live.toml` | ORB strategy parameters (7 equities). |
+
+Inactive / historical configs are archived in `config/legacy/`.

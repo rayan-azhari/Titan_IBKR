@@ -52,17 +52,21 @@ This project follows a **3-layer architecture** that separates *Probabilistic In
 │   ├── gaussian/                  ← Gaussian Channel Research
 │   ├── ml/                        ← ML Pipeline & Feature Selection
 │   └── mtf/                       ← MTF Strategy Optimization
+│       └── legacy/                ← Archived 5m stage variants
 ├── scripts/                       ← [ENTRY POINTS] Executable Scripts
 │   ├── download_data.py           ← Unified Data Downloader
+│   ├── download_sp100.py          ← S&P 100 Symbol Downloader
 │   ├── check_env.py               ← Environment Verifier
 │   ├── run_backtest_mtf.py        ← MTF Switch Backtest
 │   ├── run_live_mtf.py            ← Live MTF Strategy
 │   ├── run_live_ml.py             ← Live ML Strategy
 │   ├── build_docker.py            ← Docker Builder
+│   ├── inspect_factory.py         ← Order Factory Inspector
 │   └── ...
 ├── config/                        ← [CONFIG] TOML Configuration
 │   ├── instruments.toml           ← Currency pairs
 │   ├── risk.toml                  ← Risk limits
+│   ├── legacy/                    ← Archived historical configs
 │   └── ...
 ├── data/                          ← [DATA] Historical Parquet Files
 ├── models/                        ← [MODELS] Trained .joblib models

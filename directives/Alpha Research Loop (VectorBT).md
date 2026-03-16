@@ -47,17 +47,17 @@ uv run python titan/data/validation.py
 Run the MTF optimisation pipeline (3 stages, greedy):
 ```bash
 # Stage 1: MA type + threshold
-uv run python research/mtf/run_mtf_optimisation.py
+uv run python research/mtf/run_optimisation.py --pair EUR_USD
 
 # Stage 2: Timeframe weights
-uv run python research/mtf/run_mtf_stage2.py
+uv run python research/mtf/run_stage2.py --pair EUR_USD --load-state
 
 # Stage 3: Per-timeframe indicator periods
-uv run python research/mtf/run_mtf_stage3.py
+uv run python research/mtf/run_pair_sweep.py --pair EUR_USD --load-state
 ```
 
 Data is split **70% in-sample / 30% out-of-sample**. Optimisation runs on IS data only.
-Best parameters are auto-saved to `.tmp/mtf_state.json` between stages.
+Best parameters are auto-saved to `.tmp/mtf_state_{pair}.json` between stages.
 
 ### 4. Out-of-Sample Validation
 
@@ -75,10 +75,10 @@ Additional gates (see `resources/VectorBT Credible Backtesting Guide.md`):
 
 Separate sweep to find optimal hard stop distance. Run after Stage 3:
 ```bash
-uv run python research/mtf/run_atr_sweep.py
+uv run python research/mtf/run_stage4_atr.py --pair EUR_USD
 ```
 
-Result: `atr_stop_mult = 2.5` (OOS Sharpe 2.936 — see `directives/MTF Optimization Protocol.md`).
+Result: `atr_stop_mult = 4.0` (see `directives/MTF Optimization Protocol.md`).
 
 ### 6. MTF Confluence Backtest Report
 
@@ -94,7 +94,7 @@ Generates HTML reports in `.tmp/reports/`.
 The Gaussian Channel indicator research is complete:
 - Implementation: `titan/indicators/gaussian_filter.py` (Numba `@njit`)
 - Optimisation script: `research/gaussian/run_optimisation.py`
-- Config: `config/gaussian_channel_config.toml`
+- Config: `config/legacy/gaussian_channel_config.toml`
 - **Current use:** Deployed as a per-ticker filter in the ORB strategy (`use_gauss` flag).
 - **Not a standalone strategy** — Gaussian Channel Confluence strategy was deprecated after
   the MTF strategy proved superior on the same data.
@@ -114,7 +114,7 @@ If pursuing the ML strategy after locking MTF parameters:
 uv run python research/ml/run_feature_selection.py
 ```
 
-Sweeps 7 indicator families. Writes winning parameters to `config/features.toml` for ML pipeline.
+Sweeps 7 indicator families. Writes winning parameters to `config/legacy/features.toml` for ML pipeline.
 
 > [!NOTE]
 > An ML meta-overlay on top of MTF was tested and **rejected** (OOS Sharpe 0.83 vs raw 2.73).
@@ -124,7 +124,7 @@ Sweeps 7 indicator families. Writes winning parameters to `config/features.toml`
 
 ## Outputs
 
-- `config/mtf.toml` — locked optimised parameters (Round 3 validated)
+- `config/mtf_{pair}.toml` — locked optimised parameters per pair (Round 4 validated)
 - `.tmp/reports/mtf_stage*.csv` — per-stage scoreboards
 - `.tmp/reports/mtf_meta_*.html` — IS/OOS equity curves
-- `config/features.toml` — ML feature parameters (if ML path taken)
+- `config/legacy/features.toml` — ML feature parameters (if ML path taken)

@@ -35,9 +35,21 @@ Thumbs.db
 *.joblib
 models/*.joblib
 
+# Caches
+.ruff_cache/
+.pytest_cache/
+
 # Test Outputs
 pytest_output*.txt
 test_currency_pair.py
+
+# Dev artifacts (debugging leftovers)
+error*.txt
+ruff_errors*
+help.txt
+run_output.txt
+tests_output.txt
+orb_results.txt
 
 # Data (Market Data)
 data/*.parquet
@@ -46,3 +58,5 @@ data/*.parquet
 
 # Logs
 *.log
+import_success.txt
+import_failure.txt
