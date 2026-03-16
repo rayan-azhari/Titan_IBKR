@@ -180,6 +180,8 @@ def run_pair(pair: str, config_path: Path, risk_base: str = "half") -> dict:
 
     spread_series = build_spread_series(primary_df, pair)
     avg_spread = float(spread_series.mean())
+    # IBKR: 0.20 bps per order, min $2. Proportional model covers typical leg sizes.
+    total_fees = avg_spread + 0.00020
 
     pf = vbt.Portfolio.from_signals(
         close=close,
@@ -192,7 +194,7 @@ def run_pair(pair: str, config_path: Path, risk_base: str = "half") -> dict:
         size=size,
         size_type="amount",
         init_cash=HALF_CASH,
-        fees=avg_spread,
+        fees=total_fees,
         freq="4h",
     )
 

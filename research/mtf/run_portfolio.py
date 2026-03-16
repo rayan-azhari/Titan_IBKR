@@ -247,7 +247,15 @@ def main() -> None:
 
     spread_series = build_spread_series(primary_df, pair)
     avg_spread = float(spread_series.mean())
-    print(f"  Avg Spread Cost: {avg_spread:.5f}")
+    # IBKR charges 0.20 bps (0.00020) of notional per order, min $2.
+    # For typical ATR-sized legs (~$20-35k notional), this is $4-7/leg —
+    # well above the $2 floor. Model as proportional: fees = spread + commission.
+    ibkr_commission = 0.00020
+    total_fees = avg_spread + ibkr_commission
+    print(
+        f"  Avg Spread: {avg_spread:.5f}  |  IBKR commission: {ibkr_commission:.5f}"
+        f"  |  Total fees/leg: {total_fees:.5f}"
+    )
 
     # Run 1: With Trailing Stop
     print(f"\nRunning Scenario 1: Trailing Stop ({stop_atr_mult}x ATR)...")
@@ -262,7 +270,7 @@ def main() -> None:
         size=target_units,
         size_type="amount",
         init_cash=INIT_CASH,
-        fees=avg_spread,
+        fees=total_fees,
         freq="4h",
         sl_stop=stop_loss_pct,
         sl_trail=True,
@@ -281,7 +289,7 @@ def main() -> None:
         size=target_units,
         size_type="amount",
         init_cash=INIT_CASH,
-        fees=avg_spread,
+        fees=total_fees,
         freq="4h",
         # No sl_stop
     )

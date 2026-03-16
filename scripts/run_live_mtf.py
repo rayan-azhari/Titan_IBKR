@@ -8,7 +8,7 @@ scripts/download_data_mtf.py, then launches the strategy.
 Config  : config/mtf_eurusd.toml  (Round 4 validated — OOS Sharpe 1.943, Combined)
 TFs     : H1, H4, D, W
 MA type : WMA  (Weighted Moving Average)
-Stop    : 4.0× ATR(14, H1) hard STOP_MARKET (insurance only; primary exit = signal reversal)
+Exit    : Signal reversal only — no hard stop order placed
 
 Last updated: 2026-03-15
 """

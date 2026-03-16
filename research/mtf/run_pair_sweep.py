@@ -189,12 +189,13 @@ def main() -> None:
     pair = args.pair.upper()
     pair_lower = pair.lower().replace("_", "")
 
-    # Resolve threshold and weights: CLI > state > EUR/USD defaults
+    # Resolve threshold, ma_type and weights: CLI > state > EUR/USD defaults
     threshold = args.threshold
     w_H1 = args.w_H1
     w_H4 = args.w_H4
     w_D = args.w_D
     w_W = args.w_W
+    ma_type_state: str | None = None
 
     if args.load_state or any(v is None for v in [threshold, w_H1, w_H4, w_D, w_W]):
         try:
@@ -202,8 +203,10 @@ def main() -> None:
 
             s1 = state_manager.get_stage1(pair=pair_lower)
             s2 = state_manager.get_stage2(pair=pair_lower)
-            if s1 and threshold is None:
-                threshold = s1[1]
+            if s1:
+                ma_type_state = s1[0]
+                if threshold is None:
+                    threshold = s1[1]
             if s2:
                 saved_w = s2
                 if w_H1 is None:
@@ -462,8 +465,9 @@ def main() -> None:
         f"# Combined Sharpe:  {cs:.3f}",
         f"# Gates passed: {'YES' if all_pass else 'NO -- review before live'}",
         "",
+        f'ma_type = "{ma_type_state or "WMA"}"',
         f"confirmation_threshold = {THRESHOLD:.2f}",
-        "atr_stop_mult = 2.5",
+        "atr_stop_mult = 2.5",  # Stage 4 will overwrite this
         "",
         "[weights]",
         f"H1 = {WEIGHTS['H1']:.2f}",

@@ -3,9 +3,9 @@
 # ========================================================
 # Optimised via run_pair_sweep.py (greedy Stage 3).
 # Pair: EUR_USD
-# OOS LONG Sharpe:  2.252
-# OOS SHORT Sharpe: 1.958
-# Combined Sharpe:  1.943
+# OOS LONG Sharpe:  1.908
+# OOS SHORT Sharpe: 1.892
+# Combined Sharpe:  1.814
 # Gates passed: YES
 
 ma_type = "WMA"
@@ -20,20 +20,20 @@ W  = 0.30
 
 [H1]
 fast_ma = 10
-slow_ma = 50
-rsi_period = 14
+slow_ma = 30
+rsi_period = 28
 
 [H4]
 fast_ma = 10
 slow_ma = 40
-rsi_period = 14
-
-[D]
-fast_ma = 10
-slow_ma = 20
 rsi_period = 7
 
+[D]
+fast_ma = 5
+slow_ma = 20
+rsi_period = 10
+
 [W]
-fast_ma = 8
-slow_ma = 21
-rsi_period = 14
+fast_ma = 13
+slow_ma = 26
+rsi_period = 10

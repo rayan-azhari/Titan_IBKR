@@ -8,13 +8,13 @@ Config: config/mtf_eurusd.toml
   MA type : WMA (Weighted Moving Average)
   Weights : D=0.55, H4=0.05, H1=0.10, W=0.30  (daily + weekly macro bias)
   OOS Sharpe (combined long+short): 1.943
-  OOS CAGR   (signal-only, no ATR stop):  ~8%/yr after swap costs
+  OOS CAGR   (signal-only):  ~8%/yr after swap costs
 
 Exit logic:
-  - Primary:   signal reversal (confluence score returns to neutral or flips)
-  - Secondary: 4.0x ATR hard STOP_MARKET placed at entry fill (catastrophic insurance only)
+  - Signal reversal only: score returns to neutral or flips direction.
+  - No hard stop order. Position is held until the signal exits.
 
-Sizing: 1% equity risk per 4.0x ATR move (matches stop distance in config).
+Sizing: 1% equity risk per atr_stop_mult × ATR (sets position size; no stop placed).
 """
 
 import tomllib
@@ -25,10 +25,10 @@ import pandas as pd
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import OrderSide, OrderType, PriceType, TimeInForce
+from nautilus_trader.model.enums import OrderSide, PriceType, TimeInForce
 from nautilus_trader.model.events import OrderFilled
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Currency, Price, Quantity
+from nautilus_trader.model.objects import Currency, Quantity
 from nautilus_trader.trading.strategy import Strategy
 
 from titan.strategies.ml.features import atr, ema, rsi, sma, wma
@@ -53,9 +53,8 @@ class MTFConfluenceStrategy(Strategy):
     2. On each bar, update history and recalculate signal for that TF.
     3. Compute weighted confluence score.
     4. Entry: score crosses ±threshold on the *next* bar (no look-ahead).
-    5. Primary exit: signal reversal (score returns to neutral or flips).
-    6. Hard stop: 4.0x ATR stop_market placed on entry fill (insurance only).
-    7. Sizing: 1% equity risk / (atr_stop_mult × ATR).
+    5. Exit: signal reversal only (score returns to neutral or flips direction).
+    6. Sizing: 1% equity risk / (atr_stop_mult × ATR).
     """
 
     def __init__(self, config: MTFConfluenceConfig):
@@ -78,12 +77,11 @@ class MTFConfluenceStrategy(Strategy):
 
         self.latest_atr: float | None = None
 
-        # ATR stop multiplier — read from TOML, default 2.5 (Round 3 optimal)
+        # ATR size multiplier — used for position sizing only (no stop placed)
         self._atr_stop_mult: float = float(self.toml_cfg.get("atr_stop_mult", 2.5))
 
-        # Track order IDs to distinguish entries from stops in on_order_filled
+        # Track pending entry order IDs to clear _entry_pending on fill
         self._entry_order_ids: set = set()
-        self._stop_order_ids: set = set()
         # Guard against multiple bars firing entries before position cache updates
         self._entry_pending: bool = False
 
@@ -103,7 +101,9 @@ class MTFConfluenceStrategy(Strategy):
         for bt in self.bar_type_map.keys():
             self.subscribe_bars(bt)
         self._warmup_all()
-        self.log.info(f"Warmup complete. ATR stop mult: {self._atr_stop_mult}x. Ready for signals.")
+        self.log.info(
+            f"Warmup complete. ATR size mult: {self._atr_stop_mult}x. Exit: signal reversal only."
+        )
 
     def _warmup_all(self) -> None:
         project_root = Path(__file__).resolve().parents[3]
@@ -294,7 +294,7 @@ class MTFConfluenceStrategy(Strategy):
                 return
             elif current_dir == -1:
                 self.log.info("Signal Flip: Short -> Long.")
-                self._cancel_stops()
+                self.cancel_all_orders(instrument_id)
                 self.close_all_positions(instrument_id)
                 self._open_position(OrderSide.BUY, price)
             else:
@@ -306,7 +306,7 @@ class MTFConfluenceStrategy(Strategy):
                 return
             elif current_dir == 1:
                 self.log.info("Signal Flip: Long -> Short.")
-                self._cancel_stops()
+                self.cancel_all_orders(instrument_id)
                 self.close_all_positions(instrument_id)
                 self._open_position(OrderSide.SELL, price)
             else:
@@ -316,7 +316,7 @@ class MTFConfluenceStrategy(Strategy):
         elif bias == 0:
             if current_dir != 0:
                 self.log.info(f"Signal Neutral. Closing position (dir={current_dir}).")
-                self._cancel_stops()
+                self.cancel_all_orders(instrument_id)
                 self.close_all_positions(instrument_id)
 
     # ---------------------------------------------------------------------------
@@ -390,63 +390,14 @@ class MTFConfluenceStrategy(Strategy):
         )
 
     def on_order_filled(self, event: OrderFilled) -> None:
-        """Place ATR stop after entry fill; log when stop fires."""
+        """Clear entry-pending state when entry fill arrives."""
         if event.instrument_id != self.instrument_id:
             return
-
         cid = event.client_order_id
-
         if cid in self._entry_order_ids:
             self._entry_order_ids.discard(cid)
             self._entry_pending = False
-            self._submit_atr_stop(
-                entry_side=event.order_side,
-                fill_px=event.last_px.as_double(),
-                qty=event.last_qty.as_double(),
-            )
-        elif cid in self._stop_order_ids:
-            self._stop_order_ids.discard(cid)
-            self.log.info(f"ATR stop triggered. Fill @ {event.last_px}.")
-
-    def _submit_atr_stop(self, entry_side: OrderSide, fill_px: float, qty: float) -> None:
-        """Submit a GTC STOP_MARKET at fill_px ± atr_stop_mult × ATR."""
-        if self.latest_atr is None or self.latest_atr == 0:
-            self.log.warning("ATR not ready — stop not placed.")
-            return
-
-        dist = self._atr_stop_mult * self.latest_atr
-
-        if entry_side == OrderSide.BUY:
-            stop_px = fill_px - dist
-            stop_side = OrderSide.SELL
-        else:
-            stop_px = fill_px + dist
-            stop_side = OrderSide.BUY
-
-        instrument = self.cache.instrument(self.instrument_id)
-        prec = instrument.price_precision
-        stop_price = Price.from_str(f"{stop_px:.{prec}f}")
-        stop_qty = Quantity.from_int(int(qty))
-
-        order = self.order_factory.stop_market(
-            instrument_id=self.instrument_id,
-            order_side=stop_side,
-            quantity=stop_qty,
-            trigger_price=stop_price,
-            time_in_force=TimeInForce.GTC,
-        )
-        self._stop_order_ids.add(order.client_order_id)
-        self.submit_order(order)
-        self.log.info(f"ATR stop placed @ {stop_price} ({self._atr_stop_mult}x ATR = {dist:.5f})")
-
-    def _cancel_stops(self) -> None:
-        """Cancel all open ATR stop orders before signal-based close."""
-        open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
-        for order in open_orders:
-            if order.client_order_id in self._stop_order_ids:
-                self.cancel_order(order)
-                self._stop_order_ids.discard(order.client_order_id)
-                self.log.info(f"Cancelled ATR stop {order.client_order_id}.")
+            self.log.info(f"Entry filled @ {event.last_px}.")
 
     def on_stop(self) -> None:
         """Cancel all open stops and close positions on shutdown."""
@@ -463,29 +414,15 @@ class MTFConfluenceStrategy(Strategy):
 
     def on_order_accepted(self, event) -> None:
         self.log.info(f"ORDER ACCEPTED: {event.client_order_id} venue={event.venue_order_id}")
-        # Reconciliation fires on_order_accepted for existing open orders on restart.
-        # Re-register any stop orders we don't already know about.
-        order = self.cache.order(event.client_order_id)
-        if (
-            order is not None
-            and order.order_type == OrderType.STOP_MARKET
-            and event.client_order_id not in self._stop_order_ids
-            and event.client_order_id not in self._entry_order_ids
-        ):
-            self._stop_order_ids.add(event.client_order_id)
-            self.log.info(f"Reconciled stop order: {event.client_order_id}")
 
     def on_order_rejected(self, event) -> None:
         self.log.error(f"ORDER REJECTED: {event.client_order_id} — {event.reason}")
-        # Clear tracked IDs so state doesn't get stuck
         if event.client_order_id in self._entry_order_ids:
             self._entry_order_ids.discard(event.client_order_id)
             self._entry_pending = False
-        self._stop_order_ids.discard(event.client_order_id)
 
     def on_order_canceled(self, event) -> None:
         self.log.info(f"ORDER CANCELLED: {event.client_order_id}")
-        self._stop_order_ids.discard(event.client_order_id)
 
     def on_order_expired(self, event) -> None:
         self.log.warning(f"ORDER EXPIRED: {event.client_order_id}")
