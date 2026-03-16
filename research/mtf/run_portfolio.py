@@ -438,6 +438,7 @@ def main() -> None:
     # Generate comprehensive 6-panel visualisation (non-blocking)
     import subprocess
 
+    sys.stdout.flush()
     vis_script = PROJECT_ROOT / "scripts" / "visualise_mtf.py"
     if vis_script.exists():
         subprocess.run(
