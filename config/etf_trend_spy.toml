@@ -1,0 +1,47 @@
+# ETF Trend Strategy — SPY (S&P 500 ETF)
+# ──────────────────────────────────────
+# This file is AUTO-WRITTEN by Stage 4 of the optimisation pipeline:
+#   uv run python scripts/run_etf_trend_pipeline.py --instrument SPY
+#
+# The values below are EXAMPLE/PLACEHOLDER defaults only.
+# Do not trade live with these — run the full pipeline first.
+#
+# Stages that write to this file:
+#   Stage 1 → ma_type, fast_ma, slow_ma
+#   Stage 2 → decel_signals
+#   Stage 3 → exit_mode, exit_decel_thresh
+#   Stage 4 → sizing_mode, vol_target, vol_window, atr_stop_mult
+#             (also writes the [instrument] block and warmup_bars)
+
+# ── Instrument ──────────────────────────────────────────────────────────────
+instrument  = "SPY.ARCA"        # NautilusTrader instrument ID
+eod_eval_time = "20:30"         # UTC equivalent of 15:30 ET (for reference)
+warmup_bars = 300               # bars loaded from parquet at strategy start
+
+# ── Stage 1: MA type + entry period ─────────────────────────────────────────
+ma_type  = "EMA"                # "SMA" or "EMA" — swept in Stage 1
+fast_ma  = 50                   # fast MA period (bars)
+slow_ma  = 200                  # slow MA period (bars)
+
+# ── Stage 2: Deceleration signals ────────────────────────────────────────────
+# Signals that passed the OOS Sharpe improvement threshold (≥ +0.10).
+# Composite = mean of selected signals ∈ [-1, 1].
+# Entry requires composite ≥ 0. Dynamic sizing scales with composite.
+decel_signals = ["d_pct", "rv_20"]   # subset of: d_pct, rv_20, adx_14, macd_hist
+
+# ── Stage 3: Exit mode ────────────────────────────────────────────────────────
+# A = close below slow_MA
+# B = close below fast_MA
+# C = decel_composite < exit_decel_thresh
+# D = A or C (whichever fires first)
+exit_mode         = "D"
+exit_decel_thresh = -0.3        # used by exit modes C and D
+
+# ── Stage 4: Vol sizing + ATR stop ───────────────────────────────────────────
+# sizing_mode:
+#   "binary"        — full vol-target size or flat (decel used only for exit)
+#   "dynamic_decel" — position scales continuously with decel composite
+sizing_mode   = "dynamic_decel"
+vol_target    = 0.10            # annualised vol contribution per position (10%)
+vol_window    = 20              # realised vol lookback in days
+atr_stop_mult = 4.0             # hard ATR stop distance = ATR × mult

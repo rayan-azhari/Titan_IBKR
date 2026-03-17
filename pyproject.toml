@@ -20,6 +20,7 @@ dependencies = [
     "nautilus_trader>=1.200",
     "numba>=0.59",
     "statsmodels>=0.14",
+    "databento>=0.73.0",
 ]
 
 [project.optional-dependencies]
