@@ -24,14 +24,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
-# Dataset for US equity consolidated daily bars.
-# DBEQ.BASIC covers all US equities across all exchanges (consolidated).
-# Alternatively use XNYS.PILLAR for NYSE/ARCA-listed instruments.
-DATABENTO_DATASET = "DBEQ.BASIC"
+# Dataset for US equity daily bars.
+# ARCX.PILLAR = NYSE ARCA (where SPY trades). Available from 2018-05-01.
+# DBEQ.BASIC  = consolidated US equities but only from 2023-03-28.
+DATABENTO_DATASET = "ARCX.PILLAR"
 
 # Default universe — start with SPY, extend as strategy expands
 DEFAULT_SYMBOLS = ["SPY"]
-DEFAULT_START = "1993-01-01"
+DEFAULT_START = "2018-05-01"
 
 # Databento ohlcv-1d field mapping → our standard column names
 COLUMN_MAP = {
@@ -43,7 +43,9 @@ COLUMN_MAP = {
 }
 
 
-def download_symbol(client, symbol: str, start: str, end: str | None) -> pd.DataFrame:
+def download_symbol(
+    client, symbol: str, start: str, end: str | None, dataset: str = DATABENTO_DATASET
+) -> pd.DataFrame:
     """Download daily OHLCV for one symbol and return a clean DataFrame.
 
     Args:
@@ -51,6 +53,7 @@ def download_symbol(client, symbol: str, start: str, end: str | None) -> pd.Data
         symbol: Ticker symbol (e.g. "SPY").
         start: ISO date string (e.g. "1993-01-01").
         end: ISO date string or None for today.
+        dataset: Databento dataset identifier.
 
     Returns:
         DataFrame with DatetimeIndex (UTC) and columns: open, high, low, close, volume.
@@ -58,7 +61,7 @@ def download_symbol(client, symbol: str, start: str, end: str | None) -> pd.Data
 
     print(f"  Downloading {symbol} daily bars from {start} to {end or 'today'} ...")
     data = client.timeseries.get_range(
-        dataset=DATABENTO_DATASET,
+        dataset=dataset,
         schema="ohlcv-1d",
         symbols=[symbol],
         start=start,
@@ -138,19 +141,19 @@ def main() -> None:
     print("  Databento OHLCV Download")
     print(f"  Dataset:  {args.dataset}")
     print(f"  Symbols:  {', '.join(args.symbols)}")
-    print(f"  Period:   {args.start} → {args.end or 'today'}")
+    print(f"  Period:   {args.start} to {args.end or 'today'}")
     print("=" * 60)
 
     failed: list[str] = []
     for symbol in args.symbols:
         try:
-            df = download_symbol(client, symbol, args.start, args.end)
+            df = download_symbol(client, symbol, args.start, args.end, dataset=args.dataset)
             if df.empty:
                 failed.append(symbol)
                 continue
             out_path = DATA_DIR / f"{symbol}_D.parquet"
             df.to_parquet(out_path)
-            print(f"  Saved → {out_path.relative_to(PROJECT_ROOT)}")
+            print(f"  Saved: {out_path.relative_to(PROJECT_ROOT)}")
         except Exception as exc:
             print(f"  ERROR downloading {symbol}: {exc}")
             failed.append(symbol)
