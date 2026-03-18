@@ -5,6 +5,7 @@
 # run_mtf_stage2.py, run_mtf_stage3.py).
 
 confirmation_threshold = 0.10
+exit_buffer = 0.10           # Hold through neutral zone; exit long only when score < -0.10
 atr_stop_mult = 2.5          # Round 3 optimal: Sharpe 2.936 (vs 2.732 at 1x)
 
 [weights]

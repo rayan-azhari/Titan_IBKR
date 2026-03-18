@@ -1,21 +1,21 @@
 # MTF Strategy User Guide
 
-> Last updated: 2026-03-16
+> Last updated: 2026-03-18
 
 ## Overview
 
 The Multi-Timeframe Confluence (MTF) Strategy trades **EUR/USD** on IDEALPRO by computing a
 weighted score across four timeframes (H1, H4, Daily, Weekly). When the score exceeds a threshold
 in either direction, the strategy enters a position and places a hard ATR stop. Positions are
-closed when the score returns to neutral, reverses, or the ATR stop is triggered.
+closed when the score reverses past the exit buffer, or the ATR stop is triggered.
 
 **Instrument:** EUR/USD on IDEALPRO (`EUR/USD.IDEALPRO`)
 **Timeframes:** H1 (entry timing), H4 (swing), D/Daily (primary trend), W/Weekly (macro regime)
-**Validated OOS Sharpe (combined):** 1.943 | Swap-adj CAGR: ~8%/yr | Max Drawdown: ~10%
+**Validated OOS Sharpe (signal-only):** 2.14 | Swap-adj return: ~334% over 21yr | Max Drawdown: ~4%
 **Config:** `config/mtf_eurusd.toml` | **Runner:** `scripts/run_live_mtf.py` | **Watchdog:** `scripts/watchdog_mtf.py`
 
 Unlike ORB (intraday, EOD flatten), MTF holds positions across sessions. There is **no end-of-day
-flatten** — positions close when the signal changes or the stop fires.
+flatten** — positions close when the signal reverses past the exit buffer or the stop fires.
 
 ---
 
@@ -154,7 +154,7 @@ tail -f .tmp/logs/mtf_stdout_20260315_091500.log
 
 Filter for only important events:
 ```bash
-tail -f .tmp/logs/mtf_stdout_20260315_091500.log | grep -i "Signal\|ATR stop\|FILLED\|REJECTED\|ERROR\|WARN"
+tail -f .tmp/logs/mtf_stdout_20260315_091500.log | grep -i "Signal\|Exit\|FILLED\|REJECTED\|ERROR\|WARN"
 ```
 
 ---
@@ -189,7 +189,7 @@ MTF Strategy Started. Warming up...
   Loading H4 warmup from data/EUR_USD_H4.parquet
   Loading D  warmup from data/EUR_USD_D.parquet
   Loading W  warmup from data/EUR_USD_W.parquet
-Warmup complete. ATR stop mult: 4.0x. Ready for signals.
+Warmup complete. ATR size mult: 4.0x. Exit: signal reversal only.
 ```
 
 If all 4 steps complete without `[ERROR]` lines, the strategy is healthy and watching for signals.
@@ -234,20 +234,30 @@ Expect roughly 1–2 signals per week, not per day.
 | D  | WMA | 10 | 20 | 7 |
 | W  | WMA | 8  | 21 | 14 |
 
-### Exit Logic (Two-Layer)
+### Exit Logic — Signal Reversal with Exit Buffer
 
-**Layer 1 — Signal reversal (primary):**
-Score returns to neutral zone (−0.10 to +0.10) or flips direction. ATR stop is cancelled first,
-then position is closed at market.
+The strategy exits on **signal reversal only** — no hard stop order is placed. ATR is used
+exclusively for position sizing.
 
-**Layer 2 — Hard ATR stop (secondary):**
-A GTC `STOP_MARKET` order is placed immediately after the entry fills at:
-- Long: `fill_price − 4.0 × ATR(14, H1)`
-- Short: `fill_price + 4.0 × ATR(14, H1)`
+**Exit rule:**
+- **Long:** close when `Score < −exit_buffer` (default: Score < −0.10)
+- **Short:** close when `Score > +exit_buffer` (default: Score > +0.10)
+- **Direction flip:** if Long and score drops to ≤ −threshold, flip directly to Short (and vice versa)
 
-This order remains open until cancelled by a signal exit or triggered by price.
+The `exit_buffer` creates a **hysteresis dead band**: the position is held through the neutral
+zone (score between −0.10 and +0.10) and only closes when the score genuinely crosses to the
+**opposite side** by at least 0.10. This prevents premature exits caused by the score briefly
+dipping into neutral during a trend continuation.
+
+> [!IMPORTANT]
+> There is **no hard stop order** placed on IBKR. If the strategy process crashes while in a
+> position, the position will remain open with no protection. The watchdog restarts the process
+> and the strategy will resume managing the open position on the next bar. Always run via
+> `watchdog_mtf.py` in production.
 
 ### Position Sizing
+
+ATR is used **only for sizing** — it is not used to place a stop order.
 
 ```
 stop_dist = 4.0 × ATR(14, H1)
@@ -262,27 +272,26 @@ units     = min(units, equity × 5.0 / price)     # 5× leverage cap
 Full lifecycle of a trade from entry to exit:
 
 ```
-# 1. Signal fires
-Score=+0.73 [D=+1.0 W=+1.0 H4=+0.5 H1=+0.5]. Opening LONG.
-Submitting LONG 87000 EUR/USD.IDEALPRO @ market.
+# 1. Signal fires (on bar close — executes on next bar)
+Signal Entry: Long.
+Submitted BUY 87000 | ATR=0.00400 | stop_dist=0.01600
 
 # 2. Entry fills
-ORDER FILLED: O-20260315-... side=BUY qty=87000 px=1.08450 commission=3.22
+Entry filled @ 1.08450.
+POSITION OPENED: ... side=BUY qty=87000 avg_px=1.08450
 
-# 3. ATR stop placed
-ATR stop placed @ 1.08050 (4.0x ATR = 0.00400). Order: O-20260315-...-stop
+# 3. Position held through neutral zone (score 0.0 to -0.09 — no exit)
+CONFLUENCE: +0.04  |  Entry: +-0.1  |  Exit buf: +-0.1  |  Signal: FLAT
+Position: LONG  (held — score not below -exit_buffer)
 
-# 4a. Signal reversal exit (winning or scratch trade)
-Score=+0.05 [D=+0.5 W=+0.5 H4=-0.5 H1=-0.5]. Signal Neutral. Closing position.
-# or:
-Score=-0.13. Signal Flip: Long -> Short. Closing position.
-Cancelling ATR stop order O-20260315-...-stop
-ORDER FILLED: O-20260315-... side=SELL qty=87000 px=1.09120 commission=3.22
+# 4a. Exit Long: score crosses below -exit_buffer
+Exit Long: score=-0.11 < -0.10.
 POSITION CLOSED: realized_pnl=+$582.90
 
-# 4b. ATR stop triggered (losing trade)
-ATR stop triggered. Fill @ 1.08050.
-POSITION CLOSED: realized_pnl=-$348.00
+# 4b. Direct flip: score drops to <= -threshold (same threshold as exit_buffer)
+Signal Flip: Long -> Short.
+POSITION CLOSED: realized_pnl=-$120.00
+Signal Entry: Short.
 ```
 
 ### Log Levels
@@ -310,11 +319,13 @@ grep "ORDER FILLED\|POSITION CLOSED" .tmp/logs/mtf_stdout_YYYYMMDD_HHMMSS.log
 ### Normal Stop
 
 Press `Ctrl+C` in Tab 1. NautilusTrader shuts down gracefully — it cancels pending orders and
-logs a clean shutdown. **Any open position remains open on the IB side**, held by the existing
-ATR stop order. This is intentional — the stop continues protecting the position after shutdown.
+logs a clean shutdown. **Any open position remains open on the IB side, unprotected by a stop.**
 
-> **Important:** Unlike ORB, MTF has no end-of-day flatten. If you stop the process while holding
-> a position, the ATR stop remains live in TWS as a GTC order. Log into TWS to verify.
+> [!CAUTION]
+> Unlike ORB, MTF has no end-of-day flatten and **no hard stop order**. If you stop the process
+> while holding a position, the position will sit unprotected on IB's side. Either:
+> - Restart the strategy (watchdog will do this automatically), or
+> - Manually close or add a stop in TWS if you do not intend to restart.
 
 ### Force Kill (if the process is stuck)
 
@@ -332,7 +343,8 @@ Find the line containing `run_live_mtf.py` and note its PID:
 python -c "import subprocess; subprocess.run(['taskkill', '/F', '/PID', 'REPLACE_WITH_PID'])"
 ```
 
-After a force kill, check TWS to confirm the GTC stop order is still active on your position.
+After a force kill, check TWS to confirm your position status. Since no stop order is placed,
+manually add a protective stop in TWS if you do not plan to restart the strategy immediately.
 
 ---
 
@@ -421,12 +433,6 @@ IBKR Gateway/TWS is not connected or not running on the configured port. Check:
 - Port in `.env` matches Gateway port
 - API is enabled
 
-### ATR stop placed but not cancelled on signal exit
-
-Check logs for `Cancelling ATR stop` lines. If missing, the `_cancel_stops()` call may have failed.
-Verify via TWS order panel — if an orphaned stop order exists, cancel it manually to avoid
-an unwanted position reversal.
-
 ### Terminal floods with `Portfolio: Updated AccountState` lines
 
 Normal. IB pushes every account field every ~3 minutes. Filter them out when monitoring:
@@ -471,7 +477,8 @@ Client ID assignments:
 ```toml
 ma_type = "WMA"
 confirmation_threshold = 0.10   # Score must exceed ±0.10 to enter
-atr_stop_mult = 4.0             # Hard stop = 4.0 × ATR(14, H1) from entry
+exit_buffer = 0.10              # Exit long when score < -0.10 (hold through neutral zone)
+atr_stop_mult = 4.0             # ATR multiplier for position SIZING only (no stop order placed)
 
 [weights]
 H1 = 0.10   # Entry timing (10%)
@@ -480,22 +487,23 @@ D  = 0.55   # Primary trend — dominant driver (55%)
 W  = 0.30   # Long-term macro regime filter (30%)
 
 [H1]
-fast_ma = 10 | slow_ma = 50 | rsi_period = 14
+fast_ma = 10 | slow_ma = 30 | rsi_period = 28
 
 [H4]
-fast_ma = 10 | slow_ma = 40 | rsi_period = 14
+fast_ma = 10 | slow_ma = 40 | rsi_period = 7
 
 [D]
-fast_ma = 10 | slow_ma = 20 | rsi_period = 7
+fast_ma = 5  | slow_ma = 20 | rsi_period = 10
 
 [W]
-fast_ma = 8 | slow_ma = 21 | rsi_period = 14
+fast_ma = 13 | slow_ma = 26 | rsi_period = 10
 ```
 
 > [!CAUTION]
 > Do NOT manually edit `config/mtf_eurusd.toml` to change weights or MA periods. These values
-> were validated through a 6-stage optimization pipeline (Combined OOS Sharpe 1.943). Any change
-> requires a full re-backtest with OOS validation before deploying.
+> were validated through a 6-stage optimization pipeline (OOS Signal-only Sharpe 2.14,
+> Max DD 4.0%, 38/38 WFO windows positive). Any change requires a full re-backtest with OOS
+> validation before deploying.
 
 ### `scripts/run_live_mtf.py` — Runner Settings
 

@@ -260,7 +260,8 @@ class MTFConfluenceStrategy(Strategy):
 
     def _evaluate_confluence(self, price: Decimal) -> None:
         weights = self.toml_cfg.get("weights", {"H1": 0.1, "H4": 0.25, "D": 0.6, "W": 0.05})
-        threshold = self.toml_cfg.get("confirmation_threshold", 0.10)
+        threshold = float(self.toml_cfg.get("confirmation_threshold", 0.10))
+        exit_buffer = float(self.toml_cfg.get("exit_buffer", 0.0))
 
         score = sum(self.signals[tf] * w for tf, w in weights.items())
 
@@ -277,10 +278,12 @@ class MTFConfluenceStrategy(Strategy):
         if position and position.is_open:
             pos_label = "LONG" if str(position.side) == "LONG" else "SHORT"
 
-        self._log_status_dashboard(price, score, threshold, signal_label, pos_label, weights)
-        self._execute_bias(bias, price)
+        self._log_status_dashboard(
+            price, score, threshold, exit_buffer, signal_label, pos_label, weights
+        )
+        self._execute_bias(bias, score, exit_buffer, price)
 
-    def _execute_bias(self, bias: int, price: Decimal) -> None:
+    def _execute_bias(self, bias: int, score: float, exit_buffer: float, price: Decimal) -> None:
         instrument_id = self.instrument_id
         positions = self.cache.positions(instrument_id=instrument_id)
         position = positions[-1] if positions else None
@@ -314,8 +317,15 @@ class MTFConfluenceStrategy(Strategy):
                 self._open_position(OrderSide.SELL, price)
 
         elif bias == 0:
-            if current_dir != 0:
-                self.log.info(f"Signal Neutral. Closing position (dir={current_dir}).")
+            # With exit_buffer: hold through the neutral zone.
+            # Exit long only when score crosses below -exit_buffer (not just neutral).
+            # Exit short only when score crosses above +exit_buffer.
+            if current_dir == 1 and score < -exit_buffer:
+                self.log.info(f"Exit Long: score={score:+.3f} < -{exit_buffer}.")
+                self.cancel_all_orders(instrument_id)
+                self.close_all_positions(instrument_id)
+            elif current_dir == -1 and score > exit_buffer:
+                self.log.info(f"Exit Short: score={score:+.3f} > +{exit_buffer}.")
                 self.cancel_all_orders(instrument_id)
                 self.close_all_positions(instrument_id)
 
@@ -455,6 +465,7 @@ class MTFConfluenceStrategy(Strategy):
         price: Decimal,
         score: float,
         threshold: float,
+        exit_buffer: float,
         signal_label: str,
         pos_label: str,
         weights: dict,
@@ -482,7 +493,8 @@ class MTFConfluenceStrategy(Strategy):
 
         lines.append(f"{'─' * 55}")
         lines.append(
-            f"  CONFLUENCE: {score:+.3f}  │  Threshold: ±{threshold}  │  Signal: {signal_label}"
+            f"  CONFLUENCE: {score:+.3f}  │  Entry: ±{threshold}  │  Exit buf: ±{exit_buffer}"
+            f"  │  Signal: {signal_label}"
         )
         atr_str = f"{self.latest_atr:.5f}" if self.latest_atr else "pending"
         lines.append(f"  Position: {pos_label}  │  ATR(14)H1: {atr_str}")

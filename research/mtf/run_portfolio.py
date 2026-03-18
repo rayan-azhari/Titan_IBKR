@@ -198,6 +198,7 @@ def main() -> None:
     # 1. Load Config & Confluence
     cfg = load_mtf_config(config_path)
     threshold = cfg.get("confirmation_threshold", 0.10)
+    exit_buffer = float(cfg.get("exit_buffer", 0.0))
     stop_atr_mult = float(cfg.get("atr_stop_mult", 2.0))
     swap_annual_pct = load_swap_annual_pct(pair)
     print(f"  ATR Stop Mult:  {stop_atr_mult}x")
@@ -265,8 +266,8 @@ def main() -> None:
         low=low,
         entries=entries_long,
         short_entries=entries_short,
-        exits=(conf_sh < 0),
-        short_exits=(conf_sh > 0),
+        exits=(conf_sh < -exit_buffer),
+        short_exits=(conf_sh > exit_buffer),
         size=target_units,
         size_type="amount",
         init_cash=INIT_CASH,
@@ -284,8 +285,8 @@ def main() -> None:
         low=low,
         entries=entries_long,
         short_entries=entries_short,
-        exits=(conf_sh < 0),
-        short_exits=(conf_sh > 0),
+        exits=(conf_sh < -exit_buffer),
+        short_exits=(conf_sh > exit_buffer),
         size=target_units,
         size_type="amount",
         init_cash=INIT_CASH,
