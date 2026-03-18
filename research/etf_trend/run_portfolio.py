@@ -1,4 +1,4 @@
-"""run_portfolio.py — Stage 5: Full Friction Portfolio Simulation.
+"""run_portfolio.py -- Stage 5: Full Friction Portfolio Simulation.
 
 Runs the complete strategy with all friction (fees, slippage, next-bar execution)
 and compares against a buy-and-hold SPY baseline.
@@ -23,6 +23,7 @@ Usage:
 """
 
 import argparse
+import itertools
 import sys
 import tomllib
 from pathlib import Path
@@ -42,19 +43,28 @@ except ImportError:
     print("ERROR: vectorbt not installed.")
     sys.exit(1)
 
-from research.etf_trend.run_stage2_decel import compute_ma  # noqa: E402
-from research.etf_trend.run_stage3_exits import compute_decel_composite  # noqa: E402
+from research.etf_trend.run_stage3_exits import (  # noqa: E402
+    apply_sma_confirmation,
+    build_entry_signal,
+    compute_decel_composite,
+    compute_ma,
+)
 from research.etf_trend.run_stage4_sizing import (  # noqa: E402
     compute_position_sizes,
+    compute_vol_target_sizes,
 )
-from titan.strategies.ml.features import atr as compute_atr  # noqa: E402
 
 FEES_BASE = 0.001
 SLIPPAGE = 0.0005
 INIT_CASH = 10_000.0
 
 # Transaction cost stress test levels
-FEE_SCENARIOS = {"base (0.10%)": 0.001, "2× (0.20%)": 0.002, "3× (0.30%)": 0.003}
+FEE_SCENARIOS = {"base (0.10%)": 0.001, "2x (0.20%)": 0.002, "3x (0.30%)": 0.003}
+
+# Circuit breaker sweep grid
+CB_TRIP_PCTS = [-0.08, -0.10, -0.12, -0.15, -0.20]
+CB_RESET_PCTS = [-0.03, -0.05, -0.08]
+CB_ROLLING_WINDOW = 252
 
 
 def load_config(instrument: str) -> dict:
@@ -92,45 +102,50 @@ def build_signals(
 
     Returns:
         Tuple of (entries, exits, decel_shifted, sizes_shifted).
+        For vol_target sizing, sizes contains the leverage array (0 to max_leverage).
     """
     ma_type = config["ma_type"]
-    fast_ma_p = config["fast_ma"]
     slow_ma_p = config["slow_ma"]
     decel_signals = config.get("decel_signals", [])
+    decel_params = {
+        k: config[k]
+        for k in ("d_pct_smooth", "rv_window", "macd_fast")
+        if k in config
+    }
+    entry_mode = config.get("entry_mode", "decel_positive")
+    fast_reentry_ma_p = config.get("fast_reentry_ma")
     exit_mode = config["exit_mode"]
     exit_decel_thresh = config["exit_decel_thresh"]
+    exit_confirm_days = int(config.get("exit_confirm_days", 1))
+    decel_confirm_days = int(config.get("decel_confirm_days", 1))
     sizing_mode = config["sizing_mode"]
-    vol_target = config["vol_target"]
-    vol_window = config["vol_window"]
-    atr_stop_mult = config["atr_stop_mult"]
 
-    fast_ma = compute_ma(close, fast_ma_p, ma_type)
     slow_ma = compute_ma(close, slow_ma_p, ma_type)
-    atr_ser = compute_atr(df)
-    decel = compute_decel_composite(close, df, slow_ma, decel_signals)
+    decel = compute_decel_composite(close, df, slow_ma, decel_signals, decel_params)
 
-    in_regime = (close > fast_ma) & (close > slow_ma)
-    entry_signal = in_regime & (decel >= 0)
+    fast_ma = compute_ma(close, int(fast_reentry_ma_p), ma_type) if fast_reentry_ma_p else None
+    entry_signal = build_entry_signal(close, slow_ma, decel, entry_mode, fast_ma)
 
+    below_slow = apply_sma_confirmation(~(close > slow_ma), exit_confirm_days)
     if exit_mode == "A":
-        exit_signal = ~in_regime
-    elif exit_mode == "B":
-        exit_signal = close < fast_ma
+        exit_signal = below_slow
     elif exit_mode == "C":
-        exit_signal = decel < exit_decel_thresh
-    else:
-        exit_signal = (~in_regime) | (decel < exit_decel_thresh)
+        exit_signal = apply_sma_confirmation(decel < exit_decel_thresh, decel_confirm_days)
+    else:  # D -- confirmed SMA break OR sustained decel collapse
+        decel_exit = apply_sma_confirmation(decel < exit_decel_thresh, decel_confirm_days)
+        exit_signal = below_slow | decel_exit
 
     entries = entry_signal.shift(1).fillna(False)
     exits = exit_signal.shift(1).fillna(False)
     decel_sh = decel.shift(1).fillna(0)
-    sizes = (
-        compute_position_sizes(
-            close, decel_sh, sizing_mode, vol_target, vol_window, atr_ser, atr_stop_mult
-        )
-        .shift(1)
-        .fillna(0)
-    )
+
+    if sizing_mode == "vol_target":
+        vol_target = float(config.get("vol_target", 0.15))
+        max_leverage = float(config.get("max_leverage", 1.0))
+        in_regime = close > slow_ma
+        sizes = compute_vol_target_sizes(close, in_regime, vol_target, max_leverage)
+    else:
+        sizes = compute_position_sizes(decel_sh, sizing_mode).shift(1).fillna(0)
 
     return entries, exits, decel_sh, sizes
 
@@ -141,22 +156,86 @@ def run_pf(
     exits: pd.Series,
     sizes: pd.Series,
     fees: float,
+    sizing_mode: str = "binary",
 ) -> "vbt.Portfolio":
-    return vbt.Portfolio.from_signals(
-        close,
-        entries=entries,
-        exits=exits,
-        size=sizes,
-        size_type="targetpercent",
-        init_cash=INIT_CASH,
-        fees=fees,
-        slippage=SLIPPAGE,
-        freq="1D",
-    )
+    """Run VBT portfolio simulation. For vol_target, sizes is a leverage array."""
+    if sizing_mode == "vol_target":
+        # sizes = leverage array; simulate leveraged equity curve
+
+        daily_rets = close.pct_change().fillna(0)
+        strat_rets = daily_rets * sizes
+        in_pos = sizes > 0
+        entering = in_pos & (~in_pos.shift(1).fillna(True))
+        exiting = (~in_pos) & in_pos.shift(1).fillna(False)
+        strat_rets -= entering.astype(float) * (fees + SLIPPAGE)
+        strat_rets -= exiting.astype(float) * (fees + SLIPPAGE)
+        equity = INIT_CASH * (1 + strat_rets).cumprod()
+        # Wrap in a minimal Portfolio-compatible object via from_value
+        return _EquityCurvePortfolio(equity, entries, strat_rets)
+    if sizing_mode == "binary":
+        return vbt.Portfolio.from_signals(
+            close, entries=entries, exits=exits,
+            init_cash=INIT_CASH, fees=fees, slippage=SLIPPAGE, freq="1D",
+        )
+    else:  # dynamic_decel -- fixed initial-cash allocation
+        return vbt.Portfolio.from_signals(
+            close, entries=entries, exits=exits,
+            size=sizes * INIT_CASH, size_type="value",
+            init_cash=INIT_CASH, fees=fees, slippage=SLIPPAGE, freq="1D",
+        )
+
+
+class _EquityCurvePortfolio:
+    """Thin wrapper around a pre-computed equity curve, mimicking VBT Portfolio API."""
+
+    def __init__(
+        self, equity: "pd.Series", entries: "pd.Series", rets: "pd.Series"
+    ) -> None:
+        import numpy as np
+
+        self._equity = equity
+        self._entries = entries
+        self._rets = rets
+        self._np = np
+
+    def total_return(self) -> float:
+        return float(self._equity.iloc[-1] / INIT_CASH - 1)
+
+    def sharpe_ratio(self) -> float:
+        std = self._rets.std()
+        return float(self._rets.mean() / std * self._np.sqrt(252)) if std > 1e-9 else 0.0
+
+    def max_drawdown(self) -> float:
+        rolling_max = self._equity.cummax()
+        dd = (self._equity - rolling_max) / rolling_max
+        return float(dd.min())
+
+    def calmar_ratio(self) -> float:
+        total_ret = self.total_return()
+        max_dd = self.max_drawdown()
+        if max_dd >= -1e-9:
+            return 0.0
+        n_bars = len(self._equity)
+        ann_ret = (1 + total_ret) ** (365 / n_bars) - 1
+        return ann_ret / abs(max_dd)
+
+    def value(self) -> "pd.Series":
+        return self._equity / INIT_CASH  # normalised
+
+    class _TradeMock:
+        def count(self) -> int:
+            return 0
+
+        def win_rate(self) -> float:
+            return 0.0
+
+    @property
+    def trades(self) -> "_TradeMock":
+        return self._TradeMock()
 
 
 def bah_portfolio(close: pd.Series) -> "vbt.Portfolio":
-    """Buy-and-hold baseline — fully invested from bar 1, no fees."""
+    """Buy-and-hold baseline -- fully invested from bar 1, no fees."""
     entries = pd.Series(False, index=close.index)
     entries.iloc[0] = True
     exits = pd.Series(False, index=close.index)
@@ -164,12 +243,71 @@ def bah_portfolio(close: pd.Series) -> "vbt.Portfolio":
         close,
         entries=entries,
         exits=exits,
-        size=1.0,
-        size_type="targetpercent",
+        size=INIT_CASH,
+        size_type="value",
         init_cash=INIT_CASH,
         fees=0.0,
         freq="1D",
     )
+
+
+def compute_circuit_breaker(
+    close: pd.Series,
+    rolling_window: int = CB_ROLLING_WINDOW,
+    trip_pct: float = -0.10,
+    reset_pct: float = -0.05,
+) -> pd.Series:
+    """Boolean Series: True when circuit breaker is active (be flat).
+
+    Trips when close falls more than |trip_pct| below its rolling_window-bar high.
+    Resets when close recovers above reset_pct below that rolling high.
+    Stateful (hysteresis) -- vectorised rolling cannot replicate this.
+    Look-ahead-free: rolling high is computed from past_close = close.shift(1).
+    """
+    past_close = close.shift(1)
+    rolling_high = past_close.rolling(rolling_window, min_periods=1).max()
+    dd = (close / rolling_high) - 1.0
+
+    cb_active = pd.Series(False, index=close.index)
+    tripped = False
+    for i in range(len(close)):
+        d = dd.iloc[i]
+        if not tripped:
+            if d <= trip_pct:
+                tripped = True
+        else:
+            if d > reset_pct:
+                tripped = False
+        cb_active.iloc[i] = tripped
+    return cb_active
+
+
+def apply_circuit_breaker(
+    entries: pd.Series,
+    exits: pd.Series,
+    cb_active: pd.Series,
+) -> tuple[pd.Series, pd.Series]:
+    """Apply CB overlay: suppress entries and force exit on trip edge."""
+    cb_trip_edge = cb_active & ~cb_active.shift(1).fillna(False)
+    return entries & ~cb_active, exits | cb_trip_edge
+
+
+def _save_cb_params_to_toml(instrument: str, cb_params: dict) -> None:
+    """Append cb_trip_pct / cb_reset_pct to the locked TOML, replacing any prior values."""
+    config_path = PROJECT_ROOT / "config" / f"etf_trend_{instrument}.toml"
+    if not config_path.exists():
+        print(f"  [WARN] Config not found, skipping CB save: {config_path}")
+        return
+    lines = [
+        ln for ln in config_path.read_text().splitlines()
+        if not ln.startswith("cb_trip_pct") and not ln.startswith("cb_reset_pct")
+    ]
+    while lines and lines[-1].strip() == "":
+        lines.pop()
+    lines.append(f"cb_trip_pct       = {cb_params['trip_pct']}")
+    lines.append(f"cb_reset_pct      = {cb_params['reset_pct']}")
+    lines.append("")
+    config_path.write_text("\n".join(lines))
 
 
 def stats_row(label: str, pf: "vbt.Portfolio") -> dict:
@@ -188,60 +326,70 @@ def stats_row(label: str, pf: "vbt.Portfolio") -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="ETF Trend Stage 5: Full Friction Portfolio Sim.")
     parser.add_argument("--instrument", default="SPY", help="Symbol (default: SPY)")
+    parser.add_argument(
+        "--circuit-breaker",
+        action="store_true",
+        help="Sweep CB params vs no-CB baseline and save best to TOML.",
+    )
     args = parser.parse_args()
     instrument = args.instrument.upper()
     inst_lower = instrument.lower()
 
     print("=" * 60)
-    print("  ETF Trend — Stage 5: Portfolio Simulation")
+    print("  ETF Trend -- Stage 5: Portfolio Simulation")
     print("=" * 60)
     print(f"  Instrument: {instrument}")
 
     config = load_config(inst_lower)
-    df = load_data(instrument)
-    close = df["close"]
+
+    # Dual-instrument support: signal_instrument overrides signal computation
+    sig_str = config.get("signal_instrument", "")
+    signal_sym = sig_str.split(".")[0] if sig_str else instrument
+    is_dual = signal_sym.upper() != instrument
+
+    exec_df = load_data(instrument)
+    if is_dual:
+        sig_df = load_data(signal_sym)
+        common = sig_df.index.intersection(exec_df.index)
+        sig_df = sig_df.loc[common]
+        exec_df = exec_df.loc[common]
+        close = sig_df["close"]     # signal close (QQQ)
+        exec_close = exec_df["close"]  # execution close (TQQQ)
+        print(f"  Signal src: {signal_sym}  (signals on {signal_sym}, P&L on {instrument})")
+    else:
+        sig_df = exec_df
+        close = exec_df["close"]
+        exec_close = close
 
     split = int(len(close) * 0.70)
-    oos_close = close.iloc[split:]
-    oos_df = df.iloc[split:]
+    oos_close = exec_close.iloc[split:]   # P&L slice (TQQQ or same instrument)
+    oos_sig_close = close.iloc[split:]    # signal slice (QQQ or same instrument)
 
-    print(f"  OOS period: {oos_close.index[0].date()} to {oos_close.index[-1].date()}")
-    print(f"  OOS bars:   {len(oos_close)}")
+    print(f"  OOS period: {oos_sig_close.index[0].date()} to {oos_sig_close.index[-1].date()}")
+    print(f"  OOS bars:   {len(oos_sig_close)}")
 
-    # Build signals on full series, slice to OOS
-    all_entries, all_exits, all_decel_sh, all_sizes = build_signals(close, df, config)
+    # Build signals on full series (signals use QQQ; P&L uses TQQQ separately)
+    all_entries, all_exits, all_decel_sh, all_sizes = build_signals(close, sig_df, config)
     oos_entries = all_entries.iloc[split:]
     oos_exits = all_exits.iloc[split:]
     oos_decel_sh = all_decel_sh.iloc[split:]
     oos_sizes = all_sizes.iloc[split:]
-    oos_atr = compute_atr(oos_df)
 
-    # ── Base strategy (dynamic sizing, base fees) ─────────────────────────
-    pf_main = run_pf(oos_close, oos_entries, oos_exits, oos_sizes, FEES_BASE)
+    sizing_mode = config["sizing_mode"]
 
-    # ── Binary sizing (size=1 where entry, else 0) ────────────────────────
-    from research.etf_trend.run_stage4_sizing import compute_position_sizes
+    # -- Base strategy (configured sizing, base fees) ----------------------
+    pf_main = run_pf(oos_close, oos_entries, oos_exits, oos_sizes, FEES_BASE, sizing_mode)
 
+    # -- Binary sizing comparison (fully invested when in trade) -----------
     binary_sizes = (
-        compute_position_sizes(
-            oos_close,
-            oos_decel_sh,
-            "binary",
-            config["vol_target"],
-            config["vol_window"],
-            oos_atr,
-            config["atr_stop_mult"],
-        )
-        .shift(1)
-        .fillna(0)
-        .iloc[: len(oos_close)]
+        compute_position_sizes(oos_decel_sh, "binary").shift(1).fillna(0).iloc[: len(oos_close)]
     )
-    pf_binary = run_pf(oos_close, oos_entries, oos_exits, binary_sizes, FEES_BASE)
+    pf_binary = run_pf(oos_close, oos_entries, oos_exits, binary_sizes, FEES_BASE, "binary")
 
-    # ── Buy and hold baseline ─────────────────────────────────────────────
+    # -- Buy and hold baseline (on execution instrument) -------------------
     pf_bah = bah_portfolio(oos_close)
 
-    # ── Summary table ─────────────────────────────────────────────────────
+    # -- Summary table -----------------------------------------------------
     rows = [
         stats_row(f"Strategy ({config['sizing_mode']})", pf_main),
         stats_row("Strategy (binary)", pf_binary),
@@ -252,22 +400,27 @@ def main() -> None:
     for label, fee in FEE_SCENARIOS.items():
         if abs(fee - FEES_BASE) < 1e-6:
             continue
-        pf_stress = run_pf(oos_close, oos_entries, oos_exits, oos_sizes, fee)
+        pf_stress = run_pf(oos_close, oos_entries, oos_exits, oos_sizes, fee, sizing_mode)
         rows.append(stats_row(f"Strategy fees {label}", pf_stress))
 
     comparison = pd.DataFrame(rows)
-    print("\n  ── OOS Comparison ─────────────────────────────────")
+    print("\n  -- OOS Comparison ---------------------------------")
     print(comparison.to_string(index=False))
 
-    # ── Pass / fail vs buy-and-hold ───────────────────────────────────────
+    # -- Pass / fail vs buy-and-hold ---------------------------------------
     bah = rows[2]
     strat = rows[0]
+    better_return = strat["total_return"] >= bah["total_return"]
     better_sharpe = strat["sharpe"] >= bah["sharpe"]
     better_dd = abs(strat["max_drawdown"]) <= abs(bah["max_drawdown"])
     better_calmar = strat["calmar"] >= bah["calmar"]
     n_better = sum([better_sharpe, better_dd, better_calmar])
 
-    print("\n  ── vs Buy & Hold ──────────────────────────────────")
+    print("\n  -- vs Buy & Hold ----------------------------------")
+    print(
+        f"  Return: strat={strat['total_return']:.1%} vs B&H={bah['total_return']:.1%}  "
+        f"{'BETTER' if better_return else 'WORSE'}"
+    )
     print(
         f"  Sharpe: strat={strat['sharpe']:.3f} vs B&H={bah['sharpe']:.3f}  "
         f"{'BETTER' if better_sharpe else 'WORSE'}"
@@ -281,11 +434,11 @@ def main() -> None:
         f"{'BETTER' if better_calmar else 'WORSE'}"
     )
     print(
-        f"\n  Result: {n_better}/3 metrics beat B&H — "
+        f"\n  Result: {n_better}/3 risk-adjusted metrics beat B&H -- "
         f"{'PASS' if n_better >= 2 else 'FAIL (needs 2/3)'}"
     )
 
-    # ── HTML report ───────────────────────────────────────────────────────
+    # -- HTML report -------------------------------------------------------
     try:
         import plotly.graph_objects as go
         from plotly.subplots import make_subplots
@@ -300,20 +453,20 @@ def main() -> None:
             fig.add_trace(go.Scatter(x=eq.index, y=eq.values, name=label, mode="lines"))
 
         fig.update_layout(
-            title=f"ETF Trend Strategy vs Buy & Hold — {instrument} (OOS)",
+            title=f"ETF Trend Strategy vs Buy & Hold -- {instrument} (OOS)",
             xaxis_title="Date",
             yaxis_title="Portfolio Value (normalised)",
             legend_title="Scenario",
         )
         report_path = REPORTS_DIR / f"etf_trend_{inst_lower}_comparison.html"
         fig.write_html(str(report_path))
-        print(f"\n  Report saved → {report_path.relative_to(PROJECT_ROOT)}")
+        print(f"\n  Report saved: {report_path.relative_to(PROJECT_ROOT)}")
     except Exception as e:
         print(f"\n  [HTML report skipped: {e}]")
 
     scoreboard_path = REPORTS_DIR / f"etf_trend_stage5_{inst_lower}_comparison.csv"
     comparison.to_csv(scoreboard_path, index=False)
-    print(f"  CSV saved   → {scoreboard_path.relative_to(PROJECT_ROOT)}")
+    print(f"  CSV saved  : {scoreboard_path.relative_to(PROJECT_ROOT)}")
 
     if n_better >= 2:
         print("\n  [PASS] Stage 5 complete.")
@@ -323,6 +476,70 @@ def main() -> None:
     else:
         print("\n  [FAIL] Strategy does not beat Buy & Hold on 2/3 metrics.")
         print("  Consider revisiting Stage 3 (exit mode) or Stage 4 (sizing).")
+
+    # -- Circuit Breaker sweep (--circuit-breaker flag) --------------------
+    if args.circuit_breaker:
+        print("\n  -- Circuit Breaker Sweep ----------------------------------")
+        print(f"  trip_pcts:  {CB_TRIP_PCTS}")
+        print(f"  reset_pcts: {CB_RESET_PCTS}")
+
+        # Compute CB on full series once per param combo, then slice to OOS
+        cb_rows: list[dict] = []
+        best_calmar = -999.0
+        best_cb_params: dict = {}
+
+        for trip_pct, reset_pct in itertools.product(CB_TRIP_PCTS, CB_RESET_PCTS):
+            if reset_pct <= trip_pct:
+                continue  # reset must be less severe (closer to 0) than trip
+
+            cb_full = compute_circuit_breaker(
+                close, CB_ROLLING_WINDOW, trip_pct, reset_pct
+            )
+            oos_cb = cb_full.iloc[split:]
+            cb_entries, cb_exits = apply_circuit_breaker(
+                oos_entries, oos_exits, oos_cb
+            )
+            pf_cb = run_pf(
+                oos_close, cb_entries, cb_exits, binary_sizes, FEES_BASE, "binary"
+            )
+            row = stats_row(f"cb trip={trip_pct:.0%} reset={reset_pct:.0%}", pf_cb)
+            row["cb_bars_flat"] = int(oos_cb.sum())
+            row["trip_pct"] = trip_pct
+            row["reset_pct"] = reset_pct
+            cb_rows.append(row)
+            if row["calmar"] > best_calmar:
+                best_calmar = row["calmar"]
+                best_cb_params = {"trip_pct": trip_pct, "reset_pct": reset_pct}
+
+        baseline = stats_row("no CB (binary)", pf_binary)
+        cb_df = pd.DataFrame([baseline] + cb_rows)
+        display_cols = [
+            "scenario", "total_return", "sharpe", "calmar", "max_drawdown",
+            "n_trades", "win_rate",
+        ]
+        print("\n" + cb_df[display_cols].to_string(index=False))
+
+        if best_cb_params:
+            best_row = next(
+                r for r in cb_rows
+                if r["trip_pct"] == best_cb_params["trip_pct"]
+                and r["reset_pct"] == best_cb_params["reset_pct"]
+            )
+            print(f"\n  Baseline:  Sharpe={baseline['sharpe']:.3f}  "
+                  f"MaxDD={baseline['max_drawdown']:.1%}  "
+                  f"Return={baseline['total_return']:.1%}")
+            print(f"  Best CB:   Sharpe={best_row['sharpe']:.3f}  "
+                  f"MaxDD={best_row['max_drawdown']:.1%}  "
+                  f"Return={best_row['total_return']:.1%}")
+            print(f"  Params:    trip={best_cb_params['trip_pct']:.0%}  "
+                  f"reset={best_cb_params['reset_pct']:.0%}")
+            _save_cb_params_to_toml(inst_lower, best_cb_params)
+            print(f"  Saved to:  config/etf_trend_{inst_lower}.toml")
+
+        cb_csv = REPORTS_DIR / f"etf_trend_stage5_{inst_lower}_cb_sweep.csv"
+        pd.DataFrame(cb_rows).to_csv(cb_csv, index=False)
+        print(f"  CB CSV:    {cb_csv.relative_to(PROJECT_ROOT)}")
+
     print("=" * 60)
 
 
