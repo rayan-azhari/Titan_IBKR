@@ -33,7 +33,7 @@ DATABENTO_DATASET = "ARCX.PILLAR"
 DEFAULT_SYMBOLS = ["SPY"]
 DEFAULT_START = "2018-05-01"
 
-# Databento ohlcv-1d field mapping → our standard column names
+# Databento ohlcv-1d field mapping: our standard column names
 COLUMN_MAP = {
     "open": "open",
     "high": "high",
@@ -98,7 +98,7 @@ def download_symbol(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Download historical OHLCV from Databento → data/*.parquet"
+        description="Download historical OHLCV from Databento: data/*.parquet"
     )
     parser.add_argument(
         "--symbols",

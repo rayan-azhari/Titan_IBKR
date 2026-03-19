@@ -1,15 +1,15 @@
-"""run_robustness.py — Stage 6: Monte Carlo + Rolling WFO Validation.
+"""run_robustness.py -- Stage 6: Monte Carlo + Rolling WFO Validation.
 
 Two tests:
   Monte Carlo (N=1,000):  Shuffle trade order randomly. Gate: 5th-pct Sharpe > 0.5
                           AND > 80% simulations profitable.
   Rolling WFO (2yr/6mo): Slide anchor forward, re-optimise Stage 1 on each IS window,
                           validate on OOS. Gate: >70% windows positive AND max consecutive
-                          negative ≤ 2.
+                          negative <= 2.
 
 Additional stress tests:
-  - Remove 10 best trades → strategy still profitable?
-  - 3× slippage → OOS Sharpe > 0.5?
+  - Remove 10 best trades: strategy still profitable?
+  - 3x slippage: OOS Sharpe > 0.5?
 
 Usage:
     uv run python research/etf_trend/run_robustness.py --instrument SPY
@@ -93,7 +93,6 @@ def monte_carlo_shuffle(pf: "vbt.Portfolio", n: int = MONTE_CARLO_N) -> dict:
 
     # Extract per-trade P&L (absolute)
     pnl = trades["PnL"].values
-    _durations = trades["Duration"].values  # in bars (unused but retained for reference)
     init_cash = 10_000.0
     rng = np.random.default_rng(42)
 
@@ -273,7 +272,7 @@ def main() -> None:
     inst_lower = instrument.lower()
 
     print("=" * 60)
-    print("  ETF Trend — Stage 6: Robustness Validation")
+    print("  ETF Trend -- Stage 6: Robustness Validation")
     print("=" * 60)
     print(f"  Instrument: {instrument}")
 
@@ -283,7 +282,7 @@ def main() -> None:
     pf_oos = run_oos_portfolio(instrument, config)
     pf_oos_3x = run_oos_portfolio(instrument, config, fees=0.003)
 
-    # ── Monte Carlo ───────────────────────────────────────────────────────
+    # -- Monte Carlo -------------------------------------------------------
     print(f"\n  Running Monte Carlo (N={MONTE_CARLO_N}) ...")
     mc = monte_carlo_shuffle(pf_oos, n=MONTE_CARLO_N)
     mc_pass = mc.get("gate_pass", False)
@@ -295,7 +294,7 @@ def main() -> None:
     )
     print(f"  Monte Carlo gate:  {'PASS' if mc_pass else 'FAIL'}")
 
-    # ── Remove top 10 trades ──────────────────────────────────────────────
+    # -- Remove top 10 trades ----------------------------------------------
     trades = pf_oos.trades.records_readable
     if len(trades) >= 10:
         top10_sum = trades.nlargest(10, "PnL")["PnL"].sum()
@@ -308,12 +307,12 @@ def main() -> None:
     else:
         print("\n  [Skip] Not enough trades for top-10 stress test.")
 
-    # ── 3× slippage stress ────────────────────────────────────────────────
+    # -- 3x slippage stress ------------------------------------------------
     sh_3x = float(pf_oos_3x.sharpe_ratio())
-    print(f"\n  3× fees stress Sharpe: {sh_3x:.3f} (gate: > 0.5)")
+    print(f"\n  3x fees stress Sharpe: {sh_3x:.3f} (gate: > 0.5)")
     cost_stress_pass = sh_3x > 0.5
 
-    # ── Rolling WFO ───────────────────────────────────────────────────────
+    # -- Rolling WFO -------------------------------------------------------
     print(f"\n  Running Rolling WFO (anchor={WFO_ANCHOR_BARS}bars / step={WFO_STEP_BARS}bars) ...")
     wfo = rolling_wfo(instrument, config, df)
     wfo_pass = wfo.get("gate_pass", False)
@@ -324,23 +323,23 @@ def main() -> None:
             f"  Positive:          {wfo['positive_windows']} "
             f"({wfo['positive_pct']:.0%}) (gate: > {WFO_MIN_POSITIVE_PCT:.0%})"
         )
-        print(f"  Max consec. neg.:  {wfo['max_consec_negative']} (gate: ≤ {WFO_MAX_CONSEC_NEG})")
+        print(f"  Max consec. neg.:  {wfo['max_consec_negative']} (gate: <= {WFO_MAX_CONSEC_NEG})")
         print(f"  WFO gate:          {'PASS' if wfo_pass else 'FAIL'}")
 
         wfo_df = pd.DataFrame(wfo["windows"])
         wfo_path = REPORTS_DIR / f"etf_trend_stage6_{inst_lower}_wfo.csv"
         wfo_df.to_csv(wfo_path, index=False)
-        print(f"  WFO windows saved → {wfo_path.relative_to(PROJECT_ROOT)}")
+        print(f"  WFO windows saved: {wfo_path.relative_to(PROJECT_ROOT)}")
     else:
         print(f"  WFO error: {wfo['error']}")
         wfo_pass = False
 
-    # ── Final gate summary ────────────────────────────────────────────────
-    print("\n  ── Quality Gate Summary ──────────────────────────")
+    # -- Final gate summary ------------------------------------------------
+    print("\n  -- Quality Gate Summary --------------------------")
     gates = {
         "Monte Carlo (5th-pct > 0.5, >80% profitable)": mc_pass,
-        "3× fees stress (Sharpe > 0.5)": cost_stress_pass,
-        "Rolling WFO (>70% positive, max consec neg ≤ 2)": wfo_pass,
+        "3x fees stress (Sharpe > 0.5)": cost_stress_pass,
+        "Rolling WFO (>70% positive, max consec neg <= 2)": wfo_pass,
     }
     all_pass = True
     for gate_name, passed in gates.items():

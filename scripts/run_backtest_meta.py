@@ -326,7 +326,7 @@ def run_vbt_portfolio(
                  than close[t], eliminating look-ahead bias from same-bar fills.
     slippage:    Additional per-side slippage fraction (default 1.0 pip = 0.00010).
     size_pct:    If set, deploy this fraction of INIT_CASH as fixed notional per trade
-                 (e.g. 0.10 → $10,000 fixed per trade). Uses size_type="value" because
+                 (e.g. 0.10: $10,000 fixed per trade). Uses size_type="value" because
                  VBT SizeType.Percent does not support signal-based reversals.
                  Default (None) uses VBT all-cash sizing (100% of equity per trade).
     """

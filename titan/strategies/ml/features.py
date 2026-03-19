@@ -352,6 +352,12 @@ def build_features(
 
         total_signal = pd.Series(trend_score + mom_score, index=tf_data.index)  # -1.0 to +1.0
 
+        # PREVENT LOOKAHEAD BIAS
+        # context_data provides higher TFs, their timestamps are at the open, so shift by 1
+        if tf in (context_data or {}):
+            total_signal = total_signal.shift(1)
+            r = r.shift(1)
+
         # Align to base timeframe
         # Reindexing to feats.index (base TF) with ffill
         signal_aligned = total_signal.reindex(feats.index, method="ffill")

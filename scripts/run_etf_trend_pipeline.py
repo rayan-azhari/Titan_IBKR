@@ -7,7 +7,7 @@ Stages:
   1. run_optimisation.py    — MA type + entry period sweep
   2. run_stage2_decel.py    — Deceleration signal selection
   3. run_stage3_exits.py    — Exit mode sweep (A/B/C/D)
-  4. run_stage4_sizing.py   — Vol sizing mode + ATR stop sweep → writes config
+  4. run_stage4_sizing.py   — Vol sizing mode + ATR stop sweep: writes config
   5. run_portfolio.py       — Full friction P&L simulation + B&H comparison
   6. run_robustness.py      — Monte Carlo + Rolling WFO
 
@@ -56,7 +56,8 @@ def run_stage(label: str, cmd: list[str], abort_on_fail: bool = True) -> bool:
     print("=" * 70)
     print(f"  CMD: {' '.join(cmd)}\n")
 
-    result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+    env = {**__import__("os").environ, "PYTHONIOENCODING": "utf-8"}
+    result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), env=env)
 
     if result.returncode != 0:
         print(f"\n  [FAIL] {label} exited with code {result.returncode}")
@@ -78,7 +79,7 @@ Stages:
   1  run_optimisation.py    MA type + entry period sweep
   2  run_stage2_decel.py    Deceleration signal selection
   3  run_stage3_exits.py    Exit mode sweep (A/B/C/D)
-  4  run_stage4_sizing.py   Vol sizing + ATR stop sweep → writes config TOML
+  4  run_stage4_sizing.py   Vol sizing + ATR stop sweep: writes config TOML
   5  run_portfolio.py       Full friction P&L + buy-and-hold comparison
   6  run_robustness.py      Monte Carlo + Rolling WFO
 

@@ -5,7 +5,7 @@ Quick order lifecycle test.
 Connects to IBKR, places a random BUY or SELL market order for 1 share of INTC,
 holds for 60 seconds, then closes the position.
 
-Verifies the full execution pipeline: connect → order → fill → close → stop.
+Verifies the full execution pipeline: connect: order: fill: close: stop.
 
 Usage:
     python scripts/test_orders.py

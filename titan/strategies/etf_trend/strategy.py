@@ -1,18 +1,27 @@
-"""etf_trend/strategy.py — NautilusTrader ETF Trend Strategy.
+"""etf_trend/strategy.py -- NautilusTrader ETF Trend Strategy.
 
-Daily close-above-MA entry (SMA/EMA configurable), deceleration-composite
-confirmation, dynamic vol-target sizing with decel scalar.
+Slow-MA trend boundary + decel-composite entry timing. Long-only.
+
+Logic:
+  Entry (decel_positive): close > slow_MA AND decel >= 0
+  Entry (asymmetric):     close > slow_MA (standard entry)
+                          OR  close > fast_reentry_MA AND close > slow_MA * 0.90
+                          (exits slow on slow_MA break; re-enters faster via fast_reentry_MA)
+  Exit mode A: close < slow_MA (sole trend-reversal gate)
+  Exit mode C: decel < exit_thresh
+  Exit mode D: A OR C (whichever fires first)
+
+Fast MA is NOT used as an exit gate -- slow MA is the only trend boundary.
+fast_reentry_ma is ONLY used for asymmetric re-entry.
 
 Execution flow (mirrors backtest .shift(1) logic):
-  1. Daily bar closes at ~16:00 ET → compute regime + decel composite → cache.
-  2. Timer fires at 15:30 ET the *next* trading day → evaluate cached signals
-     → submit MOC delta if position change required.
+  1. Daily bar closes at ~16:00 ET -> compute regime + decel composite -> cache.
+  2. Timer fires at 15:30 ET the *next* trading day -> evaluate cached signals
+     -> submit MOC delta if position change required.
 
 Orders:
   - Entry/exit: MOC (TimeInForce.AT_THE_CLOSE) on SPY.ARCA.
-  - Hard stop: STOP_MARKET GTC alongside open position (ATR × stop_mult).
-
-Long-only. No shorts.
+  - Hard stop: STOP_MARKET GTC alongside open position (ATR x stop_mult).
 
 Config driven by config/etf_trend_{instrument}.toml (written by Stage 4 pipeline).
 """
@@ -49,12 +58,14 @@ class ETFTrendConfig(StrategyConfig):
 
 
 class ETFTrendStrategy(Strategy):
-    """Daily ETF Trend Strategy — long-only, MOC execution on ARCA.
+    """Daily ETF Trend Strategy -- long-only, MOC execution on ARCA.
 
-    Entry: close > fast_MA AND close > slow_MA AND decel_composite ≥ 0.
-    Exit:  mode A = below slow_MA | B = below fast_MA |
-           C = decel < threshold | D = A or C (configured per instrument).
-    Sizing: vol-target position × decel scalar (dynamic) or × 1 (binary).
+    Entry (decel_positive): close > slow_MA AND decel >= 0.
+    Entry (decel_cross):    close > slow_MA AND decel crosses 0 from below.
+    Exit mode A: close < slow_MA (sole trend-reversal gate).
+    Exit mode C: decel < exit_thresh.
+    Exit mode D: A OR C (whichever first).
+    Sizing: decel scalar (dynamic) or fully invested (binary).
     """
 
     def __init__(self, config: ETFTrendConfig) -> None:
@@ -65,23 +76,30 @@ class ETFTrendStrategy(Strategy):
 
         cfg = self._load_toml(config.config_path)
 
-        # Stage 1 — MA params
-        self.ma_type: str = str(cfg.get("ma_type", "EMA"))
-        self.fast_ma: int = int(cfg.get("fast_ma", 50))
+        # Stage 1 -- MA params (fast MA removed; slow MA is sole trend boundary)
+        self.ma_type: str = str(cfg.get("ma_type", "SMA"))
         self.slow_ma: int = int(cfg.get("slow_ma", 200))
 
-        # Stage 2 — decel signals
+        # Stage 2 -- decel signals
         self.decel_signals: list[str] = list(cfg.get("decel_signals", []))
 
-        # Stage 3 — exit config
+        # Stage 3 -- exit/entry config
+        self.entry_mode: str = str(cfg.get("entry_mode", "decel_positive"))
+        self.fast_reentry_ma: int | None = (
+            int(cfg["fast_reentry_ma"]) if cfg.get("fast_reentry_ma") else None
+        )
         self.exit_mode: str = str(cfg.get("exit_mode", "D"))
         self.exit_decel_thresh: float = float(cfg.get("exit_decel_thresh", -0.3))
+        self.exit_confirm_days: int = int(cfg.get("exit_confirm_days", 1))
+        # 10% buffer -- block asymmetric re-entry in deep bear markets
+        self._asymmetric_bear_buffer: float = 0.90
 
-        # Stage 4 — sizing config
+        # Stage 4 -- sizing config
         self.sizing_mode: str = str(cfg.get("sizing_mode", "dynamic_decel"))
-        self.vol_target: float = float(cfg.get("vol_target", 0.10))
-        self.vol_window: int = int(cfg.get("vol_window", 20))
         self.atr_stop_mult: float = float(cfg.get("atr_stop_mult", 4.0))
+        # Vol-target leverage params (used when sizing_mode == "vol_target")
+        self.vol_target: float = float(cfg.get("vol_target", 0.15))
+        self.max_leverage: float = float(cfg.get("max_leverage", 1.0))
 
         # History buffer: list of {"close", "high", "low"} dicts
         self.history: list[dict[str, float]] = []
@@ -90,6 +108,9 @@ class ETFTrendStrategy(Strategy):
         self.cached_regime: bool = False
         self.cached_decel: float = 0.0
         self.cached_close: float = 0.0
+        self._prev_decel: float = 0.0  # for decel_cross entry detection
+        self.cached_above_fast_reentry: bool = False  # for asymmetric re-entry
+        self._days_below_slow_ma: int = 0  # consecutive days below slow_ma (confirmation filter)
 
         # ATR stop order tracking
         self._stop_order_id: str | None = None
@@ -110,11 +131,13 @@ class ETFTrendStrategy(Strategy):
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
     def on_start(self) -> None:
+        fast_info = f" fast_reentry={self.fast_reentry_ma}" if self.fast_reentry_ma else ""
         self.log.info(
-            f"ETF Trend Strategy Started — {self.instrument_id} | "
-            f"MA={self.ma_type}({self.fast_ma}/{self.slow_ma}) | "
-            f"exit={self.exit_mode} | sizing={self.sizing_mode} | "
-            f"vol_target={self.vol_target:.0%} | decel_sigs={self.decel_signals}"
+            f"ETF Trend Strategy Started -- {self.instrument_id} | "
+            f"MA={self.ma_type}(slow={self.slow_ma}){fast_info} | "
+            f"entry={self.entry_mode} | exit={self.exit_mode} | "
+            f"sizing={self.sizing_mode} | atr_mult={self.atr_stop_mult} | "
+            f"decel_sigs={self.decel_signals}"
         )
         self.subscribe_bars(self.bt_1d)
         self._warmup()
@@ -166,8 +189,15 @@ class ETFTrendStrategy(Strategy):
 
         # Compute and cache today's signals
         self.cached_close = float(bar.close)
+        self._prev_decel = self.cached_decel  # snapshot before update (for decel_cross)
         self.cached_regime = self._compute_regime()
         self.cached_decel = self._compute_decel_composite()
+        self.cached_above_fast_reentry = self._compute_above_fast_reentry()
+        # Update consecutive-days-below counter for confirmation filter
+        if self.cached_regime:
+            self._days_below_slow_ma = 0
+        else:
+            self._days_below_slow_ma += 1
 
         dt_et = unix_nanos_to_dt(bar.ts_event).astimezone(ET)
         self.log.info(
@@ -214,21 +244,35 @@ class ETFTrendStrategy(Strategy):
 
     def _evaluate_and_order(self) -> None:
         """Determine desired position and submit MOC order if delta needed."""
-        # Determine what we should be
-        in_regime = self.cached_regime
+        in_regime = self.cached_regime  # close > slow_ma
         decel_ok = self.cached_decel >= 0.0
-        should_be_long = in_regime and decel_ok
 
-        # Apply exit logic based on configured mode
+        # Entry logic
+        if self.entry_mode == "asymmetric":
+            # Exit slow (slow_ma break), re-enter fast (fast_reentry_ma crossover).
+            # Bear market filter: block re-entry if price is >10% below slow_ma.
+            not_deep_bear = self.cached_close > (
+                self._slow_ma_last() * self._asymmetric_bear_buffer
+            )
+            should_be_long = in_regime or (self.cached_above_fast_reentry and not_deep_bear)
+        elif self.entry_mode == "decel_cross":
+            # Only enter when decel CROSSES from negative to positive
+            decel_crossing = decel_ok and self._prev_decel < 0.0
+            should_be_long = in_regime and decel_crossing
+        else:
+            # decel_positive: above slow MA and decel non-negative
+            should_be_long = in_regime and decel_ok
+
+        # Exit overrides when currently long
+        # sma_exit: True only after N consecutive days below slow_ma
+        sma_exit = self._days_below_slow_ma >= self.exit_confirm_days
         if self._is_long():
             if self.exit_mode == "A":
-                should_be_long = in_regime
-            elif self.exit_mode == "B":
-                should_be_long = self._compute_above_fast_ma()
+                should_be_long = not sma_exit
             elif self.exit_mode == "C":
                 should_be_long = self.cached_decel >= self.exit_decel_thresh
-            else:  # D — regime OR decel, whichever triggers first
-                should_be_long = in_regime and (self.cached_decel >= self.exit_decel_thresh)
+            else:  # D: confirmed SMA break OR immediate decel collapse
+                should_be_long = (not sma_exit) and (self.cached_decel >= self.exit_decel_thresh)
 
         currently_long = self._is_long()
 
@@ -306,17 +350,32 @@ class ETFTrendStrategy(Strategy):
 
     # ── Sizing ─────────────────────────────────────────────────────────────
 
-    def _size_position(self) -> Quantity | None:
-        """Return target share count based on vol-target × decel scalar."""
-        closes = self._closes()
-        if len(closes) < self.vol_window + 1:
-            return None
+    def _compute_leverage(self) -> float:
+        """Compute vol-targeted leverage from recent 20-day realized volatility.
 
-        rets = np.diff(closes[-(self.vol_window + 1) :]) / np.maximum(
-            closes[-(self.vol_window + 1) : -1], 1e-8
-        )
-        rv = float(np.std(rets) * np.sqrt(252))
-        if rv < 1e-4:
+        Returns a value in [0.5, max_leverage]. Falls back to 1.0 if history
+        is too short.
+        """
+        closes = self._closes()
+        if len(closes) < 22:
+            return 1.0
+        rets = pd.Series(closes[-21:]).pct_change().dropna()
+        realized_vol = float(rets.std() * np.sqrt(252))
+        if realized_vol <= 1e-9:
+            return 1.0
+        return float(np.clip(self.vol_target / realized_vol, 0.5, self.max_leverage))
+
+    def _size_position(self) -> Quantity | None:
+        """Return target share count based on sizing mode and decel scalar.
+
+        binary:        100% of equity deployed whenever in a trade.
+        dynamic_decel: fraction scales with decel composite.
+                       decel=+1 -> 100%, decel=0 -> 50%, decel=-1 -> 0%.
+        vol_target:    leverage = clip(vol_target / realized_vol_20d, 0.5, max_leverage).
+                       Target fraction can exceed 1.0 (leveraged) in calm markets.
+        """
+        closes = self._closes()
+        if len(closes) < 2:
             return None
 
         current_price = closes[-1]
@@ -324,14 +383,13 @@ class ETFTrendStrategy(Strategy):
         if equity <= 0:
             return None
 
-        base_fraction = self.vol_target / rv
-
-        if self.sizing_mode == "dynamic_decel":
-            scalar = float(np.clip((self.cached_decel + 1) / 2, 0.0, 1.0))
+        if self.sizing_mode == "vol_target":
+            target_fraction = self._compute_leverage()
+        elif self.sizing_mode == "dynamic_decel":
+            target_fraction = float(np.clip((self.cached_decel + 1) / 2, 0.0, 1.0))
         else:
-            scalar = 1.0
+            target_fraction = 1.0
 
-        target_fraction = min(base_fraction * scalar, 1.0)
         units = int((equity * target_fraction) / current_price)
         return Quantity.from_int(units) if units > 0 else None
 
@@ -356,23 +414,33 @@ class ETFTrendStrategy(Strategy):
         return s.rolling(period).mean()
 
     def _compute_regime(self) -> bool:
-        """True when close > fast_MA AND close > slow_MA."""
+        """True when close > slow_MA (sole trend boundary)."""
         closes = self._closes()
         if len(closes) < self.slow_ma:
             return False
         s = pd.Series(closes)
-        c = s.iloc[-1]
-        fast_val = self._ma(s, self.fast_ma).iloc[-1]
-        slow_val = self._ma(s, self.slow_ma).iloc[-1]
-        return bool(c > fast_val and c > slow_val)
+        return bool(s.iloc[-1] > self._ma(s, self.slow_ma).iloc[-1])
 
-    def _compute_above_fast_ma(self) -> bool:
-        """True when close > fast_MA (used for exit_mode B)."""
+    def _slow_ma_last(self) -> float:
+        """Return the most recent slow MA value (for bear buffer calculation)."""
         closes = self._closes()
-        if len(closes) < self.fast_ma:
-            return True
+        if len(closes) < self.slow_ma:
+            return float("inf")
         s = pd.Series(closes)
-        return bool(s.iloc[-1] > self._ma(s, self.fast_ma).iloc[-1])
+        return float(self._ma(s, self.slow_ma).iloc[-1])
+
+    def _compute_above_fast_reentry(self) -> bool:
+        """True when close > fast_reentry_MA (asymmetric mode only).
+
+        Returns False if no fast_reentry_ma is configured.
+        """
+        if self.fast_reentry_ma is None:
+            return False
+        closes = self._closes()
+        if len(closes) < self.fast_reentry_ma:
+            return False
+        s = pd.Series(closes)
+        return bool(s.iloc[-1] > self._ma(s, self.fast_reentry_ma).iloc[-1])
 
     def _compute_decel_composite(self) -> float:
         """Weighted composite of selected decel signals ∈ [-1, 1].

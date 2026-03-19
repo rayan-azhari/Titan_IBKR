@@ -64,7 +64,7 @@ MTF_TIMEFRAMES = {
 # -- Data loading ---------------------------------------------------------------
 
 
-def load_close(instrument: str, timeframe: str) -> pd.Series:
+def load_ohlcv(instrument: str, timeframe: str) -> pd.DataFrame:
     path = ROOT / "data" / f"{instrument}_{timeframe}.parquet"
     if not path.exists():
         raise FileNotFoundError(f"Data not found: {path}")
@@ -74,17 +74,18 @@ def load_close(instrument: str, timeframe: str) -> pd.Series:
             df = df.set_index("timestamp")
             df.index = pd.to_datetime(df.index, utc=True)
         else:
-            raise ValueError(f"Cannot resolve index for {path}")
-    col_lower = {c.lower(): c for c in df.columns}
-    close_col = col_lower.get("close")
-    if close_col is None:
-        raise ValueError(f"No 'close' column in {path}")
-    close = df[close_col].dropna().sort_index()
+            raise ValueError(f"Cannot resolve timestamp index: {path}")
+    df.columns = [c.lower() for c in df.columns]
+    df = df.sort_index()
+    for col in ("open", "high", "low", "close"):
+        if col not in df.columns:
+            raise ValueError(f"Missing column '{col}' in {path}")
+    df = df[["open", "high", "low", "close"]].dropna()
     logger.info(
-        f"Loaded {len(close)} bars | {instrument} {timeframe} "
-        f"({close.index[0].date()} - {close.index[-1].date()})"
+        f"Loaded {len(df)} bars | {instrument} {timeframe} "
+        f"({df.index[0].date()} - {df.index[-1].date()})"
     )
-    return close
+    return df
 
 
 # -- Signal factories (all causal -- no look-ahead) -----------------------------
@@ -123,7 +124,7 @@ def compute_mtf_confluence(instrument: str, primary_tf: str) -> pd.Series | None
     primary_path = ROOT / "data" / f"{instrument}_{primary_tf}.parquet"
     if not primary_path.exists():
         return None
-    primary_close = load_close(instrument, primary_tf)
+    primary_close = load_ohlcv(instrument, primary_tf)["close"]
 
     contributions = []
     for tf in tf_labels:
@@ -140,7 +141,7 @@ def compute_mtf_confluence(instrument: str, primary_tf: str) -> pd.Series | None
             continue
 
         try:
-            close_tf = load_close(instrument, tf)
+            close_tf = load_ohlcv(instrument, tf)["close"]
         except Exception:
             continue
 
@@ -150,6 +151,10 @@ def compute_mtf_confluence(instrument: str, primary_tf: str) -> pd.Series | None
         ma_score = (fast_ma > slow_ma).astype(float) - 0.5   # +0.5 or -0.5
         rsi_score = (_rsi(close_tf, rsi_p) > 50).astype(float) - 0.5  # +0.5 or -0.5
         tf_contribution = (ma_score + rsi_score) * w  # range: [-w, +w]
+
+        # PREVENT LOOKAHEAD BIAS: shift(1) if native TF is higher than primary TF
+        if tf != primary_tf:
+            tf_contribution = tf_contribution.shift(1)
 
         # Align to primary TF index using forward fill (causal)
         tf_contribution = (
@@ -215,46 +220,112 @@ def compute_signals(close: pd.Series) -> pd.DataFrame:
 # -- Forward returns ------------------------------------------------------------
 
 
-def compute_forward_returns(close: pd.Series, horizons: list[int]) -> pd.DataFrame:
+def compute_forward_returns(
+    close: pd.Series, horizons: list[int], vol_adjust: bool = True
+) -> pd.DataFrame:
     """
     Compute log forward returns at each horizon.
     fwd_h[t] = log(close[t+h] / close[t])
+
+    If vol_adjust=True, normalises the return by the prevailing bar volatility
+    scaled by sqrt(h). This prevents macro volatility expansions from dominating
+    the Spearman rank.
 
     close.shift(-h) is intentional -- this is the target (future price), not a
     feature. The signal at bar t is correlated against the return from t to t+h.
     """
     log_close = np.log(close)
-    fwd = {
-        f"fwd_{h}": log_close.shift(-h) - log_close
-        for h in horizons
-    }
+    
+    if vol_adjust:
+        # 20-bar rolling standard deviation of log returns
+        bar_vol = log_close.diff().rolling(20).std().replace(0, np.nan)
+    else:
+        bar_vol = 1.0
+
+    fwd = {}
+    for h in horizons:
+        v = bar_vol * np.sqrt(h) if vol_adjust else 1.0
+        fwd[f"fwd_{h}"] = (log_close.shift(-h) - log_close) / v
+        
     return pd.DataFrame(fwd, index=close.index)
+
+
+def compute_mfe_mae_targets(
+    df: pd.DataFrame, horizons: list[int], vol_adjust: bool = True
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Compute Maximum Favorable Excursion (MFE) and Maximum Adverse Excursion (MAE).
+    MFE is the maximum high achieved over the NEXT h bars (forward-looking).
+    MAE is the minimum low achieved over the NEXT h bars (forward-looking).
+    Returns both as vol-adjusted log returns relative to current close.
+
+    Uses reverse-roll-reverse to compute a forward-looking rolling window:
+        reverse the series -> rolling max/min -> reverse back
+    This correctly computes: max(high[t+1 : t+h]) for each bar t.
+    """
+    close = df["close"]
+    log_close = np.log(close)
+    log_high = np.log(df["high"])
+    log_low = np.log(df["low"])
+
+    if vol_adjust:
+        bar_vol = log_close.diff().rolling(20).std().replace(0, np.nan)
+    else:
+        bar_vol = 1.0
+
+    mfe = {}
+    mae = {}
+
+    for h in horizons:
+        # Forward-looking rolling max/min via reverse-roll-reverse
+        # Shift by -1 first so we exclude bar t itself (we want t+1 to t+h)
+        fwd_high = log_high.shift(-1)
+        fwd_low = log_low.shift(-1)
+        roll_high = fwd_high[::-1].rolling(window=h, min_periods=1).max()[::-1]
+        roll_low = fwd_low[::-1].rolling(window=h, min_periods=1).min()[::-1]
+
+        v = bar_vol * np.sqrt(h) if vol_adjust else 1.0
+
+        mfe[f"mfe_{h}"] = (roll_high - log_close) / v
+        mae[f"mae_{h}"] = (roll_low - log_close) / v
+
+    return pd.DataFrame(mfe, index=df.index), pd.DataFrame(mae, index=df.index)
 
 
 # -- IC computation -------------------------------------------------------------
 
 
 def compute_ic_table(
-    signals: pd.DataFrame, fwd_returns: pd.DataFrame
-) -> pd.DataFrame:
+    signals: pd.DataFrame, fwd_returns: pd.DataFrame,
+    return_pvalues: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame]:
     """
     Spearman IC for every signal × horizon pair.
     Drops NaN pairs before correlation -- no imputation.
 
-    Returns DataFrame: index=signal names, columns=horizon labels, values=Spearman ρ
+    Returns DataFrame: index=signal names, columns=horizon labels, values=Spearman ρ.
+    If return_pvalues=True, also returns a parallel DataFrame of raw p-values.
     """
     ic = {}
+    pv = {}
     for sig_col in signals.columns:
-        row = {}
+        row_ic = {}
+        row_pv = {}
         for fwd_col in fwd_returns.columns:
             df = pd.concat([signals[sig_col], fwd_returns[fwd_col]], axis=1).dropna()
             if len(df) < 30:
-                row[fwd_col] = np.nan
+                row_ic[fwd_col] = np.nan
+                row_pv[fwd_col] = np.nan
             else:
-                rho, _ = stats.spearmanr(df.iloc[:, 0], df.iloc[:, 1])
-                row[fwd_col] = round(float(rho), 5)
-        ic[sig_col] = row
-    return pd.DataFrame(ic).T
+                rho, p = stats.spearmanr(df.iloc[:, 0], df.iloc[:, 1])
+                row_ic[fwd_col] = round(float(rho), 5)
+                row_pv[fwd_col] = float(p)
+        ic[sig_col] = row_ic
+        pv[sig_col] = row_pv
+    ic_df = pd.DataFrame(ic).T
+    if return_pvalues:
+        return ic_df, pd.DataFrame(pv).T
+    return ic_df
 
 
 def compute_icir(
@@ -262,16 +333,27 @@ def compute_icir(
     fwd_returns: pd.DataFrame,
     horizons: list[int],
     window: int = ROLLING_IC_WINDOW,
-) -> pd.DataFrame:
+    best_horizons: dict[str, str] | None = None,
+) -> pd.Series:
     """
     Rolling ICIR = mean(rolling IC) / std(rolling IC).
-    Computed at the first horizon only (simplification).
+    Computed at each signal's best horizon (from best_horizons dict).
+    Falls back to the first horizon if best_horizons is not provided.
     Returns Series: index=signal names, values=ICIR.
     """
-    fwd_col = f"fwd_{horizons[0]}"
-    fwd = fwd_returns[fwd_col]
     icirs = {}
     for sig_col in signals.columns:
+        # Determine which horizon to use for this signal
+        if best_horizons and sig_col in best_horizons:
+            fwd_col = best_horizons[sig_col]
+        else:
+            fwd_col = f"fwd_{horizons[0]}"
+
+        # Skip if fwd_col not available (e.g. MFE/MAE prefix)
+        if fwd_col not in fwd_returns.columns:
+            fwd_col = f"fwd_{horizons[0]}"
+
+        fwd = fwd_returns[fwd_col]
         df = pd.concat([signals[sig_col], fwd], axis=1).dropna()
         if len(df) < window:
             icirs[sig_col] = np.nan
@@ -286,6 +368,71 @@ def compute_icir(
     return pd.Series(icirs, name="icir")
 
 
+def compute_alpha_decay(
+    signals: pd.DataFrame,
+    df: pd.DataFrame,
+    horizons: list[int] | None = None,
+) -> pd.Series:
+    """
+    Compute Alpha Decay (Half-Life) for each signal.
+    Dynamic max_h: uses 2× the largest requested horizon to ensure coverage.
+    Returns the bar at which the IC decays to 50% of its peak.
+    """
+    if horizons is None:
+        horizons = DEFAULT_HORIZONS
+    max_h = max(horizons) * 2
+    # Cap at a reasonable maximum to avoid extremely slow computation
+    max_h = min(max_h, 120)
+
+    h_range = list(range(1, max_h + 1))
+    fwd = compute_forward_returns(df["close"], h_range)
+    ic_df = compute_ic_table(signals, fwd)
+
+    half_lives = {}
+    for sig in ic_df.index:
+        curve = ic_df.loc[sig].abs()
+        peak_ic = curve.max()
+        if pd.isna(peak_ic) or peak_ic < 0.02:
+            half_lives[sig] = np.nan
+            continue
+
+        peak_h = int(curve.idxmax().replace("fwd_", ""))
+        threshold = peak_ic * 0.5
+
+        hl = np.nan
+        for h in range(peak_h, max_h + 1):
+            if curve[f"fwd_{h}"] < threshold:
+                hl = h
+                break
+
+        if pd.isna(hl):
+            hl = max_h
+
+        half_lives[sig] = hl
+
+    return pd.Series(half_lives, name="half_life")
+
+
+def compute_autocorrelation(signals: pd.DataFrame) -> pd.Series:
+    """
+    Compute AR(1) autocorrelation for each signal to measure turnover friction.
+    Signals with AR1 near 0 or negative flip very frequently (high turnover)
+    and will bleed in transaction costs.
+
+    Returns Series: index=signal names, values=Spearman AR1.
+    """
+    ar1 = {}
+    for col in signals.columns:
+        s = signals[col]
+        df = pd.concat([s, s.shift(1)], axis=1).dropna()
+        if len(df) < 30:
+            ar1[col] = np.nan
+        else:
+            rho, _ = stats.spearmanr(df.iloc[:, 0], df.iloc[:, 1])
+            ar1[col] = round(float(rho), 3)
+    return pd.Series(ar1, name="ar1")
+
+
 # -- Quantile spread ------------------------------------------------------------
 
 
@@ -295,6 +442,7 @@ def quantile_spread(
     """
     Sort signal into n_bins equal-frequency buckets. Report mean forward return
     per bucket. A monotonically increasing pattern confirms linear predictive edge.
+    Includes a monotonicity score (Spearman rank corr of bin index vs mean return).
     """
     df = pd.concat([signal.rename("signal"), fwd.rename("fwd")], axis=1).dropna()
     try:
@@ -309,6 +457,57 @@ def quantile_spread(
     result["mean_fwd_return"] = result["mean_fwd_return"].round(6)
     result.index = [f"Q{i+1}" for i in result.index]
     return result
+
+
+def compute_monotonicity(signal: pd.Series, fwd: pd.Series, n_bins: int = N_BINS) -> float:
+    """
+    Compute monotonicity score: Spearman rank correlation of bin index vs mean
+    forward return across quantile bins. +1.0 = perfectly monotonic positive,
+    -1.0 = perfectly monotonic negative, 0 = no monotonic relationship.
+    """
+    qs = quantile_spread(signal, fwd, n_bins)
+    if qs.empty or len(qs) < 3:
+        return np.nan
+    bin_idx = np.arange(len(qs))
+    rho, _ = stats.spearmanr(bin_idx, qs["mean_fwd_return"].values)
+    return round(float(rho), 3)
+
+
+def compute_recency_weighted_ic(
+    signals: pd.DataFrame, fwd_returns: pd.DataFrame,
+    halflife_bars: int = 500,
+) -> pd.DataFrame:
+    """
+    Compute exponentially-weighted IC giving more weight to recent bars.
+    Uses an exponential decay kernel with the specified halflife.
+    Returns DataFrame with same structure as compute_ic_table.
+    """
+    n = len(signals)
+    decay = np.exp(-np.log(2) / halflife_bars * np.arange(n)[::-1])  # recent bars = higher weight
+
+    ic = {}
+    for sig_col in signals.columns:
+        row = {}
+        for fwd_col in fwd_returns.columns:
+            df = pd.concat([signals[sig_col], fwd_returns[fwd_col]], axis=1).dropna()
+            if len(df) < 30:
+                row[fwd_col] = np.nan
+            else:
+                # Weighted Spearman: rank with recency weighting
+                w = decay[-len(df):]
+                sig_ranked = df.iloc[:, 0].rank()
+                fwd_ranked = df.iloc[:, 1].rank()
+                # Weighted Pearson of ranks approximates weighted Spearman
+                wm_sig = np.average(sig_ranked, weights=w)
+                wm_fwd = np.average(fwd_ranked, weights=w)
+                cov = np.average((sig_ranked - wm_sig) * (fwd_ranked - wm_fwd), weights=w)
+                std_sig = np.sqrt(np.average((sig_ranked - wm_sig) ** 2, weights=w))
+                std_fwd = np.sqrt(np.average((fwd_ranked - wm_fwd) ** 2, weights=w))
+                denom = std_sig * std_fwd
+                rho = cov / denom if denom > 0 else np.nan
+                row[fwd_col] = round(float(rho), 5)
+        ic[sig_col] = row
+    return pd.DataFrame(ic).T
 
 
 # -- Display helpers ------------------------------------------------------------
@@ -369,7 +568,8 @@ def run_ic(
     if horizons is None:
         horizons = DEFAULT_HORIZONS
 
-    close = load_close(instrument, timeframe)
+    df = load_ohlcv(instrument, timeframe)
+    close = df["close"]
     signals = compute_signals(close)
 
     if include_mtf:
@@ -378,26 +578,42 @@ def run_ic(
             signals["mtf_confluence"] = mtf_sig.reindex(signals.index)
 
     fwd_returns = compute_forward_returns(close, horizons)
+    mfe_targets, mae_targets = compute_mfe_mae_targets(df, horizons)
 
     # Align: drop rows where signals (exc. mtf which may have leading NaN) are ready
     base_cols = [c for c in signals.columns if c != "mtf_confluence"]
-    valid_mask = signals[base_cols].notna().all(axis=1) & fwd_returns.notna().any(axis=1)
+    valid_mask = (
+        signals[base_cols].notna().all(axis=1) 
+        & fwd_returns.notna().any(axis=1)
+        & mfe_targets.notna().any(axis=1)
+        & mae_targets.notna().any(axis=1)
+    )
     signals = signals[valid_mask]
     fwd_returns = fwd_returns[valid_mask]
+    mfe_targets = mfe_targets[valid_mask]
+    mae_targets = mae_targets[valid_mask]
 
     logger.info(f"Analysis window: {len(signals)} bars after warmup drop")
 
-    # IC table
-    ic_df = compute_ic_table(signals, fwd_returns)
+    # IC tables (with p-values for statistical significance)
+    ic_df, pval_df = compute_ic_table(signals, fwd_returns, return_pvalues=True)
+    ic_mfe = compute_ic_table(signals, mfe_targets)
+    ic_mae = compute_ic_table(signals, mae_targets)
 
-    # ICIR (at shortest horizon)
-    icir = compute_icir(signals, fwd_returns, horizons)
+    # Recency-weighted IC (halflife=500 bars)
+    ic_recent = compute_recency_weighted_ic(signals, fwd_returns, halflife_bars=500)
 
     # Best horizon per signal (highest |IC|)
     best_horizons = {
         sig: ic_df.loc[sig].abs().idxmax()
         for sig in ic_df.index
     }
+
+    # ICIR at each signal's best horizon (not just h=1)
+    icir = compute_icir(signals, fwd_returns, horizons, best_horizons=best_horizons)
+
+    # Alpha decay (half-life) -- dynamic max_h based on requested horizons
+    alpha_decay = compute_alpha_decay(signals, df, horizons=horizons)
 
     # -- Print ------------------------------------------------------------------
     slug = f"{instrument}_{timeframe}"
@@ -409,13 +625,14 @@ def run_ic(
     print("\n-- Spearman IC Table (rows=signal, cols=forward horizon) --------------")
     print_ic_table(ic_df, horizons)
 
-    print("\n-- ICIR (rolling {}-bar, at h={}) -----------------------------------".format(
-        ROLLING_IC_WINDOW, horizons[0]
+    print("\n-- ICIR (rolling {}-bar, at best horizon per signal) -------------------".format(
+        ROLLING_IC_WINDOW
     ))
     for sig in icir.index:
         v = icir[sig]
+        bh = best_horizons.get(sig, f"fwd_{horizons[0]}").replace("fwd_", "h=")
         flag = "  *** STRONG" if abs(v) >= 0.5 else ("  * weak" if abs(v) >= 0.2 else "")
-        print(f"  {sig:<14}  {v:>+7.3f}{flag}" if not np.isnan(v) else f"  {sig:<14}     NaN")
+        print(f"  {sig:<14}  {bh:>5}  {v:>+7.3f}{flag}" if not np.isnan(v) else f"  {sig:<14}  {bh:>5}     NaN")
 
     print("\n-- Quantile Spread (deciles of signal vs mean forward return) ---------")
     for sig in signals.columns:
@@ -427,15 +644,23 @@ def run_ic(
         print_quantile_spread(qs, sig, best_h)
 
     # -- Signal summary ---------------------------------------------------------
-    print("\n-- Signal Summary ----------------------------------------------------")
-    print(f"  {'Signal':<14}  {'BestH':>6}  {'BestIC':>8}  {'ICIR':>7}  Verdict")
-    print("  " + "-" * 58)
+    print("\n-- Signal Summary -------------------------------------------------------------------------------------")
+    print(f"  {'Signal':<14}  {'BestH':>6}  {'BestIC':>8}  {'ICIR':>7}  {'p-val':>7}  {'MFE':>6}  {'MAE':>6}  {'HalfL':>5}  {'Mono':>5}  {'RcntIC':>7}  Verdict")
+    print("  " + "-" * 117)
     for sig in ic_df.index:
         best_h_col = best_horizons[sig]
         best_h = int(best_h_col.replace("fwd_", ""))
         best_ic = ic_df.loc[sig, best_h_col]
         ir = icir[sig]
         abs_ic = abs(best_ic)
+
+        mfe_val = ic_mfe.loc[sig, f"mfe_{best_h}"]
+        mae_val = ic_mae.loc[sig, f"mae_{best_h}"]
+        hl_val = alpha_decay.get(sig, np.nan)
+        pv = pval_df.loc[sig, best_h_col]
+        mono = compute_monotonicity(signals[sig], fwd_returns[best_h_col])
+        rcnt = ic_recent.loc[sig, best_h_col] if best_h_col in ic_recent.columns else np.nan
+
         if abs_ic >= 0.05 and (not np.isnan(ir) and abs(ir) >= 0.5):
             verdict = "STRONG -- build strategy"
         elif abs_ic >= 0.05:
@@ -444,9 +669,17 @@ def run_ic(
             verdict = "Weak -- try regime conditioning"
         else:
             verdict = "Noise -- discard"
+
         ir_str = f"{ir:+.3f}" if not np.isnan(ir) else "  NaN"
+        pv_str = f"{pv:.1e}" if not np.isnan(pv) else "    NaN"
+        mfe_str = f"{mfe_val:+.3f}" if not np.isnan(mfe_val) else "   NaN"
+        mae_str = f"{mae_val:+.3f}" if not np.isnan(mae_val) else "   NaN"
+        hl_str = f"{int(hl_val)}" if not np.isnan(hl_val) else "  NaN"
+        mono_str = f"{mono:+.2f}" if not np.isnan(mono) else "  NaN"
+        rcnt_str = f"{rcnt:+.4f}" if not np.isnan(rcnt) else "    NaN"
+
         print(
-            f"  {sig:<14}  {best_h:>6}  {best_ic:>+8.4f}  {ir_str:>7}  {verdict}"
+            f"  {sig:<14}  {best_h:>6}  {best_ic:>+8.4f}  {ir_str:>7}  {pv_str:>7}  {mfe_str:>6}  {mae_str:>6}  {hl_str:>5}  {mono_str:>5}  {rcnt_str:>7}  {verdict}"
         )
 
     print("=" * 72)

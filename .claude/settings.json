@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Read(//c/Users/rayan/Desktop/Antigravity/Titan-IBKR/**)",
+      "Bash(awk 'length > 100 {print NR\"\": \"\"length\"\" chars\"\"}' /c/Users/rayan/Desktop/Antigravity/Titan-IBKR/titan/strategies/orb/strategy.py)",
+      "Bash(python -m ruff check titan/strategies/orb/strategy.py scripts/test_bracket.py)"
+    ]
+  }
+}

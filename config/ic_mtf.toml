@@ -1,0 +1,51 @@
+# IC MTF Strategy Configuration
+# Phase 3 validated thresholds (fresh run 2026-03-19)
+# OOS Sharpe: EUR/USD 7.71 | GBP/USD 8.28 | USD/JPY 7.35 | AUD/USD 6.84 | AUD/JPY 7.33 | USD/CHF 7.34
+
+# ── EUR/USD ───────────────────────────────────────────────────────────────────
+[EUR_USD]
+threshold    = 0.75   # z-score entry threshold (Phase 3 best)
+risk_pct     = 0.01   # 1% equity risk per trade
+stop_atr_mult = 1.5   # stop distance = 1.5 × ATR14(H1)
+leverage_cap = 20.0   # max leverage cap
+warmup_bars  = 1000   # bars per TF for IS calibration
+
+# ── GBP/USD ───────────────────────────────────────────────────────────────────
+[GBP_USD]
+threshold    = 1.00
+risk_pct     = 0.01
+stop_atr_mult = 1.5
+leverage_cap = 20.0
+warmup_bars  = 1000
+
+# ── USD/JPY ───────────────────────────────────────────────────────────────────
+[USD_JPY]
+threshold    = 0.75
+risk_pct     = 0.01
+stop_atr_mult = 1.5
+leverage_cap = 20.0
+warmup_bars  = 1000
+
+# ── AUD/USD ───────────────────────────────────────────────────────────────────
+[AUD_USD]
+threshold    = 1.00
+risk_pct     = 0.01
+stop_atr_mult = 1.5
+leverage_cap = 20.0
+warmup_bars  = 1000
+
+# ── AUD/JPY ───────────────────────────────────────────────────────────────────
+[AUD_JPY]
+threshold    = 0.75
+risk_pct     = 0.01
+stop_atr_mult = 1.5
+leverage_cap = 20.0
+warmup_bars  = 1000
+
+# ── USD/CHF ───────────────────────────────────────────────────────────────────
+[USD_CHF]
+threshold    = 1.00
+risk_pct     = 0.01
+stop_atr_mult = 1.5
+leverage_cap = 20.0
+warmup_bars  = 1000

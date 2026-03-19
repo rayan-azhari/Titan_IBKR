@@ -101,7 +101,7 @@ def main():
         logger.warning(f"Data download issue: {e}. Proceeding with existing data.")
 
     # 2. Configure EUR/USD Forex contract
-    # CASH secType + IDEALPRO exchange → instrument_id = EUR/USD.IDEALPRO
+    # CASH secType + IDEALPRO exchange: instrument_id = EUR/USD.IDEALPRO
     eur_usd_contract = IBContract(
         secType="CASH",
         symbol="EUR",
@@ -113,7 +113,7 @@ def main():
         load_contracts=frozenset([eur_usd_contract]),
     )
 
-    # Paper: port 4002/7497 → DELAYED_FROZEN. Live: 4001/7496 → REALTIME.
+    # Paper: port 4002/7497: DELAYED_FROZEN. Live: 4001/7496: REALTIME.
     is_live = ib_port in (4001, 7496)
     mkt_data_type = (
         IBMarketDataTypeEnum.REALTIME if is_live else IBMarketDataTypeEnum.DELAYED_FROZEN

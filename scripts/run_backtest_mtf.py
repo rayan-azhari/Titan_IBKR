@@ -86,10 +86,10 @@ def compute_timeframe_signal(
     """Compute a directional signal for one timeframe.
 
     Signal logic (each component contributes ±0.5, total range: [-1, +1]):
-      • MA crossover: fast > slow → +0.5 (bullish), else −0.5
+      • MA crossover: fast > slow: +0.5 (bullish), else −0.5
       • RSI confirmation:
-          RSI > 50 → +0.5 (bullish momentum)
-          RSI < 50 → −0.5 (bearish momentum)
+          RSI > 50: +0.5 (bullish momentum)
+          RSI < 50: −0.5 (bearish momentum)
 
     Args:
         close: Close price series for this timeframe.
@@ -366,7 +366,7 @@ def generate_confluence_chart(
 
     path = REPORTS_DIR / f"mtf_confluence_{pair}_{label.lower()}.html"
     fig.write_html(str(path))
-    print(f"  📊 Chart saved → {path.name}")
+    print(f"  📊 Chart saved: {path.name}")
     return path
 
 

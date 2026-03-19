@@ -15,7 +15,7 @@ TP is $0.10 away from the reference — tight enough to fill quickly.
 SL is $5.00 away — wide safety net, should never fire during the test.
 
 Verifies the full bracket lifecycle:
-  connect → bracket submit (3 orders) → entry fill → TP/SL fill → OCO cancel → close
+  connect: bracket submit (3 orders): entry fill: TP/SL fill: OCO cancel: close
 
 Fallback: if neither TP nor SL fires within FALLBACK_TIMEOUT_SECS (5 min),
 cancel all orders and close manually with a counter-side market order.

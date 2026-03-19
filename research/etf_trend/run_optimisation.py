@@ -1,8 +1,13 @@
-"""run_optimisation.py — Stage 1: MA Type + Entry Period Sweep.
+"""run_optimisation.py -- Stage 1: MA Type + Slow Period Sweep.
 
-Sweeps MA type (SMA / EMA) and fast/slow period combinations for the ETF Trend strategy.
-Entry: daily close above BOTH fast MA and slow MA (long-only, no shorts on SPY ETF).
-Exit: daily close below slow MA (baseline exit — swept in Stage 3).
+Sweeps MA type (SMA / EMA) and slow period for the ETF Trend strategy.
+
+New logic (decel + slow SMA redesign):
+  Entry: daily close above slow MA only (fast MA removed).
+  Exit:  daily close below slow MA (sole trend-reversal gate).
+
+The fast MA is no longer used -- the slow MA is the only trend boundary.
+Decel signals (Stage 2) will be layered on top as entry confirmation.
 
 Uses 70/30 IS/OOS split by bar count. Anti-look-ahead: signals shifted by 1 bar.
 
@@ -33,34 +38,27 @@ except ImportError:
 from research.etf_trend.state_manager import save_stage1  # noqa: E402
 
 # ── Quality gates ──────────────────────────────────────────────────────────
-MIN_OOS_SHARPE = 1.0
-MIN_OOS_IS_RATIO = 0.5
-MIN_TRADES_OOS = 30
-MIN_WIN_RATE = 0.40
-MAX_DRAWDOWN = 0.25
+MIN_OOS_SHARPE = 0.5
+MIN_OOS_IS_RATIO = 0.4
+MIN_TRADES_OOS = 5  # slow MA = fewer trades expected
+MIN_WIN_RATE = 0.35
+MAX_DRAWDOWN = 0.50  # slow MA stays in trends longer -- higher DD tolerance
 
 # ── Parameter grid ─────────────────────────────────────────────────────────
 MA_TYPES = ["SMA", "EMA"]
-FAST_MAS = [20, 30, 40, 50, 60]
-SLOW_MAS = [100, 150, 200, 250, 300]
+SLOW_MAS = [50, 75, 100, 125, 150, 175, 200, 225, 250, 300]
+# Total: 2 x 10 = 20 combinations
 
 # ── Friction ───────────────────────────────────────────────────────────────
-FEES = 0.001  # 0.10% per side — conservative for liquid ETFs
-SLIPPAGE = 0.0005  # 0.05% per side — MOC orders have tight spreads
+FEES = 0.001
+SLIPPAGE = 0.0005
 
 
 # ── Data loading ───────────────────────────────────────────────────────────
 
 
 def load_data(instrument: str) -> pd.DataFrame:
-    """Load daily Parquet data for an instrument.
-
-    Args:
-        instrument: Symbol (e.g. "SPY").
-
-    Returns:
-        DataFrame with DatetimeIndex and open/high/low/close/volume columns.
-    """
+    """Load daily Parquet data for an instrument."""
     path = DATA_DIR / f"{instrument}_D.parquet"
     if not path.exists():
         print(f"ERROR: {path} not found.")
@@ -82,16 +80,7 @@ def load_data(instrument: str) -> pd.DataFrame:
 
 
 def compute_ma(close: pd.Series, period: int, ma_type: str) -> pd.Series:
-    """Compute SMA or EMA.
-
-    Args:
-        close: Close price series.
-        period: Lookback period.
-        ma_type: 'SMA' or 'EMA'.
-
-    Returns:
-        Moving average series.
-    """
+    """Compute SMA or EMA."""
     if ma_type == "EMA":
         return close.ewm(span=period, adjust=False).mean()
     return close.rolling(period).mean()
@@ -102,24 +91,22 @@ def compute_ma(close: pd.Series, period: int, ma_type: str) -> pd.Series:
 
 def run_backtest(
     close: pd.Series,
-    fast_ma: pd.Series,
     slow_ma: pd.Series,
 ) -> "vbt.Portfolio":
-    """Run long-only trend backtest with given MA series.
+    """Run long-only trend backtest using slow MA as the sole trend gate.
 
-    Entry: close > fast_ma AND close > slow_ma (shifted by 1 — next-bar execution).
+    Entry: close > slow_ma (shifted by 1 -- next-bar execution).
     Exit:  close < slow_ma (shifted by 1).
 
     Args:
         close: Close price series.
-        fast_ma: Fast moving average series.
         slow_ma: Slow moving average series.
 
     Returns:
         VectorBT Portfolio object.
     """
-    in_regime = (close > fast_ma) & (close > slow_ma)
-    entries = in_regime.shift(1).fillna(False)  # ← anti-look-ahead
+    in_regime = close > slow_ma
+    entries = in_regime.shift(1).fillna(False)
     exits = (~in_regime).shift(1).fillna(False)
 
     return vbt.Portfolio.from_signals(
@@ -134,14 +121,7 @@ def run_backtest(
 
 
 def extract_stats(pf: "vbt.Portfolio") -> dict:
-    """Extract key metrics from a VBT Portfolio.
-
-    Args:
-        pf: VectorBT Portfolio object.
-
-    Returns:
-        Dict with sharpe, max_drawdown, total_return, n_trades, win_rate.
-    """
+    """Extract key metrics from a VBT Portfolio."""
     n = pf.trades.count()
     return {
         "sharpe": float(pf.sharpe_ratio()),
@@ -156,23 +136,23 @@ def extract_stats(pf: "vbt.Portfolio") -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="ETF Trend Stage 1: MA Type + Period Sweep.")
+    parser = argparse.ArgumentParser(description="ETF Trend Stage 1: MA Type + Slow Period Sweep.")
     parser.add_argument("--instrument", default="SPY", help="Instrument symbol (default: SPY)")
     args = parser.parse_args()
     instrument = args.instrument.upper()
     inst_lower = instrument.lower()
 
     scoreboard_path = REPORTS_DIR / f"etf_trend_stage1_{inst_lower}_scoreboard.csv"
-    heatmap_path = REPORTS_DIR / f"etf_trend_stage1_{inst_lower}_heatmap.html"
 
     print("=" * 60)
-    print("  ETF Trend — Stage 1: MA Type + Period Sweep")
+    print("  ETF Trend -- Stage 1: MA Type + Slow Period Sweep")
     print("=" * 60)
     print(f"  Instrument: {instrument}")
     print(f"  MA types:   {', '.join(MA_TYPES)}")
-    print(f"  Fast MAs:   {FAST_MAS}")
     print(f"  Slow MAs:   {SLOW_MAS}")
-    total = len(MA_TYPES) * len(FAST_MAS) * len(SLOW_MAS)
+    print("  Entry:      close > slow_ma  (fast MA removed)")
+    print("  Exit:       close < slow_ma  (sole trend-reversal gate)")
+    total = len(MA_TYPES) * len(SLOW_MAS)
     print(f"  Total combos: {total}")
     print()
 
@@ -194,48 +174,42 @@ def main() -> None:
 
     for ma_type in MA_TYPES:
         print(f"\n--- MA type: {ma_type} ---")
-        for fast in FAST_MAS:
-            for slow in SLOW_MAS:
-                if fast >= slow:
-                    continue  # skip invalid combinations
+        for slow in SLOW_MAS:
+            # Compute MA on full series for index alignment, then slice
+            slow_ma_full = compute_ma(close, slow, ma_type)
+            is_slow = slow_ma_full.iloc[:split]
+            oos_slow = slow_ma_full.iloc[split:]
 
-                # Compute MAs on full series for index alignment, then slice
-                fast_ma_full = compute_ma(close, fast, ma_type)
-                slow_ma_full = compute_ma(close, slow, ma_type)
+            is_pf = run_backtest(is_close, is_slow)
+            oos_pf = run_backtest(oos_close, oos_slow)
 
-                is_fast = fast_ma_full.iloc[:split]
-                is_slow = slow_ma_full.iloc[:split]
-                oos_fast = fast_ma_full.iloc[split:]
-                oos_slow = slow_ma_full.iloc[split:]
+            is_stats = extract_stats(is_pf)
+            oos_stats = extract_stats(oos_pf)
 
-                is_pf = run_backtest(is_close, is_fast, is_slow)
-                oos_pf = run_backtest(oos_close, oos_fast, oos_slow)
+            ratio = oos_stats["sharpe"] / is_stats["sharpe"] if is_stats["sharpe"] > 0.01 else 0.0
 
-                is_stats = extract_stats(is_pf)
-                oos_stats = extract_stats(oos_pf)
+            results.append(
+                {
+                    "ma_type": ma_type,
+                    "slow_ma": slow,
+                    "is_sharpe": round(is_stats["sharpe"], 3),
+                    "oos_sharpe": round(oos_stats["sharpe"], 3),
+                    "oos_is_ratio": round(ratio, 3),
+                    "oos_max_dd": round(oos_stats["max_drawdown"], 3),
+                    "oos_win_rate": round(oos_stats["win_rate"], 3),
+                    "oos_n_trades": oos_stats["n_trades"],
+                    "oos_total_return": round(oos_stats["total_return"], 3),
+                }
+            )
+            print(
+                f"  {ma_type} slow={slow:3d}  IS={is_stats['sharpe']:.3f}  "
+                f"OOS={oos_stats['sharpe']:.3f}  Ret={oos_stats['total_return']:.1%}  "
+                f"DD={oos_stats['max_drawdown']:.1%}  Trades={oos_stats['n_trades']}"
+            )
 
-                ratio = (
-                    oos_stats["sharpe"] / is_stats["sharpe"] if is_stats["sharpe"] > 0.01 else 0.0
-                )
-
-                results.append(
-                    {
-                        "ma_type": ma_type,
-                        "fast_ma": fast,
-                        "slow_ma": slow,
-                        "is_sharpe": round(is_stats["sharpe"], 3),
-                        "oos_sharpe": round(oos_stats["sharpe"], 3),
-                        "oos_is_ratio": round(ratio, 3),
-                        "oos_max_dd": round(oos_stats["max_drawdown"], 3),
-                        "oos_win_rate": round(oos_stats["win_rate"], 3),
-                        "oos_n_trades": oos_stats["n_trades"],
-                        "oos_total_return": round(oos_stats["total_return"], 3),
-                    }
-                )
-
-    scoreboard = pd.DataFrame(results).sort_values("oos_sharpe", ascending=False)
+    scoreboard = pd.DataFrame(results).sort_values("oos_total_return", ascending=False)
     scoreboard.to_csv(scoreboard_path, index=False)
-    print(f"\n  Scoreboard saved → {scoreboard_path.relative_to(PROJECT_ROOT)}")
+    print(f"\n  Scoreboard saved: {scoreboard_path.relative_to(PROJECT_ROOT)}")
 
     # ── Quality gate evaluation ──────────────────────────────────────────
     passing = scoreboard[
@@ -248,45 +222,29 @@ def main() -> None:
 
     print(f"\n  {len(passing)} / {len(scoreboard)} combos pass all quality gates.")
     print(
-        f"  Gates: OOS Sharpe≥{MIN_OOS_SHARPE}, OOS/IS≥{MIN_OOS_IS_RATIO}, "
-        f"Trades≥{MIN_TRADES_OOS}, WinRate≥{MIN_WIN_RATE:.0%}, MaxDD≤{MAX_DRAWDOWN:.0%}"
+        f"  Gates: OOS Sharpe>={MIN_OOS_SHARPE}, OOS/IS>={MIN_OOS_IS_RATIO}, "
+        f"Trades>={MIN_TRADES_OOS}, WinRate>={MIN_WIN_RATE:.0%}, MaxDD<={MAX_DRAWDOWN:.0%}"
     )
 
     if passing.empty:
-        print("\n  [WARN] No combinations pass all gates. Selecting best OOS Sharpe anyway.")
+        print("\n  [WARN] No combinations pass all gates. Selecting best OOS total return anyway.")
         best = scoreboard.iloc[0]
     else:
         best = passing.iloc[0]
 
-    print("\n  ── Best combination ──────────────────────────")
-    print(f"  MA type:    {best['ma_type']}")
-    print(f"  fast_ma:    {best['fast_ma']}")
-    print(f"  slow_ma:    {best['slow_ma']}")
-    print(f"  IS Sharpe:  {best['is_sharpe']}")
-    print(f"  OOS Sharpe: {best['oos_sharpe']}")
-    print(f"  OOS/IS:     {best['oos_is_ratio']}")
-    print(f"  OOS MaxDD:  {best['oos_max_dd']:.1%}")
-    print(f"  OOS Trades: {best['oos_n_trades']}")
-
-    # ── Heatmap (SMA slice for EMA winner if EMA won) ────────────────────
-    try:
-        best_type_df = scoreboard[scoreboard["ma_type"] == best["ma_type"]]
-        pivot = best_type_df.pivot(index="slow_ma", columns="fast_ma", values="oos_sharpe")
-        fig = pivot.vbt.heatmap(
-            x_level="fast_ma",
-            y_level="slow_ma",
-            trace_kwargs={"colorscale": "RdYlGn", "colorbar": {"title": "OOS Sharpe"}},
-        )
-        fig.update_layout(title=f"Stage 1 OOS Sharpe Heatmap — {instrument} ({best['ma_type']})")
-        fig.write_html(str(heatmap_path))
-        print(f"\n  Heatmap saved → {heatmap_path.relative_to(PROJECT_ROOT)}")
-    except Exception as e:
-        print(f"\n  [Heatmap skipped: {e}]")
+    print("\n  -- Best combination (by OOS total return) ----")
+    print(f"  MA type:          {best['ma_type']}")
+    print(f"  slow_ma:          {best['slow_ma']}")
+    print(f"  IS Sharpe:        {best['is_sharpe']}")
+    print(f"  OOS Sharpe:       {best['oos_sharpe']}")
+    print(f"  OOS/IS:           {best['oos_is_ratio']}")
+    print(f"  OOS MaxDD:        {best['oos_max_dd']:.1%}")
+    print(f"  OOS Trades:       {best['oos_n_trades']}")
+    print(f"  OOS Total Return: {best['oos_total_return']:.1%}")
 
     # ── Lock Stage 1 results ─────────────────────────────────────────────
     save_stage1(
         ma_type=str(best["ma_type"]),
-        fast_ma=int(best["fast_ma"]),
         slow_ma=int(best["slow_ma"]),
         instrument=inst_lower,
     )

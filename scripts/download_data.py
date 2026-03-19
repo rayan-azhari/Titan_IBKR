@@ -236,7 +236,7 @@ def main() -> None:
 
             df.to_parquet(output_path, index=False)
             print(
-                f"    → Saved {len(app.data_store)} new rows. Total File Rows: {len(df)}. Last TS: {df['timestamp'].max()}"  # noqa: E501
+                f"   : Saved {len(app.data_store)} new rows. Total File Rows: {len(df)}. Last TS: {df['timestamp'].max()}"  # noqa: E501
             )
 
             req_id += 1

@@ -1,17 +1,19 @@
 """download_data_yfinance.py — Pull historical OHLCV from Yahoo Finance.
 
-Downloads daily bars for ETF instruments using yfinance and writes
+Downloads daily or hourly bars for ETF instruments using yfinance and writes
 Parquet files to data/. Used as a longer-history supplement to Databento
 (which only goes back to 2018-05-01 for ARCX.PILLAR).
 
 SPY daily data available from 1993-01-29 (ETF inception).
+NOTE: H1 interval (1h) is limited to the last 730 days by Yahoo Finance.
 
 Usage:
     uv run python scripts/download_data_yfinance.py
     uv run python scripts/download_data_yfinance.py --symbols SPY QQQ IWM
     uv run python scripts/download_data_yfinance.py --symbols SPY --start 2000-01-01
+    uv run python scripts/download_data_yfinance.py --symbols SPY --interval H1
 
-Output: data/{SYMBOL}_D.parquet  (DatetimeIndex UTC, columns: open/high/low/close/volume)
+Output: data/{SYMBOL}_{INTERVAL}.parquet  (DatetimeIndex UTC, columns: open/high/low/close/volume)
 """
 
 import argparse
@@ -27,23 +29,36 @@ DATA_DIR.mkdir(exist_ok=True)
 DEFAULT_SYMBOLS = ["SPY"]
 DEFAULT_START = "1993-01-01"
 
+# Interval mappings: our name -> yfinance name, output suffix
+_INTERVAL_MAP = {
+    "D": ("1d", "D"),
+    "H1": ("1h", "H1"),
+    "H4": ("1h", "H1"),  # yfinance has no 4h; user must aggregate manually
+    "M5": ("5m", "M5"),
+    "M15": ("15m", "M15"),
+    "M30": ("30m", "M30"),
+}
 
-def download_symbol(symbol: str, start: str, end: str | None) -> pd.DataFrame:
-    """Download daily OHLCV from Yahoo Finance for one symbol.
+
+def download_symbol(symbol: str, start: str, end: str | None, interval: str = "D") -> pd.DataFrame:
+    """Download OHLCV from Yahoo Finance for one symbol.
 
     Args:
         symbol: Ticker (e.g. "SPY").
         start: ISO date string start of range.
         end: ISO date string end of range, or None for today.
+        interval: Interval key: "D" (daily), "H1" (hourly), "M5", "M15", "M30".
+                  NOTE: yfinance caps intraday history at 730 days (H1) or 60 days (M5/M15/M30).
 
     Returns:
         DataFrame with UTC DatetimeIndex and open/high/low/close/volume columns.
     """
     import yfinance as yf
 
-    print(f"  Downloading {symbol} from Yahoo Finance ({start} to {end or 'today'}) ...")
+    yf_interval, _ = _INTERVAL_MAP.get(interval, ("1d", "D"))
+    print(f"  Downloading {symbol} {interval} from Yahoo Finance ({start} to {end or 'today'}) ...")
     ticker = yf.Ticker(symbol)
-    df = ticker.history(start=start, end=end, interval="1d", auto_adjust=True)
+    df = ticker.history(start=start, end=end, interval=yf_interval, auto_adjust=True)
 
     if df.empty:
         print(f"  WARNING: No data returned for {symbol}.")
@@ -66,13 +81,14 @@ def download_symbol(symbol: str, start: str, end: str | None) -> pd.DataFrame:
         df[col] = df[col].astype(float)
 
     df = df.sort_index().dropna(how="all")
-    print(f"  {symbol}: {len(df)} daily bars ({df.index[0].date()} to {df.index[-1].date()})")
+    freq_label = f"{interval} bars"
+    print(f"  {symbol}: {len(df)} {freq_label} ({df.index[0].date()} to {df.index[-1].date()})")
     return df
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Download historical daily OHLCV from Yahoo Finance -> data/*.parquet"
+        description="Download historical OHLCV from Yahoo Finance -> data/*.parquet"
     )
     parser.add_argument(
         "--symbols",
@@ -90,6 +106,12 @@ def main() -> None:
         default=None,
         help="End date ISO format (default: today)",
     )
+    parser.add_argument(
+        "--interval",
+        default="D",
+        choices=list(_INTERVAL_MAP.keys()),
+        help="Bar interval: D (daily), H1 (hourly, max 730 days), M5/M15/M30 (max 60 days)",
+    )
     args = parser.parse_args()
 
     try:
@@ -98,20 +120,23 @@ def main() -> None:
         print("ERROR: yfinance not installed. Run: uv add yfinance")
         sys.exit(1)
 
+    _, suffix = _INTERVAL_MAP.get(args.interval, ("1d", "D"))
+
     print("=" * 60)
     print("  Yahoo Finance OHLCV Download")
-    print(f"  Symbols: {', '.join(args.symbols)}")
-    print(f"  Period:  {args.start} to {args.end or 'today'}")
+    print(f"  Symbols:  {', '.join(args.symbols)}")
+    print(f"  Interval: {args.interval}")
+    print(f"  Period:   {args.start} to {args.end or 'today'}")
     print("=" * 60)
 
     failed: list[str] = []
     for symbol in args.symbols:
         try:
-            df = download_symbol(symbol, args.start, args.end)
+            df = download_symbol(symbol, args.start, args.end, args.interval)
             if df.empty:
                 failed.append(symbol)
                 continue
-            out_path = DATA_DIR / f"{symbol}_D.parquet"
+            out_path = DATA_DIR / f"{symbol}_{suffix}.parquet"
             df.to_parquet(out_path)
             print(f"  Saved: {out_path.relative_to(PROJECT_ROOT)}")
         except Exception as exc:
