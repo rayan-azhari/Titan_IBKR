@@ -84,6 +84,29 @@ P5_MC_N = 500
 P5_MIN_5PCT_SHARPE = 0.5
 P5_MIN_PROFITABLE = 0.80
 
+# ── Phase 2 composite signals (EW, IS-calibrated orientation) ──────────────
+# Source: run_equity_phase2.py results at h=10, equal-weight, ICIR > 0.
+# NOC uses top-5 (top-3 ICIR is negative at h=10).
+# When USE_COMPOSITE=False (default), all symbols use ["rsi_21_dev"].
+COMPOSITE_SIGNALS: dict[str, list[str]] = {
+    "HWM":  ["accel_bb_width", "ma_spread_10_50", "macd_norm"],
+    "CSCO": ["accel_bb_width", "roc_60", "roc_3"],
+    "NOC":  ["garman_klass", "parkinson_vol", "norm_atr_14", "realized_vol_20", "roc_60"],
+    "WMT":  ["ma_spread_10_50", "ema_slope_20", "price_vs_sma50"],
+    "ABNB": ["zscore_expanding", "ma_spread_20_100", "ma_spread_50_200"],
+    "GL":   ["price_pct_rank_20", "price_vs_sma20", "bb_zscore_20"],
+}
+
+USE_COMPOSITE: bool = False   # set True via --composite flag
+
+
+def _signals_for(symbol: str) -> list[str]:
+    """Return the signal list for this symbol based on current mode."""
+    if USE_COMPOSITE:
+        return COMPOSITE_SIGNALS.get(symbol, ["rsi_21_dev"])
+    return ["rsi_21_dev"]
+
+
 # Excluded tickers (FX, ETFs, data-limited, non-equity)
 EXCLUDE = {
     "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "AUD_JPY", "USD_CHF",
@@ -210,7 +233,7 @@ def phase3(symbol: str, spread: float = 0.05) -> dict | None:
     is_mask = pd.Series(False, index=base_index)
     is_mask.iloc[:is_n] = True
 
-    composite = build_composite(tf_signals, base_close, ["D"], ["rsi_21_dev"], is_mask)
+    composite = build_composite(tf_signals, base_close, ["D"], _signals_for(symbol), is_mask)
     sig_z = zscore_normalise(composite, is_mask)
     sizes = build_size_array(base_df, base_close, DEFAULT_RISK_PCT, DEFAULT_STOP_ATR)
     fees = spread / float(base_close.median())
@@ -334,7 +357,7 @@ def phase4(symbol: str, threshold: float, adx_gate: "int | str", spread: float =
         is_mask.iloc[is_start:is_end] = True
 
         composite = build_composite(
-            tf_signals, base_close, ["D"], ["rsi_21_dev"], is_mask
+            tf_signals, base_close, ["D"], _signals_for(symbol), is_mask
         )
         sig_z = zscore_normalise(composite, is_mask)
 
@@ -448,7 +471,7 @@ def phase5_mc(symbol: str, threshold: float, adx_gate: "int | str", spread: floa
     is_mask = pd.Series(False, index=base_index)
     is_mask.iloc[:is_n] = True
 
-    composite = build_composite(tf_signals, base_close, ["D"], ["rsi_21_dev"], is_mask)
+    composite = build_composite(tf_signals, base_close, ["D"], _signals_for(symbol), is_mask)
     sig_z = zscore_normalise(composite, is_mask)
 
     adx = _adx14(base_df)
@@ -561,7 +584,7 @@ def _gate_label(gate: "int | str") -> str:
 
 
 def main() -> None:  # noqa: PLR0912
-    global ADX_GATES
+    global ADX_GATES, USE_COMPOSITE
     parser = argparse.ArgumentParser(
         description="Long-only IC equity pipeline: Phase 3->5 with regime gate sweep"
     )
@@ -571,8 +594,11 @@ def main() -> None:  # noqa: PLR0912
                         help="Run a single symbol only")
     parser.add_argument("--no-hmm", action="store_true",
                         help="Skip HMM gate (faster; only runs no-gate and ADX<25)")
+    parser.add_argument("--composite", action="store_true",
+                        help="Use per-symbol Phase 2 composite signals instead of rsi_21_dev")
     args = parser.parse_args()
 
+    USE_COMPOSITE = args.composite
     active_gates = [g for g in ADX_GATES if not (g == "hmm" and args.no_hmm)]
     if not HMM_AVAILABLE and "hmm" in active_gates:
         print("  WARNING: hmmlearn not installed -- HMM gate will be skipped.")
@@ -581,7 +607,8 @@ def main() -> None:  # noqa: PLR0912
     print(f"\n{'='*70}")
     print("  IC EQUITY LONG-ONLY PIPELINE -- Phase 3->5")
     print(f"  Symbols   : {len(symbols)}")
-    print(f"  Signal    : rsi_21_dev | Long-only | Gates: {active_gates}")
+    sig_label = "Phase2-composite (EW)" if USE_COMPOSITE else "rsi_21_dev"
+    print(f"  Signal    : {sig_label} | Long-only | Gates: {active_gates}")
     print(f"  Thresholds: {THRESHOLDS}")
     print(f"  HMM avail : {HMM_AVAILABLE}")
     print(f"{'='*70}\n")

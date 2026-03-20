@@ -1,12 +1,16 @@
-"""run_signal_sweep.py -- Comprehensive 52-signal IC/ICIR sweep.
+"""phase1_sweep.py -- Phase 1: Comprehensive 52-Signal IC/ICIR Sweep.
 
 Extends run_ic.py with all major indicator families, acceleration signals,
 structural breakout signals, and semantic combinations. Outputs a ranked
 leaderboard by |IC|/ICIR to identify signals with genuine predictive edge.
 
+Optionally accepts a regime DataFrame (from phase0_regime.py) to compute
+regime-conditional IC: unconditional, trending-only, and ranging-only.
+FLIP signals (sign reversal across regimes) are highlighted prominently.
+
 Usage:
-    uv run python research/ic_analysis/run_signal_sweep.py
-    uv run python research/ic_analysis/run_signal_sweep.py --instrument EUR_USD --timeframe D
+    uv run python research/ic_analysis/phase1_sweep.py
+    uv run python research/ic_analysis/phase1_sweep.py --instrument EUR_USD --timeframe D
 
 Signal groups (52 total):
     A: Trend (10)           -- MA spreads, MACD norm, EMA slope
@@ -88,17 +92,31 @@ def _bar(val: float, width: int = 20) -> str:
 # ── Data loading ───────────────────────────────────────────────────────────────
 
 
-def _load_ohlcv(instrument: str, timeframe: str) -> pd.DataFrame:
-    path = ROOT / "data" / f"{instrument}_{timeframe}.parquet"
+def _load_ohlcv(
+    instrument: str,
+    timeframe: str,
+    data_dir: Path | None = None,
+    fmt: str = "parquet",
+) -> pd.DataFrame:
+    """Load OHLCV data for the given instrument and timeframe."""
+    if data_dir is None:
+        data_dir = ROOT / "data"
+    path = data_dir / f"{instrument}_{timeframe}.{fmt}"
     if not path.exists():
         raise FileNotFoundError(f"Data not found: {path}")
-    df = pd.read_parquet(path)
-    if not isinstance(df.index, pd.DatetimeIndex):
-        if "timestamp" in df.columns:
-            df = df.set_index("timestamp")
-            df.index = pd.to_datetime(df.index, utc=True)
-        else:
-            raise ValueError(f"Cannot resolve timestamp index: {path}")
+    if fmt == "csv":
+        df = pd.read_csv(path)
+        ts_col = "ts_event" if "ts_event" in df.columns else "timestamp"
+        df = df.set_index(ts_col)
+        df.index = pd.to_datetime(df.index, utc=True)
+    else:
+        df = pd.read_parquet(path)
+        if not isinstance(df.index, pd.DatetimeIndex):
+            if "timestamp" in df.columns:
+                df = df.set_index("timestamp")
+                df.index = pd.to_datetime(df.index, utc=True)
+            else:
+                raise ValueError(f"Cannot resolve timestamp index: {path}")
     df.columns = [c.lower() for c in df.columns]
     df = df.sort_index()
     for col in ("open", "high", "low", "close"):
@@ -297,6 +315,7 @@ def build_all_signals(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _verdict(ic: float, icir: float, ar1: float = 1.0) -> str:
+    """Classify a signal by its IC and ICIR into a qualitative tier."""
     abs_ic = abs(ic) if not np.isnan(ic) else 0.0
     abs_ir = abs(icir) if not np.isnan(icir) else 0.0
     ar1_ok = (not np.isnan(ar1)) and ar1 > 0.3
@@ -316,7 +335,10 @@ def _print_leaderboard(
     instrument: str,
     timeframe: str,
     n_bars: int,
+    regime_rows: dict[str, dict] | None = None,
 ) -> pd.DataFrame:
+    """Print ranked leaderboard. regime_rows: signal -> {ic_unconditional,
+    ic_trending, ic_ranging, flip}. Shown as extra columns when provided."""
     best_h_col = ic_df.abs().idxmax(axis=1)
     best_ic = pd.Series(
         {sig: ic_df.loc[sig, col] for sig, col in best_h_col.items()},
@@ -329,7 +351,7 @@ def _print_leaderboard(
         ic_val = best_ic[sig]
         ir_val = icir_s.get(sig, np.nan)
         ar1_val = ar1_s.get(sig, np.nan)
-        rows.append({
+        row: dict = {
             "signal": sig,
             "group": _SIGNAL_GROUP.get(sig, "?"),
             "best_h": best_h_str[sig],
@@ -337,7 +359,10 @@ def _print_leaderboard(
             "icir": ir_val,
             "ar1": ar1_val,
             "verdict": _verdict(ic_val, ir_val, ar1_val),
-        })
+        }
+        if regime_rows and sig in regime_rows:
+            row.update(regime_rows[sig])
+        rows.append(row)
 
     df_rank = (
         pd.DataFrame(rows)
@@ -346,27 +371,43 @@ def _print_leaderboard(
         .reset_index(drop=True)
     )
 
-    W = 82
+    has_regime = regime_rows is not None
+    W = 100 if has_regime else 82
     print("\n" + "=" * W)
-    print(f"  IC SIGNAL SWEEP -- {instrument} {timeframe}")
+    print(f"  IC SIGNAL SWEEP -- {instrument} {timeframe}  [Phase 1]")
     print(f"  Signals: {len(df_rank)}  |  Horizons: {HORIZONS}  |  Bars: {n_bars:,}")
     print("=" * W)
     print()
     print("  LEADERBOARD (ranked by |IC| at best horizon)")
     print("  " + "-" * (W - 2))
-    print(
+    hdr = (
         f"  {'Rank':>4}  {'Signal':<22}  {'Grp':>5}  "
-        f"{'BestH':>6}  {'IC':>8}  {'ICIR':>7}  {'AR1':>6}  Verdict"
+        f"{'BestH':>6}  {'IC':>8}  {'ICIR':>7}  {'AR1':>6}  {'Verdict':<8}"
     )
+    if has_regime:
+        hdr += f"  {'Uncond':>8}  {'Trend':>8}  {'Ranging':>8}  {'FLIP?':<6}"
+    print(hdr)
     print("  " + "-" * (W - 2))
+
     for i, row in df_rank.iterrows():
         ic_str = f"{row['ic']:>+8.4f}" if not np.isnan(row["ic"]) else "     NaN"
         ir_str = f"{row['icir']:>+7.3f}" if not np.isnan(row["icir"]) else "    NaN"
         ar_str = f"{row['ar1']:>+6.3f}" if not np.isnan(row["ar1"]) else "   NaN"
-        print(
+        line = (
             f"  {i + 1:>4}  {row['signal']:<22}  {row['group']:>5}  "
-            f"{row['best_h']:>6}  {ic_str}  {ir_str}  {ar_str}  {row['verdict']}"
+            f"{row['best_h']:>6}  {ic_str}  {ir_str}  {ar_str}  {row['verdict']:<8}"
         )
+        if has_regime and "ic_unconditional" in row:
+            unc = row.get("ic_unconditional", np.nan)
+            trd = row.get("ic_trending", np.nan)
+            rng = row.get("ic_ranging", np.nan)
+            flip = row.get("flip", False)
+            unc_s = f"{unc:>+8.4f}" if not np.isnan(unc) else "     NaN"
+            trd_s = f"{trd:>+8.4f}" if not np.isnan(trd) else "     NaN"
+            rng_s = f"{rng:>+8.4f}" if not np.isnan(rng) else "     NaN"
+            flip_s = "**FLIP**" if flip else "      "
+            line += f"  {unc_s}  {trd_s}  {rng_s}  {flip_s}"
+        print(line)
 
     print("  " + "-" * (W - 2))
     counts = df_rank["verdict"].value_counts()
@@ -374,6 +415,14 @@ def _print_leaderboard(
     print(f"  USABLE  (|IC|>=0.05, ICIR< 0.5) : {counts.get('USABLE', 0):>3} signals")
     print(f"  WEAK    (0.03<=|IC|<0.05)        : {counts.get('WEAK',   0):>3} signals")
     print(f"  NOISE   (|IC|<0.03)              : {counts.get('NOISE',  0):>3} signals")
+
+    if has_regime and "flip" in df_rank.columns:
+        n_flip = int(df_rank["flip"].sum())
+        if n_flip:
+            print(f"\n  *** {n_flip} FLIP signal(s) detected "
+                  "(sign reversal across trending/ranging regimes) ***")
+            flip_sigs = df_rank[df_rank["flip"]]["signal"].tolist()
+            print(f"  FLIP signals: {', '.join(flip_sigs)}")
     print("=" * W)
     return df_rank
 
@@ -413,6 +462,85 @@ def _print_decile_plots(
             )
 
 
+# ── Regime-conditional IC helpers ─────────────────────────────────────────────
+
+
+def _compute_regime_ic(
+    all_signals: pd.DataFrame,
+    fwd_returns: pd.DataFrame,
+    regime_df: pd.DataFrame,
+) -> dict[str, dict]:
+    """Compute per-signal IC split by adx_regime (trending vs ranging).
+
+    Returns a dict: signal -> {ic_unconditional, ic_trending, ic_ranging, flip}.
+    """
+    regime_aligned = regime_df["adx_regime"].reindex(all_signals.index)
+
+    trending_mask = regime_aligned == "trending"
+    ranging_mask = regime_aligned == "ranging"
+
+    n_trending = int(trending_mask.sum())
+    n_ranging = int(ranging_mask.sum())
+    logger.info(
+        "Regime split: %d trending bars, %d ranging bars (of %d total)",
+        n_trending, n_ranging, len(all_signals),
+    )
+
+    result: dict[str, dict] = {}
+    for sig in all_signals.columns:
+        sig_series = all_signals[sig]
+
+        # Best horizon for this signal (use full IC table computed earlier)
+        # We recompute a quick single-signal IC unconditional here for best-h
+        from scipy import stats  # local import to keep top-level imports clean
+
+        def _spearman_ic(s: pd.Series, f: pd.DataFrame) -> float:
+            """IC at best horizon for the given subset."""
+            best_rho = np.nan
+            for col in f.columns:
+                paired = pd.concat([s, f[col]], axis=1).dropna()
+                if len(paired) < 30:
+                    continue
+                rho, _ = stats.spearmanr(paired.iloc[:, 0], paired.iloc[:, 1])
+                if np.isnan(best_rho) or abs(rho) > abs(best_rho):
+                    best_rho = float(rho)
+            return best_rho
+
+        ic_unc = _spearman_ic(sig_series, fwd_returns)
+
+        if n_trending >= 30:
+            ic_trend = _spearman_ic(
+                sig_series[trending_mask], fwd_returns[trending_mask]
+            )
+        else:
+            ic_trend = np.nan
+
+        if n_ranging >= 30:
+            ic_range = _spearman_ic(
+                sig_series[ranging_mask], fwd_returns[ranging_mask]
+            )
+        else:
+            ic_range = np.nan
+
+        # FLIP: both regimes have |IC| >= 0.03 AND opposite signs
+        flip = (
+            not np.isnan(ic_trend)
+            and not np.isnan(ic_range)
+            and abs(ic_trend) >= 0.03
+            and abs(ic_range) >= 0.03
+            and np.sign(ic_trend) != np.sign(ic_range)
+        )
+
+        result[sig] = {
+            "ic_unconditional": round(ic_unc, 5) if not np.isnan(ic_unc) else np.nan,
+            "ic_trending": round(ic_trend, 5) if not np.isnan(ic_trend) else np.nan,
+            "ic_ranging": round(ic_range, 5) if not np.isnan(ic_range) else np.nan,
+            "flip": flip,
+        }
+
+    return result
+
+
 # ── Main pipeline ──────────────────────────────────────────────────────────────
 
 
@@ -421,11 +549,58 @@ def run_sweep(
     timeframe: str,
     horizons: list[int] | None = None,
     n_bins: int = 10,
-) -> None:
+    data_dir: Path | None = None,
+    fmt: str = "parquet",
+    regime_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Run the full Phase 1 sweep for one instrument/timeframe.
+
+    Parameters
+    ----------
+    instrument:  Instrument name, e.g. "EUR_USD" or "SPY".
+    timeframe:   Timeframe label, e.g. "H4", "D", "1yr_5m".
+    horizons:    Forward return horizons in bars. Defaults to HORIZONS.
+    n_bins:      Number of quantile bins for decile plots.
+    data_dir:    Override for data directory (defaults to ROOT/data).
+    fmt:         File format -- "parquet" or "csv".
+    regime_df:   Optional DataFrame with adx_regime column (from phase0_regime.py).
+                 If None, the function tries to auto-load from
+                 .tmp/regime/{instrument}_{timeframe}_regime.parquet.
+
+    Returns
+    -------
+    pd.DataFrame  Ranked leaderboard with IC, ICIR, verdict, and optional regime
+                  columns if regime data was available.
+    """
     if horizons is None:
         horizons = HORIZONS
 
-    df = _load_ohlcv(instrument, timeframe)
+    # Auto-load regime file if not supplied
+    if regime_df is None:
+        tf_slug = (
+            timeframe.lower().split("_")[-1] if "_" in timeframe else timeframe.lower()
+        )
+        regime_path = (
+            ROOT / ".tmp" / "regime" / f"{instrument}_{tf_slug}_regime.parquet"
+        )
+        if regime_path.exists():
+            try:
+                regime_df = pd.read_parquet(regime_path)
+                if not isinstance(regime_df.index, pd.DatetimeIndex):
+                    regime_df.index = pd.to_datetime(regime_df.index, utc=True)
+                if "adx_regime" not in regime_df.columns:
+                    logger.warning(
+                        "Regime file missing 'adx_regime' column -- ignoring: %s",
+                        regime_path,
+                    )
+                    regime_df = None
+                else:
+                    logger.info("Auto-loaded regime file: %s", regime_path)
+            except Exception as exc:
+                logger.warning("Could not load regime file %s: %s", regime_path, exc)
+                regime_df = None
+
+    df = _load_ohlcv(instrument, timeframe, data_dir=data_dir, fmt=fmt)
     close = df["close"]
 
     logger.info("Computing 52 signals across 7 groups...")
@@ -448,47 +623,126 @@ def run_sweep(
     best_horizons_dict = {sig: col for sig, col in best_h_col.items()}
 
     logger.info("Computing ICIR (window=%d bars, at best horizon)...", ICIR_WINDOW)
-    icir_s = compute_icir(all_signals, fwd_returns, horizons, window=ICIR_WINDOW,
-                          best_horizons=best_horizons_dict)
+    icir_s = compute_icir(
+        all_signals, fwd_returns, horizons,
+        window=ICIR_WINDOW, best_horizons=best_horizons_dict,
+    )
 
     logger.info("Computing Autocorrelation (AR1)...")
     ar1_s = compute_autocorrelation(all_signals)
 
-    ranked = _print_leaderboard(ic_df, icir_s, ar1_s, instrument, timeframe, n_bars)
+    # Regime-conditional IC (optional)
+    regime_rows: dict[str, dict] | None = None
+    if regime_df is not None:
+        logger.info("Computing regime-conditional IC (trending / ranging)...")
+        regime_rows = _compute_regime_ic(all_signals, fwd_returns, regime_df)
+
+    ranked = _print_leaderboard(
+        ic_df, icir_s, ar1_s, instrument, timeframe, n_bars,
+        regime_rows=regime_rows,
+    )
     _print_decile_plots(all_signals, fwd_returns, ranked, top_n=5, n_bins=n_bins)
 
+    # ── Save outputs ──────────────────────────────────────────────────────────
     report_dir = ROOT / ".tmp" / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
-    slug = f"{instrument}_{timeframe}".lower()
-    ic_path = report_dir / f"ic_sweep_{slug}.csv"
-    icir_path = report_dir / f"icir_sweep_{slug}.csv"
-    ranked.to_csv(ic_path, index=False)
+
+    tf_slug = (
+        timeframe.lower().split("_")[-1] if "_" in timeframe else timeframe.lower()
+    )
+    inst_slug = instrument.lower()
+
+    ic_path = report_dir / f"phase1_{inst_slug}_{tf_slug}.csv"
+    icir_path = report_dir / f"phase1_icir_{inst_slug}_{tf_slug}.csv"
+
+    # Build save columns -- always include base columns
+    save_cols = ["signal", "group", "best_h", "ic", "icir", "ar1", "verdict"]
+    if regime_rows is not None:
+        save_cols += ["ic_unconditional", "ic_trending", "ic_ranging", "flip"]
+
+    ranked[save_cols].to_csv(ic_path, index=False)
     icir_s.to_csv(icir_path, header=True)
-    logger.info("IC table saved: %s", ic_path)
-    logger.info("ICIR saved: %s", icir_path)
+    logger.info("Phase 1 leaderboard saved : %s", ic_path)
+    logger.info("ICIR time series saved    : %s", icir_path)
+
+    return ranked
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="52-Signal IC/ICIR Sweep")
+    parser = argparse.ArgumentParser(description="Phase 1 -- 52-Signal IC/ICIR Sweep")
     parser.add_argument("--instrument", default="EUR_USD", help="Instrument name")
-    parser.add_argument("--timeframe", default="H4", help="Timeframe (H1/H4/D/W)")
+    parser.add_argument(
+        "--timeframe", default="H4",
+        help="Timeframe (H1/H4/D/1yr_5m/...)",
+    )
     parser.add_argument(
         "--horizons",
         default=",".join(str(h) for h in HORIZONS),
         help="Comma-separated forward horizons, e.g. 1,5,10,20,60",
     )
     parser.add_argument("--n_bins", type=int, default=10, help="Decile bin count")
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        help="Override data directory (default: data/). E.g. data/databento",
+    )
+    parser.add_argument(
+        "--fmt",
+        default="parquet",
+        choices=["parquet", "csv"],
+        help="File format: parquet (default) or csv",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "Run sweep on all instruments found in --data-dir "
+            "matching the timeframe"
+        ),
+    )
     args = parser.parse_args()
     horizons = [int(h) for h in args.horizons.split(",")]
-    run_sweep(
-        instrument=args.instrument,
-        timeframe=args.timeframe,
-        horizons=horizons,
-        n_bins=args.n_bins,
-    )
+    data_dir = Path(args.data_dir) if args.data_dir else None
+    effective_dir = data_dir if data_dir else ROOT / "data"
+
+    if args.all:
+        pattern = f"*_{args.timeframe}.{args.fmt}"
+        files = sorted(effective_dir.glob(pattern))
+        if not files:
+            print(f"No files found matching {effective_dir / pattern}")
+            return
+        instruments = [f.stem.replace(f"_{args.timeframe}", "") for f in files]
+        print(f"Found {len(instruments)} instruments: {', '.join(instruments)}")
+        failed = []
+        for i, inst in enumerate(instruments, 1):
+            print(f"\n[{i}/{len(instruments)}] {inst}")
+            try:
+                run_sweep(
+                    instrument=inst,
+                    timeframe=args.timeframe,
+                    horizons=horizons,
+                    n_bins=args.n_bins,
+                    data_dir=data_dir,
+                    fmt=args.fmt,
+                )
+            except Exception as exc:
+                logger.error("FAILED %s: %s", inst, exc)
+                failed.append(inst)
+        print(f"\nDone. {len(instruments) - len(failed)}/{len(instruments)} succeeded.")
+        if failed:
+            print(f"Failed: {', '.join(failed)}")
+    else:
+        run_sweep(
+            instrument=args.instrument,
+            timeframe=args.timeframe,
+            horizons=horizons,
+            n_bins=args.n_bins,
+            data_dir=data_dir,
+            fmt=args.fmt,
+        )
 
 
 if __name__ == "__main__":

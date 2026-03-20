@@ -22,6 +22,8 @@ dependencies = [
     "statsmodels>=0.14",
     "databento>=0.73.0",
     "hmmlearn>=0.3",
+    "lxml>=6.0.2",
+    "html5lib>=1.1",
 ]
 
 [project.optional-dependencies]

@@ -442,17 +442,57 @@ The live strategy must faithfully replicate the research composite construction:
 
 ### TOML Configuration
 
+Live parameters live in `config/ic_generic.toml`, one section per instrument:
+
 ```toml
-[instrument]
-threshold     = 0.75      # from Phase 3 best IS threshold
-risk_pct      = 0.01      # 1% equity risk per trade
-stop_atr_mult = 1.5       # ATR multiplier for sizing
-leverage_cap  = 20.0      # max leverage (FX: 20-30, equity: 2-5)
-warmup_bars   = 1000      # bars for IS calibration
-direction     = "both"    # "long_only" for equities, "both" for FX
+[EUR_USD]
+asset_class       = "fx_major"     # cost profile: fx_major | fx_cross | equity_lc | etf | futures
+direction         = "both"         # "long_only" for equities/ETFs, "both" for FX/futures
+signals           = ["accel_rsi14", "accel_stoch_k"]   # from Phase 2 leaderboard
+tfs               = ["W", "D", "H4", "H1"]             # TF stack; base TF = last element
+threshold         = 0.75           # z-score entry trigger — set by phase6_deploy.py, not by hand
+risk_pct          = 0.01           # fraction of equity risked per trade (human-validated)
+stop_atr_mult     = 1.5            # ATR14 multiplier for stop distance (human-validated)
+leverage_cap      = 20.0           # max position leverage (human-validated)
+warmup_bars       = 1000           # bars per TF loaded at startup for IS calibration
+phase3_max_dd_pct = 8.2            # Phase 3 OOS max DD % — enables live DD halt gate at 1.5×
+phase3_trade_rate = 4.5            # expected trades/month — enables frequency monitoring gate
 ```
 
-**Do not change thresholds without re-running Phases 3–5.** The threshold was selected on IS data and validated on OOS — changing it retroactively is look-ahead bias.
+**Fields auto-updated by `phase6_deploy.py`:** `threshold`, `phase3_max_dd_pct`, `phase3_trade_rate`.
+
+**Fields that are human-validated and never auto-updated:** `risk_pct`, `stop_atr_mult`, `leverage_cap`.
+
+> [!CAUTION]
+> Never edit `threshold` by hand. It was selected on IS data and validated on OOS.
+> Changing it retroactively is look-ahead bias. Use `scripts/phase6_deploy.py` instead.
+
+### Config Handoff (phase6_deploy.py)
+
+After Phase 5 passes all 6 gates, push the Phase 3 threshold to config:
+
+```bash
+# 1. Verify Phase 5 passed
+cat .tmp/reports/phase5_eur_usd.csv
+
+# 2. Dry-run: preview what will change
+uv run python scripts/phase6_deploy.py \
+  --instrument EUR_USD --asset-class fx_major --dry-run
+
+# 3. Write on confirmation
+uv run python scripts/phase6_deploy.py \
+  --instrument EUR_USD --asset-class fx_major
+
+# 4. For equities
+uv run python scripts/phase6_deploy.py \
+  --instrument SPY --asset-class etf --direction long_only
+```
+
+The script:
+- Checks `.tmp/reports/phase5_{instrument}*.csv` — warns if missing or has FAIL gates
+- Finds the most recent `phase3_{instrument}*.csv` automatically
+- Proposes a diff and requires explicit `y` confirmation before writing
+- Never touches `risk_pct`, `stop_atr_mult`, or `leverage_cap`
 
 ### Live Monitoring
 
@@ -509,17 +549,31 @@ Phase 3 must report **both** Trade Sharpe and Daily Sharpe. Comparing Trade Shar
 
 ## Scripts Reference
 
+### Phase Scripts
+
 | Script | Phase | Purpose |
 |---|---|---|
-| `run_ic_backtest.py` | 3 | IS/OOS full-friction backtest (FX MTF) |
-| `run_regime_backtest.py` | 3 | ADX-gated backtest per instrument |
-| `run_cat_amat_strategy.py` | 3 | Equities regime-gated long-only |
-| `run_spy_strategy.py` | 3 | SPY three-signal strategy |
-| `run_equity_longonly_pipeline.py` | 3–5 | Cross-asset equity pipeline |
-| `run_wfo.py` | 4 | Walk-forward optimisation |
-| `run_ic_robustness.py` | 5 | Robustness gates (MC, top-N, 3× slip, WFO) |
-| `titan/strategies/ic_mtf/strategy.py` | 6 | NautilusTrader live strategy (FX) |
-| `titan/strategies/ic_equity_daily/strategy.py` | 6 | NautilusTrader live strategy (equity) |
+| `research/ic_analysis/phase3_backtest.py` | 3 | IS/OOS full-friction backtest — asset-agnostic, `--direction` flag, cost sensitivity sweep (0.5–3×), RoR gate |
+| `research/ic_analysis/phase4_wfo.py` | 4 | Walk-forward optimisation — `--wfo-type rolling\|anchored`, per-fold recalibration, stitched equity curve |
+| `research/ic_analysis/phase5_robustness.py` | 5 | Robustness validation — all 6 gates (G1 Monte Carlo, G2 top-N, G3 3× slip, G4 WFO folds, G5 regime, G6 alpha/beta) |
+
+### Orchestrators
+
+| Script | Phases | Purpose |
+|---|---|---|
+| `research/ic_analysis/pipeline_validation.py` | 3–5 | Chains Phase 3 → 4 → 5 for any instrument batch; skips Phase 4–5 if Phase 3 OOS/IS ratio < 0.5 |
+
+### Live Deployment
+
+| Script / File | Phase | Purpose |
+|---|---|---|
+| `titan/strategies/ic_generic/strategy.py` | 6 | NautilusTrader live strategy — any asset class, TOML-driven, replaces `ic_mtf` and `ic_equity_daily` |
+| `config/ic_generic.toml` | 6 | Per-instrument live parameters (threshold, signals, TFs, leverage, direction) |
+| `scripts/phase6_deploy.py` | 6 | Research → config handoff; reads Phase 3 CSV, checks Phase 5 gate report, writes threshold to `ic_generic.toml` |
+
+> **Archived scripts** (superseded, kept for reference): `research/ic_analysis/_archive/` contains all
+> instrument-specific pipelines (`run_ic_backtest.py`, `run_wfo.py`, `run_ic_robustness.py`,
+> `run_spy_strategy.py`, `run_equity_longonly_pipeline.py`, and 15 others).
 
 ---
 
@@ -543,4 +597,5 @@ Re-run Phases 3–5 if:
 
 | Version | Date | Changes |
 |---|---|---|
+| **1.1** | 2026-03-20 | Updated Scripts Reference to reflect pipeline restructure: `phase3_backtest.py`, `phase4_wfo.py`, `phase5_robustness.py`, `pipeline_validation.py` replace all instrument-specific scripts (archived to `_archive/`). Phase 6 TOML expanded with `signals`, `tfs`, `asset_class`, `phase3_max_dd_pct`, `phase3_trade_rate`. Added Config Handoff subsection documenting `phase6_deploy.py` workflow. `ic_generic/strategy.py` replaces `ic_mtf` and `ic_equity_daily`. |
 | **1.0** | 2026-03-20 | Initial unified directive. Consolidated from IC MTF Backtesting Guide, MTF Optimization Protocol, and IC Equity Daily Strategy into a single asset-agnostic process spec. Added 6 improvements: Sharpe definition clarity, cost sensitivity sweep, regime robustness gate (ADX+HMM), alpha/beta decomposition, holding period distribution, per-trade % return warning. Risk of Ruin gate added to Phase 3. Kill switch triggers added to Phase 6. |

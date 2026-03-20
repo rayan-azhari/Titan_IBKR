@@ -1,0 +1,187 @@
+# IC Generic Strategy Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Drives titan/strategies/ic_generic/strategy.py (asset-class agnostic).
+#
+# HOW TO UPDATE THRESHOLDS:
+#   uv run python scripts/phase6_deploy.py --instrument EUR_USD --asset-class fx_major
+#   (reads .tmp/reports/phase3_*.csv → proposes diff → writes on confirmation)
+#
+# FIELD REFERENCE:
+#   signals           list of signal names from _SIGNAL_REGISTRY in strategy.py
+#                     valid: accel_rsi14, accel_rsi21, accel_stoch_k,
+#                            rsi_14_dev, rsi_21_dev, stoch_k
+#   tfs               ordered TF stack; base TF = last element
+#                     FX:     ["W", "D", "H4", "H1"]  → base = H1
+#                     Equity: ["D"]                    → base = D
+#   threshold         z-score entry trigger (from Phase 3 IS optimisation)
+#                     DO NOT hand-edit — use phase6_deploy.py
+#   direction         "both" (FX / futures) | "long_only" (equities / ETFs)
+#   asset_class       "fx_major" | "fx_cross" | "equity_lc" | "etf" | "futures"
+#   risk_pct          fraction of equity risked per trade (human-validated, not auto-updated)
+#   stop_atr_mult     ATR14 multiplier for initial stop distance (human-validated)
+#   leverage_cap      maximum position leverage (human-validated)
+#   warmup_bars       bars of history loaded per TF at strategy start for IS calibration
+#   phase3_max_dd_pct OOS max drawdown % from Phase 3 (enables live DD halt gate at 1.5×)
+#                     set to 0.0 to disable the gate
+#   phase3_trade_rate expected trades per month from Phase 3 OOS (enables frequency gate)
+#                     set to 0.0 to disable the gate
+
+# ── FX MAJORS ─────────────────────────────────────────────────────────────────
+
+[EUR_USD]
+asset_class       = "fx_major"
+direction         = "both"
+signals           = ["accel_rsi14", "accel_stoch_k"]
+tfs               = ["W", "D", "H4", "H1"]
+threshold         = 0.75
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 20.0
+warmup_bars       = 1000
+phase3_max_dd_pct = 0.0   # update after Phase 3 run
+phase3_trade_rate = 0.0   # update after Phase 3 run
+
+[GBP_USD]
+asset_class       = "fx_major"
+direction         = "both"
+signals           = ["accel_rsi14", "accel_stoch_k"]
+tfs               = ["W", "D", "H4", "H1"]
+threshold         = 1.00
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 20.0
+warmup_bars       = 1000
+phase3_max_dd_pct = 0.0
+phase3_trade_rate = 0.0
+
+[USD_JPY]
+asset_class       = "fx_major"
+direction         = "both"
+signals           = ["accel_rsi14", "accel_stoch_k"]
+tfs               = ["W", "D", "H4", "H1"]
+threshold         = 0.75
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 20.0
+warmup_bars       = 1000
+phase3_max_dd_pct = 0.0
+phase3_trade_rate = 0.0
+
+[AUD_USD]
+asset_class       = "fx_major"
+direction         = "both"
+signals           = ["accel_rsi14", "accel_stoch_k"]
+tfs               = ["W", "D", "H4", "H1"]
+threshold         = 1.00
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 20.0
+warmup_bars       = 1000
+phase3_max_dd_pct = 0.0
+phase3_trade_rate = 0.0
+
+[AUD_JPY]
+asset_class       = "fx_cross"
+direction         = "both"
+signals           = ["accel_rsi14", "accel_stoch_k"]
+tfs               = ["W", "D", "H4", "H1"]
+threshold         = 0.75
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 20.0
+warmup_bars       = 1000
+phase3_max_dd_pct = 0.0
+phase3_trade_rate = 0.0
+
+[USD_CHF]
+asset_class       = "fx_major"
+direction         = "both"
+signals           = ["accel_rsi14", "accel_stoch_k"]
+tfs               = ["W", "D", "H4", "H1"]
+threshold         = 1.00
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 20.0
+warmup_bars       = 1000
+phase3_max_dd_pct = 0.0
+phase3_trade_rate = 0.0
+
+# ── EQUITIES / ETFs ───────────────────────────────────────────────────────────
+
+[SPY]
+asset_class       = "etf"
+direction         = "long_only"
+signals           = ["rsi_21_dev"]
+tfs               = ["D"]
+threshold         = 0.75
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 3.0
+warmup_bars       = 500
+phase3_max_dd_pct = 0.0
+phase3_trade_rate = 0.0
+
+[QQQ]
+asset_class       = "etf"
+direction         = "long_only"
+signals           = ["rsi_21_dev"]
+tfs               = ["D"]
+threshold         = 0.75
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 3.0
+warmup_bars       = 500
+phase3_max_dd_pct = 0.0
+phase3_trade_rate = 0.0
+
+[CSCO]
+asset_class       = "equity_lc"
+direction         = "long_only"
+signals           = ["rsi_21_dev"]
+tfs               = ["D"]
+threshold         = 0.75
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 4.0
+warmup_bars       = 500
+phase3_max_dd_pct = 0.0
+phase3_trade_rate = 0.0
+
+[NOC]
+asset_class       = "equity_lc"
+direction         = "long_only"
+signals           = ["rsi_21_dev"]
+tfs               = ["D"]
+threshold         = 0.75
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 4.0
+warmup_bars       = 500
+phase3_max_dd_pct = 0.0
+phase3_trade_rate = 0.0
+
+[WMT]
+asset_class       = "equity_lc"
+direction         = "long_only"
+signals           = ["rsi_21_dev"]
+tfs               = ["D"]
+threshold         = 0.75
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 4.0
+warmup_bars       = 500
+phase3_max_dd_pct = 0.0
+phase3_trade_rate = 0.0
+
+[ABNB]
+asset_class       = "equity_lc"
+direction         = "long_only"
+signals           = ["rsi_21_dev"]
+tfs               = ["D"]
+threshold         = 0.75
+risk_pct          = 0.01
+stop_atr_mult     = 1.5
+leverage_cap      = 4.0
+warmup_bars       = 500
+phase3_max_dd_pct = 0.0
+phase3_trade_rate = 0.0

@@ -24,19 +24,17 @@ Phase 0  — Regime Identification
   Fractional differencing (optional)   → stationarity pre-processing
 
 Phase 1  — Signal Discovery
-  run_signal_sweep.py    → 52-signal IC/ICIR leaderboard (unconditional + per-regime)
-  run_regime_ic.py       → regime-conditional IC breakdown (FLIP detection)
-  run_param_sweep.py     → parameter grid search per signal family
+  phase1_sweep.py        → 52-signal IC/ICIR leaderboard (unconditional + per-regime, FLIP detection)
+  phase1_param_sweep.py  → parameter grid search per signal family
 
 Phase 2  — Signal Combination (MANDATORY)
-  run_signal_combination.py → correlation matrix, orthogonality, composite building
+  phase2_combination.py  → correlation matrix, orthogonality, composite building
 
 Phase 3  — Backtesting
-  run_ic_backtest.py     → full-friction IS/OOS backtest: spread + slippage + swap
-  Risk of Ruin gate      → Balsara formula on OOS trades
+  phase3_backtest.py     → full-friction IS/OOS backtest: spread + slippage + swap + RoR gate
 
 Phase 4  — Walk-Forward Optimisation
-  run_wfo.py             → rolling walk-forward: 2yr IS / 6mo OOS, 5 gates
+  phase4_wfo.py          → rolling or anchored walk-forward: 2yr IS / 6mo OOS, per-fold recalibration
 
 Phase 5  — Robustness
   run_ic_robustness.py   → Monte Carlo · top-N removal · 3× slippage · WFO folds
@@ -453,7 +451,7 @@ All signal computations are strictly causal. No signal uses future information.
 > [!WARNING]
 > `close.shift(-h)` appears only inside `compute_forward_returns()` in `run_ic.py`.
 > Every signal factory function must contain zero instances of `shift(-n)`.
-> Verify with: `grep -n "shift(-" research/ic_analysis/run_signal_sweep.py`
+> Verify with: `grep -n "shift(-" research/ic_analysis/phase1_sweep.py`
 
 ---
 
@@ -464,12 +462,12 @@ All signal computations are strictly causal. No signal uses future information.
 | File | Role |
 |---|---|
 | `research/ic_analysis/run_ic.py` | Core IC functions — `compute_ic_table`, `compute_forward_returns`, `compute_icir`, `compute_mfe_mae_targets`, `compute_alpha_decay`, `compute_monotonicity`, `compute_recency_weighted_ic` |
-| `research/ic_analysis/run_signal_sweep.py` | 52-signal sweep — leaderboard + decile plots |
-| `research/ic_analysis/run_regime_ic.py` | Regime-conditional IC — FLIP detection |
-| `research/ic_analysis/run_signal_combination.py` | Phase 2 — correlation matrix + composite building |
-| `research/ic_analysis/run_frac_diff.py` | Phase 0 — fractional differencing |
-| `research/ic_analysis/run_param_sweep.py` | Parameter grid search |
-| `titan/strategies/ml/features.py` | Technical indicator implementations |
+| `research/ic_analysis/phase0_regime.py` | Phase 0 — ADX + HMM regime labelling; optional fractional differencing |
+| `research/ic_analysis/phase1_sweep.py` | Phase 1 — 52-signal IC/ICIR sweep with regime-conditional IC and FLIP detection |
+| `research/ic_analysis/phase1_param_sweep.py` | Phase 1 extension — parameter grid search per signal family |
+| `research/ic_analysis/phase2_combination.py` | Phase 2 — correlation matrix, partial IC, composite building |
+| `research/ic_analysis/pipeline_discovery.py` | Orchestrator: Phases 0 → 1 → 2 for any instrument(s) / TF |
+| `titan/strategies/ml/features.py` | Technical indicator implementations (used by signal registry in ic_generic) |
 
 ### Data Requirements
 
@@ -525,23 +523,40 @@ Phase 2:
 
 ## Running the Pipeline
 
-### Phase 0 + Phase 1 (Signal Discovery)
+### Full Discovery Pipeline (Phases 0 → 1 → 2)
 
 ```bash
-uv run python research/ic_analysis/run_signal_sweep.py --instrument EUR_USD --timeframe H4
-uv run python research/ic_analysis/run_signal_sweep.py --instrument SPY --timeframe D --horizons 1,5,10,20,60
+# Single instrument
+uv run python research/ic_analysis/pipeline_discovery.py \
+  --instrument EUR_USD --timeframe H4 --tfs W,D,H4,H1
+
+# Batch — equities
+uv run python research/ic_analysis/pipeline_discovery.py \
+  --instruments SPY QQQ CSCO NOC --timeframe D
+
+# Phase 1 only (skip Phase 2)
+uv run python research/ic_analysis/pipeline_discovery.py \
+  --instrument EUR_USD --timeframe H4 --phase 0,1
 ```
 
-### Phase 1 Extension (Regime IC)
+### Phase 0 (Regime Labels Only)
 
 ```bash
-uv run python research/ic_analysis/run_regime_ic.py --instrument SPY --timeframe D --horizon 20
+uv run python research/ic_analysis/phase0_regime.py --instrument EUR_USD --timeframe H4
+uv run python research/ic_analysis/phase0_regime.py --instrument SPY --timeframe D --frac-diff
 ```
 
-### Phase 2 (Signal Combination)
+### Phase 1 (Signal Sweep Only)
 
 ```bash
-uv run python research/ic_analysis/run_signal_combination.py --instrument SPY --timeframe D
+uv run python research/ic_analysis/phase1_sweep.py --instrument EUR_USD --timeframe H4
+uv run python research/ic_analysis/phase1_sweep.py --instrument SPY --timeframe D --horizons 1,5,10,20,60
+```
+
+### Phase 2 (Signal Combination Only)
+
+```bash
+uv run python research/ic_analysis/phase2_combination.py --instrument SPY --timeframe D
 ```
 
 ### CLI Arguments
@@ -700,19 +715,19 @@ In live deployment, the IC sign is computed from a warmup window. WFO validates 
 
 Before trusting any sweep output:
 
-- [ ] Confirm zero `shift(-n)` calls in any signal factory: `grep -n "shift(-" research/ic_analysis/run_signal_sweep.py`
+- [ ] Confirm zero `shift(-n)` calls in any signal factory: `grep -n "shift(-" research/ic_analysis/phase1_sweep.py`
 - [ ] All 52 signals present in the leaderboard (no KeyError / group mismatch)
 - [ ] CSV row count = 52
 - [ ] At least 200 bars available after NaN drop
 - [ ] ICIR_WINDOW (60) < available bars / 3 (otherwise ICIR is unreliable)
 - [ ] Phase 2 correlation matrix computed before proceeding to Phase 3
-- [ ] Ruff passes: `uv run ruff check research/ic_analysis/run_signal_sweep.py`
+- [ ] Ruff passes: `uv run ruff check research/ic_analysis/phase1_sweep.py`
 
 ---
 
 ## Parameter Sweep (Phase 1 Extension)
 
-**Script:** `research/ic_analysis/run_param_sweep.py`
+**Script:** `research/ic_analysis/phase1_param_sweep.py`
 
 The parameter sweep tests whether the default indicator parameters are near-optimal or whether tuned values meaningfully improve IC.
 

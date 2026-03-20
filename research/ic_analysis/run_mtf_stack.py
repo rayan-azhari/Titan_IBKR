@@ -1,5 +1,8 @@
 """run_mtf_stack.py -- Multi-Timeframe Signal Stacking IC Analysis.
 
+Pipeline position: Phase 1.5 (between run_signal_sweep.py and run_signal_combination.py).
+Feeds the signal identity and sign orientation required by Phase 2 (run_signal_combination.py).
+
 For each of the 52 signals, computes the signal on W, D, H4, and H1 bars
 separately, aligns all to H1, then tests whether stacking (combining) signals
 across timeframes produces a composite with higher IC/ICIR than H1 alone.
@@ -19,9 +22,15 @@ Alignment:
     signal is constant within each week (~168 H1 bars); it only changes
     when the new weekly bar closes. This is causal -- no look-ahead.
 
+    Per the look-ahead safety rules in directives/IC Signal Analysis.md:
+    coarser TF signals are .shift(1) on their native bars before ffill.
+    This ensures the signal at any H1 bar reflects only the last CLOSED
+    coarser bar, never the still-open current one.
+
 Forward returns:
-    Evaluated on H1 bars. Default horizons: [1, 4, 20, 80, 240] H1 bars,
-    roughly equivalent to H4 horizons [1, 5, 10, 20, 60] × 4.
+    Horizons [1, 5, 10, 20, 60] H1 bars -- identical to run_signal_sweep.py
+    and run_signal_combination.py so that IC values are directly comparable
+    across all Phase 1/1.5/2 scripts.
 
 Usage:
     uv run python research/ic_analysis/run_mtf_stack.py
@@ -61,7 +70,7 @@ DEFAULT_TFS = ["W", "D", "H4", "H1"]
 BASE_TF = "H1"
 
 # Horizons in H1 bars — roughly: 1h, 4h, 1day, 1wk, 2wks
-HORIZONS = [1, 4, 20, 80, 240]
+HORIZONS = [1, 5, 10, 20, 60]  # matches run_signal_sweep.py / run_signal_combination.py
 ICIR_WINDOW = 60
 
 
@@ -239,6 +248,7 @@ def build_stacked_composites(
     signal_names: list[str],
     horizons: list[int],
     tfs: list[str],
+    fwd_returns: pd.DataFrame,
 ) -> pd.DataFrame:
     """Build MTF stacked composites for each signal using 3 methods.
 
@@ -247,10 +257,27 @@ def build_stacked_composites(
       - ICIR-weighted:    weighted by |ICIR| per TF
       - Confluence gate:  mean of sign(TF variant) → proportion of TFs that agree
 
+    Args:
+        tf_signals:   dict TF -> aligned signal DataFrame (H1 index)
+        ic_by_tf:     dict TF -> IC DataFrame (signals × horizons)
+        icir_by_tf:   dict TF -> ICIR Series (one value per signal)
+        signal_names: signals to stack (must be present in tf_signals[tfs[-1]])
+        horizons:     forward return horizons in base-TF bars
+        tfs:          timeframes coarse-to-fine; tfs[-1] is the base TF (H1)
+        fwd_returns:  forward return DataFrame aligned to base-TF index
+
     Returns DataFrame with columns:
-      signal, tf, method, best_ic, best_h, best_icir, verdict, vs_h1_ic
+        signal, method, n_tfs, best_ic, best_h, best_icir, verdict, h1_best_ic, vs_h1_ic
     """
-    raise NotImplementedError("Call run_mtf_stack() instead.")
+    base_tf = tfs[-1]
+    all_results: list[dict] = []
+    for sig in signal_names:
+        rows = _build_stacked_for_signal(
+            sig, tf_signals, ic_by_tf, icir_by_tf,
+            fwd_returns, horizons, tfs, base_tf,
+        )
+        all_results.extend(rows)
+    return pd.DataFrame(all_results) if all_results else pd.DataFrame()
 
 
 def _build_stacked_for_signal(
@@ -275,9 +302,10 @@ def _build_stacked_for_signal(
         return []
 
     # H1-only IC reference (at best horizon across all horizons)
+    _h1_ic: pd.DataFrame = ic_by_tf[h1_tf] if h1_tf in ic_by_tf else pd.DataFrame()
     h1_ic_row = (
-        ic_by_tf.get(h1_tf, pd.DataFrame()).loc[signal_name]
-        if signal_name in ic_by_tf.get(h1_tf, pd.DataFrame()).index
+        _h1_ic.loc[signal_name]
+        if signal_name in _h1_ic.index
         else pd.Series(dtype=float)
     )
     if h1_ic_row.empty:
@@ -501,7 +529,9 @@ def run_mtf_stack(
     # 1. Load and align all TFs to base
     tf_signals, base_index = build_aligned_signals(instrument, tfs, base_tf)
     group_map = dict(_sweep._SIGNAL_GROUP)  # populated by build_all_signals calls
-    signal_names = [s for s in list(tf_signals[base_tf].columns) if s in group_map]
+    signal_names: list[str] = [
+        str(s) for s in tf_signals[base_tf].columns if s in group_map
+    ]
 
     # 2. Forward returns on base TF (H1)
     base_close = _load_ohlcv(instrument, base_tf)["close"]
