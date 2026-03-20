@@ -217,3 +217,75 @@ with ADX regime gating. Long-only.
 
 Selective strategy (29 trades in 10 years) with dramatically lower drawdown than buy-and-hold.
 Best used as a tactical overlay on a core B&H position.
+
+---
+
+## FX IC MTF Strategy — Phase 3-5 Results (2026-03-19)
+
+**Strategy:** `accel_stoch_k` + `accel_rsi14` equal-weight composite across W/D/H4/H1.
+**Script:** `research/ic_analysis/run_ic_backtest.py`
+
+### Phase 3 — IS/OOS Backtest
+
+| Pair | OOS Sharpe | Threshold | OOS Net Return | IS/OOS Parity |
+|---|---|---|---|---|
+| EUR/USD | 7.709 | 0.75z | +2,571,043% | 0.838 |
+| GBP/USD | 8.475 | 1.00z | +16,441% | 1.087 |
+| USD/JPY | 7.351 | 0.75z | +7,612% | 1.066 |
+| AUD/USD | 6.901 | 1.00z | +3,295% | 1.004 |
+| AUD/JPY | 7.334 | 0.75z | +3,482% | 1.195 |
+| USD/CHF | 7.476 | 1.00z | +8,419% | 1.054 |
+
+### Phase 4 — Walk-Forward Optimisation
+
+| Pair | Folds | >0% | >1% | Worst | Stitched Sh | Parity |
+|---|---|---|---|---|---|---|
+| EUR/USD | 27 | 100% | 96.3% | +0.756 | +10.242 | 0.976 |
+| GBP/USD | 10 | 100% | 100% | +7.425 | +9.851 | 1.006 |
+| USD/JPY | 10 | 100% | 100% | +5.273 | +7.269 | 1.031 |
+| AUD/USD | 10 | 100% | 100% | +3.305 | +8.528 | 0.998 |
+| AUD/JPY | 10 | 100% | 100% | +3.910 | +7.733 | 1.020 |
+| USD/CHF | 10 | 100% | 100% | +5.517 | +8.475 | 1.011 |
+
+### Phase 5 — Robustness
+
+| Pair | Combined Sh | MC 5pct | %Prof | Top-N | 3× Slip Sh | Consec Neg | ALL |
+|---|---|---|---|---|---|---|---|
+| EUR/USD | 7.71 | 7.49 | 100% | +358% | 6.06 | 0 | PASS |
+| GBP/USD | 8.28 | 8.69 | 100% | +162% | 6.85 | 0 | PASS |
+| USD/JPY | 7.35 | 6.90 | 100% | +185% | 6.49 | 0 | PASS |
+| AUD/USD | 6.84 | 7.03 | 100% | +171% | 4.87 | 0 | PASS |
+| AUD/JPY | 7.33 | 7.27 | 100% | +206% | 6.02 | 0 | PASS |
+| USD/CHF | 7.34 | 7.55 | 100% | +151% | 5.41 | 0 | PASS |
+
+6/6 pairs pass all robustness gates. Cleared for live deployment.
+
+---
+
+## MTF Confluence Strategy — Locked Configs (2026-03-15)
+
+**Strategy:** Multi-timeframe moving average confluence with RSI confirmation.
+**Script:** `scripts/run_mtf_pipeline.py`
+
+### EUR/USD (WMA, Threshold 0.10, ATR Stop 4.0×)
+
+| TF | Weight | fast_ma | slow_ma | rsi_period |
+|---|---|---|---|---|
+| D | 0.55 | 10 | 20 | 7 |
+| W | 0.30 | 8 | 21 | 14 |
+| H1 | 0.10 | 10 | 50 | 14 |
+| H4 | 0.05 | 10 | 40 | 14 |
+
+OOS Combined Sharpe: 1.943 | Swap-adjusted CAGR: ~8%/yr | Max DD: ~10%
+
+### GBP/USD (SMA, Threshold 0.10, ATR Stop 4.0×)
+
+| TF | Weight | fast_ma | slow_ma | rsi_period |
+|---|---|---|---|---|
+| D | 0.55 | 5 | 20 | 10 |
+| H4 | 0.30 | 10 | 30 | 14 |
+| H1 | 0.10 | 20 | 100 | 21 |
+| W | 0.05 | 10 | 21 | 7 |
+
+OOS Combined Sharpe: 1.331
+

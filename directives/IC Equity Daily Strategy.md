@@ -1,6 +1,12 @@
 # IC Equity Daily Strategy
 
+> [!CAUTION]
+> **DEPRECATED:** This document has been superseded by `directives/Backtesting & Validation.md`
+> (process) and `research/ic_analysis/FINDINGS.md` (results). This file is retained for
+> historical reference only. Do not use as a primary directive.
+
 **Version:** 1.1 | **Last Updated:** 2026-03-20
+
 
 ---
 

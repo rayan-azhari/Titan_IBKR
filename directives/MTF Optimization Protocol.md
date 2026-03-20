@@ -1,6 +1,12 @@
 # MTF Strategy Optimization Protocol (VectorBT)
 
+> [!CAUTION]
+> **DEPRECATED:** This document has been superseded by `directives/Backtesting & Validation.md`
+> (process) and `research/ic_analysis/FINDINGS.md` (results). This file is retained for
+> historical reference only. Do not use as a primary directive.
+
 > **Status: COMPLETE — Round 4 Validated (2026-03-15)**
+
 > Full 6-stage pipeline complete for EUR/USD. GBP/USD also validated (Combined Sharpe 1.331).
 > Locked configs: `config/mtf_eurusd.toml`, `config/mtf_gbpusd.toml`.
 > Do NOT re-run stages unless starting a new research cycle with fresh data.
