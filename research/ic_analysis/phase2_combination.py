@@ -44,6 +44,7 @@ import research.ic_analysis.phase1_sweep as _sweep  # noqa: E402
 from research.ic_analysis.phase1_sweep import (  # noqa: E402
     _load_ohlcv,
     build_all_signals,
+    _get_annual_bars,
 )
 from research.ic_analysis.run_ic import (  # noqa: E402
     compute_forward_returns,
@@ -57,7 +58,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 IC_USABLE_THRESHOLD = 0.03
-ICIR_WINDOW = 60
 CLUSTER_CORR_THRESHOLD = 0.70
 DEFAULT_TOP_N = [3, 5, 10]
 
@@ -162,7 +162,7 @@ def method_correlation_analysis(
     if clean.empty:
         return {"corr_matrix": pd.DataFrame(), "clusters": [], "independent_signals": []}
 
-    corr = clean.corr(method="pearson")
+    corr = clean.corr(method="spearman")
     signals = list(corr.index)
 
     # Union-Find
@@ -619,7 +619,8 @@ def run_combination(
 
     # 2. Build all 52 signals (also populates _sweep._SIGNAL_GROUP)
     logger.info("Computing 52 signals...")
-    all_signals = build_all_signals(df)
+    window_1y = _get_annual_bars(timeframe)
+    all_signals = build_all_signals(df, window_1y)
     group_map = dict(_sweep._SIGNAL_GROUP)
 
     # 3. Forward returns at single horizon
@@ -635,9 +636,8 @@ def run_combination(
     # 5. IC and ICIR for all 52 signals at the target horizon
     logger.info("Computing IC at h=%d...", horizon)
     ic_df = compute_ic_table(all_signals, fwd_returns)
-
-    logger.info("Computing ICIR (window=%d)...", ICIR_WINDOW)
-    icir_s = compute_icir(all_signals, fwd_returns, horizons=[horizon], window=ICIR_WINDOW)
+    logger.info("Computing ICIR (window=%d)...", window_1y)
+    icir_s = compute_icir(all_signals, fwd_returns, horizons=[horizon], window=window_1y)
 
     # 6. Select USABLE signals
     usable = _select_usable(ic_df, all_signals, horizon)

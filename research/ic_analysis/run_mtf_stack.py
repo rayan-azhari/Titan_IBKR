@@ -49,13 +49,14 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-import research.ic_analysis.run_signal_sweep as _sweep  # noqa: E402
+import research.ic_analysis.phase1_sweep as _sweep  # noqa: E402
 from research.ic_analysis.run_ic import (  # noqa: E402
     compute_forward_returns,
     compute_ic_table,
     compute_icir,
 )
-from research.ic_analysis.run_signal_sweep import (  # noqa: E402
+from research.ic_analysis.phase1_sweep import (  # noqa: E402
+    _get_annual_bars,
     _load_ohlcv,
     build_all_signals,
 )
@@ -70,8 +71,7 @@ DEFAULT_TFS = ["W", "D", "H4", "H1"]
 BASE_TF = "H1"
 
 # Horizons in H1 bars — roughly: 1h, 4h, 1day, 1wk, 2wks
-HORIZONS = [1, 5, 10, 20, 60]  # matches run_signal_sweep.py / run_signal_combination.py
-ICIR_WINDOW = 60
+HORIZONS = [1, 5, 10, 20, 60]  # matches phase1_sweep.py / phase2_combination.py
 
 
 # ── Verdict ────────────────────────────────────────────────────────────────────
@@ -109,7 +109,8 @@ def _load_all_tfs(instrument: str, tfs: list[str]) -> dict[str, pd.DataFrame]:
 def _build_tf_signals(df: pd.DataFrame, tf: str) -> pd.DataFrame:
     """Compute all 52 signals on a single TF's native bars."""
     logger.info("Computing 52 signals on %s...", tf)
-    return build_all_signals(df)
+    window_1y = _get_annual_bars(tf)
+    return build_all_signals(df, window_1y)
 
 
 def _align_to_base(
@@ -196,7 +197,8 @@ def compute_single_tf_icirs(
         valid = signals.notna().any(axis=1) & fwd_returns.notna().any(axis=1)
         sig_v = signals[valid]
         fwd_v = fwd_returns[valid]
-        icir_by_tf[tf] = compute_icir(sig_v, fwd_v, horizons=horizons, window=ICIR_WINDOW)
+        window_1y = _get_annual_bars(tf)
+        icir_by_tf[tf] = compute_icir(sig_v, fwd_v, horizons=horizons, window=window_1y)
     return icir_by_tf
 
 
@@ -227,13 +229,14 @@ def _score_series(
     best_h = int(best_col.replace("fwd_", ""))
 
     # ICIR at best horizon
-    icir_s = compute_icir(sig_df, fwd_returns[[best_col]], horizons=[best_h], window=ICIR_WINDOW)
+    window_1y = _get_annual_bars(BASE_TF)
+    icir_s = compute_icir(sig_df, fwd_returns[[best_col]], horizons=[best_h], window=window_1y)
     best_icir = float(icir_s.iloc[0]) if not icir_s.empty else np.nan
 
     # Also ICIR at first horizon for comparison
     h1_col = f"fwd_{horizons[0]}"
     if h1_col in fwd_returns.columns:
-        icir_h1_s = compute_icir(sig_df, fwd_returns[[h1_col]], horizons=[horizons[0]], window=ICIR_WINDOW)
+        icir_h1_s = compute_icir(sig_df, fwd_returns[[h1_col]], horizons=[horizons[0]], window=window_1y)
         icir_h1 = float(icir_h1_s.iloc[0]) if not icir_h1_s.empty else np.nan
     else:
         icir_h1 = np.nan

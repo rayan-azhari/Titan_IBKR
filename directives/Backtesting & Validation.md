@@ -1,6 +1,6 @@
 # Backtesting & Validation Pipeline
 
-**Version:** 1.0 | **Last Updated:** 2026-03-20
+**Version:** 1.2 | **Last Updated:** 2026-03-20
 
 ---
 
@@ -70,7 +70,7 @@ Rewards high win rates and consistent per-trade edge. Used for ranking signals a
 Daily_Sharpe = mean(daily_equity_returns) / std(daily_equity_returns) × sqrt(252)
 ```
 
-Includes flat days (days with no position). This is the only Sharpe directly comparable to a benchmark. **Phase 3 must report both.**
+Includes flat days (days with no position). This is the only Sharpe directly comparable to a benchmark. **Phase 3 reports both side-by-side and gates on both:** OOS Trade Sharpe > 0 AND OOS Daily Sharpe > 0.
 
 ### Per-Trade % Returns (Critical)
 
@@ -160,6 +160,8 @@ Total friction per round trip = (spread + slippage) × 2 fills.
 
 **FX:** Swap is the interest-rate differential paid/received for holding overnight at 21:00 UTC. Pair-specific and direction-specific. Computed post-hoc and subtracted from gross P&L.
 
+**Time-varying swap rates (C8):** When historical swap data is available in `data/rates/{instrument}_swap.parquet`, `titan/costs/swap_curve.py` loads per-date swap values and applies them dynamically. Otherwise, static values from `COST_PROFILES` are used as fallback.
+
 **Equities:** No swap; instead commission per share (if applicable) and SEC/TAF regulatory fees.
 
 #### Cost Sensitivity Sweep (New)
@@ -203,10 +205,15 @@ Best threshold = `argmax(IS_Sharpe)`. Applied unchanged to OOS.
 Computed from OOS trade results:
 
 ```
-edge      = (win_rate × avg_win) − (loss_rate × avg_loss)
-cap_units = 1 / risk_per_trade
+edge      = (win_rate × avg_win_R) − (loss_rate × avg_loss_R)
+cap_units = 0.25 / risk_per_trade    # 25% DD expressed in risk units
 P(ruin)   = ((1 − edge) / (1 + edge)) ^ cap_units
 ```
+
+> [!NOTE]
+> **Audit fix C3:** Win/loss values are normalised to R-multiples (`avg_win / risk_pct`) so that
+> the edge is in the same units as `cap_units`. Without this, raw percentage returns make
+> `edge ≈ 0` and P(ruin) always ≈ 1.0.
 
 | Level | Target |
 |---|---|
@@ -216,11 +223,15 @@ P(ruin)   = ((1 − edge) / (1 + edge)) ^ cap_units
 
 ### Holding Period Distribution (New)
 
-Phase 3 must output a **histogram of actual trade durations** (in bars). Compare the median holding period to the signal's natural horizon from Phase 1:
+Phase 3 outputs a **histogram of actual trade durations** (in bars). Compare the median holding period to the signal's natural horizon from Phase 1:
 
 - If Phase 1 IC peaks at `h=20` but median hold = 3 bars → exit logic is too aggressive
 - If Phase 1 IC peaks at `h=5` but median hold = 40 bars → exit logic is too loose
 - Ideal: median hold ≈ 0.5–1.5× natural horizon
+
+> [!NOTE]
+> **Audit fix A3:** Holding histogram durations are now adjusted for bar frequency
+> (e.g., `hours_per_bar = 24` for daily, `4` for H4, `1` for H1) instead of hardcoding H1.
 
 ### Phase 3 Quality Gates
 
@@ -403,8 +414,17 @@ r_sq  = model.rsquared
 | Metric | Gate | Interpretation |
 |---|---|---|
 | Annualised Alpha | > 0 | Strategy adds returns beyond benchmark exposure |
-| Beta | < 1.0 (equities) | Not just leveraged B&H |
+| abs(Beta) | < threshold (asset-class dependent) | Not just leveraged B&H |
 | R² | < 0.5 | Strategy returns are not merely benchmark-driven |
+
+**Asset-Class Beta Thresholds (A5):**
+
+| Asset Class | Max abs(Beta) | Rationale |
+|---|---|---|
+| FX Major/Minor | 0.5 | FX strategies should have minimal equity beta |
+| Equity | 1.0 | Long-only equity beta up to 1.0 is acceptable |
+| Crypto | 1.5 | Higher beta tolerance for crypto |
+| Commodity | 0.8 | Moderate independence expected |
 
 **Why this matters:** A strategy with Sharpe = 1.5 but beta = 1.3 to SPY is just leveraged buy-and-hold. It will generate the same Sharpe as 1.3× SPY with no new information. True alpha requires low beta and positive intercept.
 
@@ -417,8 +437,8 @@ r_sq  = model.rsquared
 | G2 | Top-10 removal remaining sum | > 0 |
 | G3 | 3× slippage OOS Sharpe | > 0.5 |
 | G4 | Max consecutive negative WFO folds | ≤ 2 |
-| G5 | Regime Sharpe > 0 in ≥ 2/3 ADX + ≥ 1/2 HMM | Required |
-| G6 | Annualised alpha > 0, beta < 1.0 | Required |
+| G5 | Regime Sharpe > 0 in ≥ 2/3 ADX + ≥ 1/2 HMM + ≥ 2/3 vol terciles | Required |
+| G6 | Annualised alpha > 0, abs(beta) < asset-class threshold | Required |
 
 ---
 
@@ -437,8 +457,21 @@ The live strategy must faithfully replicate the research composite construction:
 4. **Composite z-score:** `mean(oriented_signals)` normalised by calibration stats. Evaluated on every base-TF bar.
 
 5. **Entry/exit:** Threshold crossing for entries, zero crossing for exits.
-
 6. **Sizing:** Identical formula to Phase 3 — ATR-based, capped at leverage limit.
+
+### Portfolio Heat & Margin Constraints (Mandatory)
+
+When deploying multiple instances of the strategy or operating in an ensemble, strict correlative and exposure limits must be enforced to prevent account blow-ups due to unbounded "Portfolio Heat". 
+
+**Equities (Gross Exposure Limit):**
+- **Limiter:** Gross Exposure (Total Notional value of all open positions / Account Equity).
+- **Rule:** Max Gross Exposure must be strictly capped (e.g., 100% or 150% depending on account margin type).
+- **Correlation:** Sector correlation limits must be applied (e.g., never hold > 3 highly correlated tech stocks simultaneously).
+
+**FX & Leveraged Derivatives (Margin Usage Limit):**
+- **Limiter:** Margin Usage (Total Margin tied up in open positions / Account Equity).
+- **Rule:** Never tie up more than 15-20% of total account equity in margin simultaneously. 
+- **Correlation:** Strict limits on base/quote exposure (e.g., maximum 2 pairs simultaneously long the USD). Because entries are highly leveraged (20x-50x), unconstrained Gross Notional Exposure to a single currency can easily exceed 2000%+ of account equity, leading to immediate margin calls on minor overnight price gaps.
 
 ### TOML Configuration
 
@@ -597,5 +630,6 @@ Re-run Phases 3–5 if:
 
 | Version | Date | Changes |
 |---|---|---|
+| **1.2** | 2026-03-20 | Audit fixes: Asset-class beta thresholds in Gate 6 (A5), R-unit Balsara normalisation (C3), holding histogram timeframe awareness (A3), time-varying swap rates (C8 via `swap_curve.py`), combined Sharpe from blended returns (C2), OOS years fix for daily bars (C5), per-fold threshold search (G7), volatility tercile gate in G5 (G3), dual Trade/Daily Sharpe gating (G6). Added `decimal.Decimal` compliance note (R5). |
 | **1.1** | 2026-03-20 | Updated Scripts Reference to reflect pipeline restructure: `phase3_backtest.py`, `phase4_wfo.py`, `phase5_robustness.py`, `pipeline_validation.py` replace all instrument-specific scripts (archived to `_archive/`). Phase 6 TOML expanded with `signals`, `tfs`, `asset_class`, `phase3_max_dd_pct`, `phase3_trade_rate`. Added Config Handoff subsection documenting `phase6_deploy.py` workflow. `ic_generic/strategy.py` replaces `ic_mtf` and `ic_equity_daily`. |
 | **1.0** | 2026-03-20 | Initial unified directive. Consolidated from IC MTF Backtesting Guide, MTF Optimization Protocol, and IC Equity Daily Strategy into a single asset-agnostic process spec. Added 6 improvements: Sharpe definition clarity, cost sensitivity sweep, regime robustness gate (ADX+HMM), alpha/beta decomposition, holding period distribution, per-trade % return warning. Risk of Ruin gate added to Phase 3. Kill switch triggers added to Phase 6. |

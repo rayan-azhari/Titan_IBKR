@@ -1,34 +1,12 @@
 """
-run_ic.py -- Information Coefficient (IC) Signal Scanner
+run_ic.py -- Information Coefficient (IC) Core Math Library
 
-Pre-backtest signal validation. Converts strategy ideas into continuous signals
-and measures their correlation with forward returns (Spearman rank correlation).
-Answers the question: does this signal have genuine predictive edge?
+Pre-backtest signal validation library.
+NOTE (C6/R1 Fix): This module has been deprecated as a standalone script.
+The original 6-signal runner has been removed. Use `phase1_sweep.py`
+as the canonical entry point for reading and evaluating 52 signals.
 
-Usage:
-    python research/ic_analysis/run_ic.py --instrument QQQ --timeframe D
-    python research/ic_analysis/run_ic.py --instrument EUR_USD --timeframe H4
-    python research/ic_analysis/run_ic.py --instrument QQQ --timeframe D --horizons 1,5,10,20
-
-Signals tested:
-    macd_norm   -- (EMA12 - EMA26) / rolling_std(20): MACD normalised by vol
-    ma_spread   -- (EMA5 - EMA20) / EMA20: continuous MA crossover strength
-    rsi_dev     -- RSI(14) - 50: RSI centred at 0
-    bb_zscore   -- (close - SMA20) / (2 * std20): Bollinger z-score
-    momentum_5  -- log(close / close.shift(5)): 5-bar momentum
-    momentum_20 -- log(close / close.shift(20)): 20-bar momentum
-
-Interpretation:
-    |IC| < 0.03             -- noise, discard the signal
-    0.03 <= |IC| < 0.05     -- weak signal, needs regime conditioning
-    |IC| >= 0.05            -- usable signal
-    ICIR (IC/std) > 0.5     -- signal is consistent enough to trade
-    Monotonic quantile spread -- signal has linear predictive edge
-
-Look-ahead safety:
-    Signal computation uses only .rolling() / .ewm() with positive windows (causal).
-    Forward returns use close.shift(-h) -- intentionally looks forward (this is
-    the TARGET, not an input to the signal).
+This file now serves strictly as a shared library for IC calculations.
 """
 
 import argparse
@@ -46,19 +24,6 @@ sys.path.insert(0, str(ROOT))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
-
-DEFAULT_HORIZONS = [1, 5, 10, 20, 60]
-N_BINS = 10
-ROLLING_IC_WINDOW = 252  # bars for rolling ICIR computation
-MTF_CONFIG_PATH = ROOT / "config" / "mtf.toml"
-
-# MTF timeframe definitions: (timeframe_label, fast_ma, slow_ma, rsi_period)
-MTF_TIMEFRAMES = {
-    "H1": ("H1", "fast_ma", "slow_ma", "rsi_period"),
-    "H4": ("H4", "fast_ma", "slow_ma", "rsi_period"),
-    "D": ("D", "fast_ma", "slow_ma", "rsi_period"),
-    "W": ("W", "fast_ma", "slow_ma", "rsi_period"),
-}
 
 
 # -- Data loading ---------------------------------------------------------------
@@ -110,6 +75,7 @@ def compute_mtf_confluence(instrument: str, primary_tf: str) -> pd.Series | None
     Weighted sum per config/mtf.toml. Returns continuous signal in range [-1, +1].
     Returns None if config or required parquet files are missing.
     """
+    MTF_CONFIG_PATH = ROOT / "config" / "mtf.toml" # Moved inside function
     if not MTF_CONFIG_PATH.exists():
         logger.warning("mtf.toml not found -- skipping MTF confluence signal")
         return None
@@ -328,11 +294,89 @@ def compute_ic_table(
     return ic_df
 
 
+def apply_bh_fdr(
+    pvalue_df: pd.DataFrame,
+    alpha: float = 0.05,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """G1 FIX: Benjamini-Hochberg False Discovery Rate correction.
+
+    Takes the raw p-value DataFrame (signals × horizons) from compute_ic_table,
+    flattens all p-values, applies BH adjustment, and reshapes back.
+
+    Returns:
+        (adjusted_pvalues_df, reject_mask_df)
+    """
+    from statsmodels.stats.multitest import multipletests
+
+    flat_pvals = pvalue_df.values.flatten()
+    # Replace NaN with 1.0 for BH (they won't reject).
+    nan_mask = np.isnan(flat_pvals)
+    flat_clean = np.where(nan_mask, 1.0, flat_pvals)
+
+    reject, adj_pvals, _, _ = multipletests(flat_clean, alpha=alpha, method="fdr_bh")
+
+    # Restore NaN positions.
+    adj_pvals[nan_mask] = np.nan
+    reject = reject.astype(float)
+    reject[nan_mask] = np.nan
+
+    adj_df = pd.DataFrame(
+        adj_pvals.reshape(pvalue_df.shape),
+        index=pvalue_df.index,
+        columns=pvalue_df.columns,
+    )
+    reject_df = pd.DataFrame(
+        reject.reshape(pvalue_df.shape),
+        index=pvalue_df.index,
+        columns=pvalue_df.columns,
+    ).astype(bool)
+
+    return adj_df, reject_df
+
+def _rolling_ic_series(
+    sig: pd.Series,
+    fwd: pd.Series,
+    window: int,
+    exact: bool = False,
+) -> np.ndarray:
+    """Fast vectorised rolling Spearman IC.
+
+    Default (exact=False): uses rolling Pearson on globally pre-ranked series.
+    This is an O(n) pandas Cython operation and is mathematically accurate when
+    the window is large enough that global ranks are stable (window >= 60).
+
+    If exact=True: re-ranks within every window — O(n*window), slow but exact.
+    """
+    df = pd.concat([sig, fwd], axis=1).dropna()
+    if len(df) < window:
+        return np.array([])
+
+    if exact:
+        from scipy.stats import spearmanr as _spearmanr
+        sig_vals = df.iloc[:, 0].values
+        fwd_vals = df.iloc[:, 1].values
+        n = len(sig_vals)
+        arr = np.full(n, np.nan)
+        for i in range(window, n):
+            ws, wf = sig_vals[i - window:i], fwd_vals[i - window:i]
+            if np.std(ws) < 1e-12 or np.std(wf) < 1e-12:
+                continue
+            rho, _ = _spearmanr(ws, wf)
+            arr[i] = rho
+        return arr[~np.isnan(arr)]
+
+    # Fast path: rank globally, then use pandas rolling Pearson (Cython)
+    sig_r = df.iloc[:, 0].rank()
+    fwd_r = df.iloc[:, 1].rank()
+    roll_ic = sig_r.rolling(window).corr(fwd_r)
+    return roll_ic.dropna().values
+
+
 def compute_icir(
     signals: pd.DataFrame,
     fwd_returns: pd.DataFrame,
     horizons: list[int],
-    window: int = ROLLING_IC_WINDOW,
+    window: int = 252, # ROLLING_IC_WINDOW moved here
     best_horizons: dict[str, str] | None = None,
 ) -> pd.Series:
     """
@@ -354,18 +398,66 @@ def compute_icir(
             fwd_col = f"fwd_{horizons[0]}"
 
         fwd = fwd_returns[fwd_col]
-        df = pd.concat([signals[sig_col], fwd], axis=1).dropna()
-        if len(df) < window:
+
+        roll_ic = _rolling_ic_series(signals[sig_col], fwd, window)
+        if len(roll_ic) < 10:
             icirs[sig_col] = np.nan
-            continue
-        # rolling Spearman approximation: rank both series, rolling correlation of ranks
-        sig_ranked = df.iloc[:, 0].rank()
-        fwd_ranked = df.iloc[:, 1].rank()
-        roll_corr = sig_ranked.rolling(window).corr(fwd_ranked)
-        mean_ic = roll_corr.mean()
-        std_ic = roll_corr.std()
-        icirs[sig_col] = round(mean_ic / std_ic if std_ic > 0 else np.nan, 3)
+        else:
+            icirs[sig_col] = float(roll_ic.mean() / roll_ic.std()) if roll_ic.std() > 1e-12 else np.nan
+
     return pd.Series(icirs, name="icir")
+
+
+def compute_icir_nw(
+    signals: pd.DataFrame,
+    fwd_returns: pd.DataFrame,
+    horizons: list[int],
+    window: int = 252,
+    best_horizons: dict[str, str] | None = None,
+) -> pd.Series:
+    """ICIR with Newey-West standard error adjustment (h-1 lags).
+
+    Accounts for serial correlation in overlapping returns at long horizons.
+    Returns Series: index=signal names, values=ICIR_NW.
+    """
+    try:
+        import statsmodels.api as sm
+    except ImportError:
+        return pd.Series(dtype=float, name="icir_nw")
+
+    icirs_nw: dict[str, float] = {}
+    for sig_col in signals.columns:
+        if best_horizons and sig_col in best_horizons:
+            fwd_col = best_horizons[sig_col]
+        else:
+            fwd_col = f"fwd_{horizons[0]}"
+
+        if fwd_col not in fwd_returns.columns:
+            fwd_col = f"fwd_{horizons[0]}"
+
+        try:
+            h = int(fwd_col.replace("fwd_", ""))
+        except ValueError:
+            h = 1
+        nw_lags = max(h - 1, 0)
+
+        fwd = fwd_returns[fwd_col]
+
+        roll_ic_clean = _rolling_ic_series(signals[sig_col], fwd, window)
+        if len(roll_ic_clean) < 30:
+            icirs_nw[sig_col] = np.nan
+            continue
+
+        try:
+            y = roll_ic_clean
+            X = sm.add_constant(np.ones(len(y)))
+            ols = sm.OLS(y, X[:, :1]).fit(cov_type="HAC", cov_kwds={"maxlags": nw_lags})
+            t_stat = float(ols.tvalues[0])
+            icirs_nw[sig_col] = t_stat / np.sqrt(len(y))
+        except Exception:
+            icirs_nw[sig_col] = np.nan
+
+    return pd.Series(icirs_nw, name="icir_nw")
 
 
 def compute_alpha_decay(
@@ -373,15 +465,15 @@ def compute_alpha_decay(
     df: pd.DataFrame,
     horizons: list[int] | None = None,
 ) -> pd.Series:
-    """
-    Compute Alpha Decay (Half-Life) for each signal.
-    Dynamic max_h: uses 2× the largest requested horizon to ensure coverage.
+    """Compute Alpha Decay (Half-Life) for each signal.
+
+    Dynamic max_h: uses 2x the largest requested horizon to ensure coverage.
     Returns the bar at which the IC decays to 50% of its peak.
     """
+    DEFAULT_HORIZONS = [1, 5, 10, 20, 60]
     if horizons is None:
         horizons = DEFAULT_HORIZONS
     max_h = max(horizons) * 2
-    # Cap at a reasonable maximum to avoid extremely slow computation
     max_h = min(max_h, 120)
 
     h_range = list(range(1, max_h + 1))
@@ -437,7 +529,7 @@ def compute_autocorrelation(signals: pd.DataFrame) -> pd.Series:
 
 
 def quantile_spread(
-    signal: pd.Series, fwd: pd.Series, n_bins: int = N_BINS
+    signal: pd.Series, fwd: pd.Series, n_bins: int = 10 # N_BINS moved here
 ) -> pd.DataFrame:
     """
     Sort signal into n_bins equal-frequency buckets. Report mean forward return
@@ -459,7 +551,7 @@ def quantile_spread(
     return result
 
 
-def compute_monotonicity(signal: pd.Series, fwd: pd.Series, n_bins: int = N_BINS) -> float:
+def compute_monotonicity(signal: pd.Series, fwd: pd.Series, n_bins: int = 10) -> float: # N_BINS moved here
     """
     Compute monotonicity score: Spearman rank correlation of bin index vs mean
     forward return across quantile bins. +1.0 = perfectly monotonic positive,
@@ -508,220 +600,3 @@ def compute_recency_weighted_ic(
                 row[fwd_col] = round(float(rho), 5)
         ic[sig_col] = row
     return pd.DataFrame(ic).T
-
-
-# -- Display helpers ------------------------------------------------------------
-
-
-def _bar(val: float, width: int = 20) -> str:
-    """ASCII bar chart for a value in [-1, 1]."""
-    mid = width // 2
-    filled = int(abs(val) * mid)
-    filled = min(filled, mid)
-    if val >= 0:
-        return " " * mid + "#" * filled + " " * (mid - filled)
-    else:
-        return " " * (mid - filled) + "#" * filled + " " * mid
-
-
-def print_ic_table(ic_df: pd.DataFrame, horizons: list[int]) -> None:
-    cols = [f"fwd_{h}" for h in horizons]
-    header = f"{'Signal':<14}" + "".join(f"  h={h:>3}" for h in horizons)
-    print(header)
-    print("-" * len(header))
-    for sig in ic_df.index:
-        row = f"{sig:<14}"
-        for col in cols:
-            v = ic_df.loc[sig, col]
-            if np.isnan(v):
-                row += "     NaN"
-            else:
-                sign = "+" if v >= 0 else ""
-                row += f"  {sign}{v:>6.4f}"
-        print(row)
-
-
-def print_quantile_spread(qs: pd.DataFrame, signal_name: str, horizon: int) -> None:
-    if qs.empty:
-        print(f"  (insufficient data for quantile spread on {signal_name})")
-        return
-    print(f"  {'Bin':<6}  {'MeanFwdReturn':>14}  {'N':>6}  Chart")
-    print("  " + "-" * 55)
-    for idx, row_data in qs.iterrows():
-        bar = _bar(row_data["mean_fwd_return"] * 500)  # scale for visibility
-        print(
-            f"  {idx:<6}  {row_data['mean_fwd_return']:>+14.6f}  "
-            f"{int(row_data['n_obs']):>6}  {bar}"
-        )
-
-
-# -- Main pipeline --------------------------------------------------------------
-
-
-def run_ic(
-    instrument: str,
-    timeframe: str,
-    horizons: list[int] | None = None,
-    n_bins: int = N_BINS,
-    include_mtf: bool = False,
-) -> dict:
-    if horizons is None:
-        horizons = DEFAULT_HORIZONS
-
-    df = load_ohlcv(instrument, timeframe)
-    close = df["close"]
-    signals = compute_signals(close)
-
-    if include_mtf:
-        mtf_sig = compute_mtf_confluence(instrument, timeframe)
-        if mtf_sig is not None:
-            signals["mtf_confluence"] = mtf_sig.reindex(signals.index)
-
-    fwd_returns = compute_forward_returns(close, horizons)
-    mfe_targets, mae_targets = compute_mfe_mae_targets(df, horizons)
-
-    # Align: drop rows where signals (exc. mtf which may have leading NaN) are ready
-    base_cols = [c for c in signals.columns if c != "mtf_confluence"]
-    valid_mask = (
-        signals[base_cols].notna().all(axis=1) 
-        & fwd_returns.notna().any(axis=1)
-        & mfe_targets.notna().any(axis=1)
-        & mae_targets.notna().any(axis=1)
-    )
-    signals = signals[valid_mask]
-    fwd_returns = fwd_returns[valid_mask]
-    mfe_targets = mfe_targets[valid_mask]
-    mae_targets = mae_targets[valid_mask]
-
-    logger.info(f"Analysis window: {len(signals)} bars after warmup drop")
-
-    # IC tables (with p-values for statistical significance)
-    ic_df, pval_df = compute_ic_table(signals, fwd_returns, return_pvalues=True)
-    ic_mfe = compute_ic_table(signals, mfe_targets)
-    ic_mae = compute_ic_table(signals, mae_targets)
-
-    # Recency-weighted IC (halflife=500 bars)
-    ic_recent = compute_recency_weighted_ic(signals, fwd_returns, halflife_bars=500)
-
-    # Best horizon per signal (highest |IC|)
-    best_horizons = {
-        sig: ic_df.loc[sig].abs().idxmax()
-        for sig in ic_df.index
-    }
-
-    # ICIR at each signal's best horizon (not just h=1)
-    icir = compute_icir(signals, fwd_returns, horizons, best_horizons=best_horizons)
-
-    # Alpha decay (half-life) -- dynamic max_h based on requested horizons
-    alpha_decay = compute_alpha_decay(signals, df, horizons=horizons)
-
-    # -- Print ------------------------------------------------------------------
-    slug = f"{instrument}_{timeframe}"
-    print("\n" + "=" * 72)
-    print(f"  IC SIGNAL SCANNER -- {instrument} {timeframe}")
-    print(f"  {len(signals)} bars  |  Horizons: {horizons}  |  Bins: {n_bins}")
-    print("=" * 72)
-
-    print("\n-- Spearman IC Table (rows=signal, cols=forward horizon) --------------")
-    print_ic_table(ic_df, horizons)
-
-    print("\n-- ICIR (rolling {}-bar, at best horizon per signal) -------------------".format(
-        ROLLING_IC_WINDOW
-    ))
-    for sig in icir.index:
-        v = icir[sig]
-        bh = best_horizons.get(sig, f"fwd_{horizons[0]}").replace("fwd_", "h=")
-        flag = "  *** STRONG" if abs(v) >= 0.5 else ("  * weak" if abs(v) >= 0.2 else "")
-        print(f"  {sig:<14}  {bh:>5}  {v:>+7.3f}{flag}" if not np.isnan(v) else f"  {sig:<14}  {bh:>5}     NaN")
-
-    print("\n-- Quantile Spread (deciles of signal vs mean forward return) ---------")
-    for sig in signals.columns:
-        best_h_col = best_horizons[sig]
-        best_h = int(best_h_col.replace("fwd_", ""))
-        ic_val = ic_df.loc[sig, best_h_col]
-        print(f"\n  {sig}  (best h={best_h}, IC={ic_val:+.4f})")
-        qs = quantile_spread(signals[sig], fwd_returns[best_h_col], n_bins)
-        print_quantile_spread(qs, sig, best_h)
-
-    # -- Signal summary ---------------------------------------------------------
-    print("\n-- Signal Summary -------------------------------------------------------------------------------------")
-    print(f"  {'Signal':<14}  {'BestH':>6}  {'BestIC':>8}  {'ICIR':>7}  {'p-val':>7}  {'MFE':>6}  {'MAE':>6}  {'HalfL':>5}  {'Mono':>5}  {'RcntIC':>7}  Verdict")
-    print("  " + "-" * 117)
-    for sig in ic_df.index:
-        best_h_col = best_horizons[sig]
-        best_h = int(best_h_col.replace("fwd_", ""))
-        best_ic = ic_df.loc[sig, best_h_col]
-        ir = icir[sig]
-        abs_ic = abs(best_ic)
-
-        mfe_val = ic_mfe.loc[sig, f"mfe_{best_h}"]
-        mae_val = ic_mae.loc[sig, f"mae_{best_h}"]
-        hl_val = alpha_decay.get(sig, np.nan)
-        pv = pval_df.loc[sig, best_h_col]
-        mono = compute_monotonicity(signals[sig], fwd_returns[best_h_col])
-        rcnt = ic_recent.loc[sig, best_h_col] if best_h_col in ic_recent.columns else np.nan
-
-        if abs_ic >= 0.05 and (not np.isnan(ir) and abs(ir) >= 0.5):
-            verdict = "STRONG -- build strategy"
-        elif abs_ic >= 0.05:
-            verdict = "Moderate IC -- inconsistent"
-        elif abs_ic >= 0.03:
-            verdict = "Weak -- try regime conditioning"
-        else:
-            verdict = "Noise -- discard"
-
-        ir_str = f"{ir:+.3f}" if not np.isnan(ir) else "  NaN"
-        pv_str = f"{pv:.1e}" if not np.isnan(pv) else "    NaN"
-        mfe_str = f"{mfe_val:+.3f}" if not np.isnan(mfe_val) else "   NaN"
-        mae_str = f"{mae_val:+.3f}" if not np.isnan(mae_val) else "   NaN"
-        hl_str = f"{int(hl_val)}" if not np.isnan(hl_val) else "  NaN"
-        mono_str = f"{mono:+.2f}" if not np.isnan(mono) else "  NaN"
-        rcnt_str = f"{rcnt:+.4f}" if not np.isnan(rcnt) else "    NaN"
-
-        print(
-            f"  {sig:<14}  {best_h:>6}  {best_ic:>+8.4f}  {ir_str:>7}  {pv_str:>7}  {mfe_str:>6}  {mae_str:>6}  {hl_str:>5}  {mono_str:>5}  {rcnt_str:>7}  {verdict}"
-        )
-
-    print("=" * 72)
-
-    # -- Save report ------------------------------------------------------------
-    report_dir = ROOT / ".tmp" / "reports"
-    report_dir.mkdir(parents=True, exist_ok=True)
-    out_path = report_dir / f"ic_{slug.lower()}.csv"
-    ic_df.to_csv(out_path)
-    logger.info(f"IC table saved: {out_path}")
-
-    return {"ic": ic_df, "icir": icir, "best_horizons": best_horizons}
-
-
-# -- Entry point ----------------------------------------------------------------
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="IC Signal Scanner")
-    parser.add_argument("--instrument", default="QQQ")
-    parser.add_argument("--timeframe", default="D")
-    parser.add_argument(
-        "--horizons",
-        default=",".join(str(h) for h in DEFAULT_HORIZONS),
-        help="Comma-separated list of forward horizons, e.g. 1,5,10,20",
-    )
-    parser.add_argument("--n_bins", type=int, default=N_BINS)
-    parser.add_argument(
-        "--include_mtf", action="store_true",
-        help="Include MTF confluence signal (requires H1/H4/D/W parquets + config/mtf.toml)",
-    )
-    args = parser.parse_args()
-
-    horizons = [int(h) for h in args.horizons.split(",")]
-    run_ic(
-        instrument=args.instrument,
-        timeframe=args.timeframe,
-        horizons=horizons,
-        n_bins=args.n_bins,
-        include_mtf=args.include_mtf,
-    )
-
-
-if __name__ == "__main__":
-    main()

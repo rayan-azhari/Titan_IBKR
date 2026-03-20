@@ -51,6 +51,10 @@ Usage:
         --instrument AAPL --asset-class equity_lc --direction long_only
 """
 
+# NOTE (R5): Research pipeline uses float64 for numpy/pandas compatibility.
+# Live execution in titan/ MUST use decimal.Decimal per AGENTS.md.
+# Do not port research float logic directly into production without conversion.
+
 import argparse
 import sys
 from pathlib import Path
@@ -71,8 +75,11 @@ except ImportError:
     print("ERROR: vectorbt not installed. Run: uv add vectorbt")
     sys.exit(1)
 
-from research.ic_analysis.phase1_sweep import _load_ohlcv, build_all_signals  # noqa: E402
-
+from research.ic_analysis.phase1_sweep import (  # noqa: E402
+    _get_annual_bars,
+    _load_ohlcv,
+    build_all_signals,
+)
 # -- Constants -----------------------------------------------------------------
 
 DEFAULT_SIGNALS: list[str] = ["accel_stoch_k", "accel_rsi14"]
@@ -209,7 +216,8 @@ def _build_and_align(
         if df is None:
             print(f"  [WARN] No data for {instrument} {tf} -- skipping.")
             continue
-        native_sigs = build_all_signals(df)
+        window_1y = _get_annual_bars(tf)
+        native_sigs = build_all_signals(df, window_1y)
 
         # PREVENT LOOKAHEAD BIAS:
         # Higher tf bars are timestamped at the OPEN. Shift by 1 before
@@ -285,7 +293,7 @@ def build_size_array(
     risk_pct: float,
     stop_atr_mult: float,
     max_leverage: float = MAX_LEVERAGE,
-) -> pd.Series:
+) -> tuple[pd.Series, pd.Series]:
     """ATR-based sizing returned as FRACTION OF PORTFOLIO (for size_type='percent').
 
     size_pct = risk_pct / stop_pct   where stop_pct = ATR_stop / close.
@@ -300,9 +308,10 @@ def build_size_array(
     stop_dist = stop_atr_mult * atr14
     safe_close = pd.Series(np.where(close > 0, close, np.nan), index=close.index)
     stop_pct = stop_dist / safe_close
-    safe_stop_pct = stop_pct.where(stop_pct > 0)
-    size_pct = risk_pct / safe_stop_pct
-    return size_pct.clip(upper=max_leverage).fillna(0.0)
+    safe_stop_pct = stop_pct.where(stop_pct > 0).fillna(0.0)
+    size_pct = risk_pct / safe_stop_pct.replace(0.0, np.nan)
+    size_pct_clipped = size_pct.clip(upper=max_leverage).fillna(0.0)
+    return size_pct_clipped, safe_stop_pct
 
 
 # -- Swap drag (post-hoc) ------------------------------------------------------
@@ -395,15 +404,26 @@ def _risk_of_ruin(
 ) -> float:
     """Balsara formula: P(ruin at 25% DD).
 
-    edge = win_rate * avg_win - (1 - win_rate) * abs(avg_loss)
+    C3 FIX: avg_win and avg_loss are normalised by risk_pct to express
+    in risk-unit (R) terms.  A 3% return on a 1% risk trade = 3R.
+
+    edge = win_rate * avg_win_R - (1 - win_rate) * avg_loss_R
     cap_units = 0.25 / risk_pct   (25% DD expressed in risk units)
     p = ((1 - edge) / (1 + edge)) ** cap_units
     """
-    edge = win_rate * avg_win - (1.0 - win_rate) * abs(avg_loss)
+    # Normalise to R-multiples so edge is in same units as cap_units.
+    avg_win_R = avg_win / risk_pct if risk_pct > 0 else 0.0
+    avg_loss_R = abs(avg_loss) / risk_pct if risk_pct > 0 else 0.0
+    edge = win_rate * avg_win_R - (1.0 - win_rate) * avg_loss_R
     if abs(edge) < 1e-10:
         return 1.0
+    if edge < 0:
+        return 1.0  # negative edge → certain ruin
     cap_units = 0.25 / risk_pct
-    p = ((1.0 - edge) / (1.0 + edge)) ** cap_units
+    ratio = (1.0 - edge) / (1.0 + edge)
+    if ratio <= 0:
+        return 0.0  # edge so large that ruin is impossible
+    p = ratio ** cap_units
     return float(np.clip(p, 0.0, 1.0))
 
 
@@ -428,6 +448,7 @@ def _run_vbt(
     spread: float,
     slippage: float,
     size: pd.Series,
+    stop_pct: pd.Series,
     freq: str,
     swap_long_pips: float,
     swap_short_pips: float,
@@ -444,15 +465,23 @@ def _run_vbt(
     """
     sig = signal_z.shift(1).fillna(0.0)
     size_arr = size.reindex(close.index).fillna(0.0).values
-    med_close = float(close.median()) or 1.0
-    # fees in VBT = fraction of notional
-    vbt_fees = spread / med_close
-    vbt_slip = slippage / med_close
+    stop_arr = stop_pct.reindex(close.index).fillna(0.0).values
+    
+    # fees in VBT = fraction of notional. Dynamic arrays correctly charge
+    # high percentages at low prices, and low percentages at high prices for absolute spreads.
+    # We use dynamic arrays to ensure high-priced assets aren't undercharged relative to historic medians
+    vbt_fees = (spread / close).bfill().values
+    
+    # Gap execution risk: 10x slippage on severe (>5%) price dislocations
+    base_slip = slippage / close
+    gap_multiplier = np.where(close.pct_change().abs() > 0.05, 10.0, 1.0)
+    vbt_slip = (base_slip * gap_multiplier).bfill().values
 
     pf_long = vbt.Portfolio.from_signals(
         close,
         entries=sig > threshold,
         exits=sig <= 0.0,
+        sl_stop=stop_arr,
         size=size_arr,
         size_type="percent",
         init_cash=INIT_CASH,
@@ -512,6 +541,7 @@ def _run_vbt(
         exits=pd.Series(False, index=close.index),
         short_entries=sig < -threshold,
         short_exits=sig >= 0.0,
+        sl_stop=stop_arr,
         size=size_arr,
         size_type="percent",
         init_cash=INIT_CASH,
@@ -541,8 +571,37 @@ def _run_vbt(
     )
     gross_ret = (sl["ret"] + ss["ret"]) / 2
     net_pnl = gross_ret * INIT_CASH + total_swap_drag
-    combined_trade_sharpe = (long_trade_sharpe + short_trade_sharpe) / 2
-    combined_daily_sharpe = (long_daily_sharpe + ss["sharpe"]) / 2
+
+    # C2 FIX: Compute combined Sharpe from blended return stream, not avg of ratios.
+    long_ret_s = pf_long.returns()
+    short_ret_s = pf_short.returns()
+    blended_daily = (long_ret_s + short_ret_s) / 2
+    bl_mean = float(blended_daily.mean())
+    bl_std = float(blended_daily.std())
+    combined_daily_sharpe = (
+        bl_mean / bl_std * np.sqrt(252) if bl_std > 1e-10 else 0.0
+    )
+
+    # C2 FIX: Combined trade Sharpe from merged per-trade returns.
+    all_trade_rets = []
+    try:
+        all_trade_rets.extend(pf_long.trades.records_readable["Return"].tolist())
+    except Exception:
+        pass
+    try:
+        all_trade_rets.extend(pf_short.trades.records_readable["Return"].tolist())
+    except Exception:
+        pass
+    if len(all_trade_rets) >= 2:
+        tr_arr = np.array(all_trade_rets)
+        tr_mu = float(tr_arr.mean())
+        tr_sig = float(tr_arr.std(ddof=1))
+        trades_py = len(tr_arr) / oos_years if oos_years > 0 else float(len(tr_arr))
+        combined_trade_sharpe = (
+            tr_mu / tr_sig * np.sqrt(trades_py) if tr_sig > 1e-10 else 0.0
+        )
+    else:
+        combined_trade_sharpe = 0.0
 
     return {
         "long_sharpe": long_daily_sharpe,
@@ -575,6 +634,7 @@ def _run_vbt(
 def _holding_histogram(
     pf_long,
     natural_horizon_bars: int | None = None,
+    hours_per_bar: float = 1.0,
 ) -> float:
     """Print a bar-count histogram of trade durations. Returns median hold bars."""
     buckets = [0, 2, 5, 10, 20, 40, float("inf")]
@@ -593,7 +653,7 @@ def _holding_histogram(
     # Duration in VBT is stored as timedelta or integer bars depending on version.
     # Normalise to integer bar counts.
     if hasattr(durations[0], "total_seconds"):
-        durations = np.array([d.total_seconds() / 3600 for d in durations])
+        durations = np.array([d.total_seconds() / (3600 * hours_per_bar) for d in durations])
     else:
         durations = np.array(durations, dtype=float)
 
@@ -638,6 +698,7 @@ def _cost_sensitivity_sweep(
     base_spread: float,
     base_slippage: float,
     size: pd.Series,
+    stop_pct: pd.Series,
     freq: str,
     swap_long_pips: float,
     swap_short_pips: float,
@@ -660,6 +721,7 @@ def _cost_sensitivity_sweep(
             base_spread * mult,
             base_slippage * mult,
             size,
+            stop_pct,
             freq,
             swap_long_pips,
             swap_short_pips,
@@ -712,6 +774,7 @@ def run_backtest(
     """Run Phase 3 IS/OOS backtest and return per-threshold results as a DataFrame."""
     slug = instrument.lower()
     base_tf = tfs[-1]
+    freq = "d" if base_tf in ("D", "daily") else "h"
 
     profile = COST_PROFILES.get(asset_class, COST_PROFILES["fx_major"])
     eff_max_leverage = max_leverage if max_leverage is not None else profile["max_leverage"]
@@ -747,6 +810,21 @@ def run_backtest(
         eff_spread_price = 0.0          # filled after data load
         eff_slippage_price = 0.0        # filled after data load
 
+    # G5 FIX: Auto-load Phase 2 composite winner if no explicit signals given.
+    if target_signals is None or target_signals == DEFAULT_SIGNALS:
+        p2_dir = ROOT / ".tmp" / "reports"
+        p2_winner_path = p2_dir / f"phase2_{instrument.lower()}_winner.csv"
+        if p2_winner_path.exists():
+            try:
+                p2_df = pd.read_csv(p2_winner_path)
+                if "signal" in p2_df.columns:
+                    p2_signals = p2_df["signal"].tolist()
+                    if len(p2_signals) > 0:
+                        target_signals = p2_signals
+                        print(f"  [G5] Auto-loaded {len(p2_signals)} signals from Phase 2: {p2_winner_path.name}")
+            except Exception as exc:
+                print(f"  [G5] Could not load Phase 2 winner: {exc}")
+
     W = 84
     print()
     print("=" * W)
@@ -754,6 +832,10 @@ def run_backtest(
     print(f"  Signals  : {' + '.join(target_signals)}")
     print(f"  TFs      : {' -> '.join(tfs)}")
     print(f"  Split    : {int(IS_RATIO * 100)}% IS / {int((1 - IS_RATIO) * 100)}% OOS")
+    # G4 FIX: Portfolio heat warning.
+    print(f"  ⚠ WARNING: Per-instrument backtest. Portfolio heat limits NOT enforced.")
+    print(f"    Directive requires: FX margin ≤ 15-20%, equity gross ≤ 100-150%.")
+    print(f"    Enforce portfolio-level constraints in live deployment / pipeline_validation.")
     if _spread_from_bps:
         print(
             f"  Spread   : {eff_spread_bps:.2f} bps  |  "
@@ -793,14 +875,18 @@ def run_backtest(
     is_mask = pd.Series(False, index=base_index)
     is_mask.iloc[:is_n] = True
     oos_n = n - is_n
-    oos_years = oos_n / (365 * 24)
-    print(f"\n  Total H1 bars: {n:,}  |  IS: {is_n:,}  |  OOS: {oos_n:,}  "
+    # C5 FIX: Use correct bars_per_year for daily vs hourly timeframes.
+    bars_per_year = 252 if freq == "d" else 365 * 24
+    oos_years = oos_n / bars_per_year
+    print(f"\n  Total {base_tf} bars: {n:,}  |  IS: {is_n:,}  |  OOS: {oos_n:,}  "
           f"({oos_years:.2f} yr OOS)")
 
     # 2. ATR sizing
     oos_mask = ~is_mask
     print("\n  Computing ATR-based position sizes...")
-    size = build_size_array(base_df, base_close, risk_pct, stop_atr, eff_max_leverage)
+    size, stop_pct = build_size_array(
+        base_df, base_close, risk_pct, stop_atr, max_leverage=eff_max_leverage
+    )
     for label, mask in [("IS ", is_mask), ("OOS", oos_mask)]:
         s_sub = size[mask]
         live = s_sub[s_sub > 0]
@@ -822,6 +908,8 @@ def run_backtest(
     oos_close = base_close[oos_mask]
     is_size = size[is_mask]
     oos_size = size[oos_mask]
+    is_stop_pct = stop_pct[is_mask]
+    oos_stop_pct = stop_pct[oos_mask]
 
     print(f"  Composite z -- IS: mean={is_z.mean():.3f}  std={is_z.std():.3f}")
     print(f"  Composite z -- OOS: mean={oos_z.mean():.3f}  std={oos_z.std():.3f}")
@@ -830,7 +918,7 @@ def run_backtest(
     print(f"  Positive composite: {pos_frac:.1f}%  |  n_signal_tf pairs: {n_sigs}")
 
     # 4. Threshold sweep
-    is_years = is_n / (365 * 24)
+    is_years = is_n / bars_per_year
     print(f"\n  Running threshold sweep over {len(thresholds)} values...")
     results: list[dict] = []
 
@@ -838,14 +926,16 @@ def run_backtest(
         is_res = _run_vbt(
             is_close, is_z, theta,
             eff_spread_price, eff_slippage_price,
-            is_size, "h",
+            is_size, is_stop_pct,
+            freq,
             eff_swap_long, eff_swap_short, pip_size_val,
             direction=direction, oos_years=is_years,
         )
         oos_res = _run_vbt(
             oos_close, oos_z, theta,
             eff_spread_price, eff_slippage_price,
-            oos_size, "h",
+            oos_size, oos_stop_pct,
+            freq,
             eff_swap_long, eff_swap_short, pip_size_val,
             direction=direction, oos_years=oos_years,
         )
@@ -894,22 +984,22 @@ def run_backtest(
     print()
     print("  THRESHOLD SWEEP:")
     print(
-        f"  {'th':>6}  {'IS_Sharpe':>10}  {'OOS_Sharpe':>11}  {'Parity':>8}  "
-        f"{'Trades':>8}  {'WR%':>6}  {'SwapDrag$':>10}  {'Net Ret%':>9}"
+        f"  {'th':>6}  {'IS_Daily':>10}  {'OOS_Daily':>10}  "
+        f"{'IS_Trade':>10}  {'OOS_Trade':>10}  {'Parity':>8}  "
+        f"{'Trades':>8}  {'Net Ret%':>9}"
     )
-    print("  " + "-" * 82)
+    print("  " + "-" * 88)
     for _, row in df.iterrows():
-        flag = " ***" if row["parity"] >= 0.5 and row["oos_sharpe"] > 0 else ""
+        flag = " ***" if row["parity"] >= 0.5 and row["oos_sharpe"] > 0 and row["oos_trade_sharpe"] > 0 else ""
         print(
             f"  {row['threshold']:>6.2f}  {row['is_sharpe']:>+10.3f}  "
-            f"{row['oos_sharpe']:>+11.3f}  {row['parity']:>8.3f}  "
-            f"{row['oos_trades']:>8.0f}  {row['oos_wr'] * 100:>5.1f}%  "
-            f"{row['oos_swap_drag_usd']:>+9.0f}$  "
-            f"{row['oos_net_ret']:>+8.1%}{flag}"
+            f"{row['oos_sharpe']:>+10.3f}  {row['is_trade_sharpe']:>+10.3f}  "
+            f"{row['oos_trade_sharpe']:>+10.3f}  {row['parity']:>8.3f}  "
+            f"{row['oos_trades']:>8.0f}  {row['oos_net_ret']:>+8.1%}{flag}"
         )
 
     # 6. Select best threshold
-    passing = df[(df["parity"] >= 0.5) & (df["oos_sharpe"] > 0)]
+    passing = df[(df["parity"] >= 0.5) & (df["oos_sharpe"] > 0) & (df["oos_trade_sharpe"] > 0)]
     if not passing.empty:
         best = passing.loc[passing["oos_sharpe"].idxmax()]
         quality_gate = True
@@ -936,8 +1026,12 @@ def run_backtest(
     print(f"  {'Metric':<30}  {'IS':>10}  {'OOS':>12}  {'OOS/IS':>8}")
     print("  " + "-" * 66)
     print(
-        f"  {'Sharpe (combined daily)':<30}  {best['is_sharpe']:>+10.3f}  "
+        f"  {'Sharpe (daily)':<30}  {best['is_sharpe']:>+10.3f}  "
         f"{best['oos_sharpe']:>+12.3f}  {_r(best['is_sharpe'], best['oos_sharpe'])}"
+    )
+    print(
+        f"  {'Sharpe (trade)':<30}  {best['is_trade_sharpe']:>+10.3f}  "
+        f"{best['oos_trade_sharpe']:>+12.3f}  {_r(best['is_trade_sharpe'], best['oos_trade_sharpe'])}"
     )
     print(
         f"  {'Sharpe (long)':<30}  {best['is_long_sharpe']:>+10.3f}  "
@@ -948,12 +1042,6 @@ def run_backtest(
         f"  {'Sharpe (short)':<30}  {best['is_short_sharpe']:>+10.3f}  "
         f"{best['oos_short_sharpe']:>+12.3f}  "
         f"{_r(best['is_short_sharpe'], best['oos_short_sharpe'])}"
-    )
-    print(
-        f"  {'Trade Sharpe (IS)':<30}  {best['is_trade_sharpe']:>+10.3f}"
-    )
-    print(
-        f"  {'Trade Sharpe (OOS)':<30}  {best['oos_trade_sharpe']:>+10.3f}"
     )
     print(
         f"  {'Win Rate':<30}  {best['is_wr'] * 100:>9.1f}%  "
@@ -1002,14 +1090,29 @@ def run_backtest(
     oos_best = _run_vbt(
         oos_close, oos_z, theta_best,
         eff_spread_price, eff_slippage_price,
-        oos_size, "h",
+        oos_size, oos_stop_pct,
+        freq,
         eff_swap_long, eff_swap_short, pip_size_val,
         direction=direction, oos_years=oos_years,
     )
     pf_long_best = oos_best["pf_long"]
 
     # 8. Holding period histogram
-    median_hold = _holding_histogram(pf_long_best, natural_horizon_bars=natural_horizon)
+    # Determine hours per bar
+    tf_lower = base_tf.lower()
+    if tf_lower == "d":
+        hrs = 24.0
+    elif tf_lower.startswith("h"):
+        try:
+            hrs = float(tf_lower.replace("h", "") or 1.0)
+        except ValueError:
+            hrs = 1.0
+    else:
+        hrs = 1.0
+
+    median_hold = _holding_histogram(
+        pf_long_best, natural_horizon_bars=natural_horizon, hours_per_bar=hrs
+    )
 
     # 9. Risk of Ruin
     try:
@@ -1036,7 +1139,8 @@ def run_backtest(
     friction = _cost_sensitivity_sweep(
         oos_close, oos_z, theta_best,
         eff_spread_price, eff_slippage_price,
-        oos_size, "h",
+        oos_size, oos_stop_pct,
+        freq,
         eff_swap_long, eff_swap_short, pip_size_val,
         direction=direction, oos_years=oos_years,
     )

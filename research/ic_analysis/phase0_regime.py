@@ -122,14 +122,21 @@ def compute_regime_labels(
     )
 
     # --- HMM regime ---
-    log.info("Fitting %d-state Gaussian HMM...", hmm_n_states)
+    log.info("Fitting %d-state Gaussian HMM (IS split: 70%%)...", hmm_n_states)
     log_ret = np.log(df["close"]).diff().fillna(0.0)
     rvol20 = log_ret.rolling(20).std().bfill()
 
-    X = np.column_stack([
-        (log_ret - log_ret.mean()) / log_ret.std(),
-        (rvol20 - rvol20.mean()) / rvol20.std(),
-    ])
+    # Prevent look-ahead bias: Fit HMM and calculate normalisation statistics ONLY on IS data.
+    is_n = max(100, int(len(df) * 0.70))
+    log_ret_is = log_ret.iloc[:is_n]
+    rvol20_is = rvol20.iloc[:is_n]
+
+    # Normalise full series using IS mean/std
+    ret_z = (log_ret - log_ret_is.mean()) / log_ret_is.std()
+    vol_z = (rvol20 - rvol20_is.mean()) / rvol20_is.std()
+
+    X_full = np.column_stack([ret_z, vol_z])
+    X_is = X_full[:is_n]
 
     model = GaussianHMM(
         n_components=hmm_n_states,
@@ -137,8 +144,8 @@ def compute_regime_labels(
         n_iter=100,
         random_state=42,
     )
-    model.fit(X)
-    hmm_state = model.predict(X)
+    model.fit(X_is)
+    hmm_state = model.predict(X_full)
     out["hmm_state"] = hmm_state.astype(int)
 
     # --- Fractional differencing (optional) ---

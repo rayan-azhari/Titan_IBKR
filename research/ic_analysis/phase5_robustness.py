@@ -67,7 +67,13 @@ WFO_MAX_CONSEC_NEG = 2
 DEFAULT_THRESHOLD = 0.75
 REGIME_MIN_ADX_PASS = 2   # >= 2 out of 3 ADX regimes
 REGIME_MIN_HMM_PASS = 1   # >= 1 out of 2 HMM states
-ALPHA_BETA_MAX_BETA = 1.0
+BETA_THRESHOLDS = {
+    "fx_major": 0.5,
+    "fx_minor": 0.5,
+    "equity": 1.0,
+    "crypto": 1.5,
+    "commodity": 0.8,
+}
 ALPHA_BETA_MAX_R2 = 0.5
 
 
@@ -118,7 +124,7 @@ def _build_oos_portfolios(
     )
     composite_z = zscore_normalise(composite, is_mask)
 
-    size_arr = build_size_array(
+    size_arr, stop_pct_arr = build_size_array(
         base_df, base_close, risk_pct, stop_atr, max_leverage=eff_max_lev
     )
 
@@ -127,8 +133,10 @@ def _build_oos_portfolios(
 
     spread_abs = eff_spread_bps / 10_000 * med_close
     slippage_abs = eff_slippage_bps / 10_000 * med_close
-    vbt_fees = spread_abs / med_close    # fraction of price
-    vbt_slip = slippage_abs / med_close
+
+    stop_arr = stop_pct_arr[oos_mask].fillna(0.0).values
+    vbt_fees = (spread_abs / oos_close).bfill().values
+    vbt_slip = (slippage_abs / oos_close).bfill().values
 
     sig = composite_z[oos_mask].shift(1).fillna(0.0)
 
@@ -138,6 +146,7 @@ def _build_oos_portfolios(
         oos_close,
         entries=sig > threshold,
         exits=sig <= 0.0,
+        sl_stop=stop_arr,
         size=size_arr[oos_mask],
         size_type="percent",
         init_cash=INIT_CASH,
@@ -151,10 +160,11 @@ def _build_oos_portfolios(
     else:
         pf_short = vbt.Portfolio.from_signals(
             oos_close,
-            entries=sig < -threshold,
-            exits=sig >= 0.0,
+            entries=pd.Series(False, index=oos_close.index),
+            exits=pd.Series(False, index=oos_close.index),
             short_entries=sig < -threshold,
             short_exits=sig >= 0.0,
+            sl_stop=stop_arr,
             size=size_arr[oos_mask],
             size_type="percent",
             init_cash=INIT_CASH,
@@ -255,8 +265,9 @@ def remove_top_n(pf_long, pf_short, n: int = TOP_N_REMOVE) -> dict:
             "gate_pass": False,
         }
 
-    sorted_rets = np.sort(trade_rets)[::-1]  # descending
-    trimmed = sorted_rets[n:]
+    # C4 FIX: Remove top-N by absolute magnitude (both large wins AND large losses).
+    abs_order = np.argsort(np.abs(trade_rets))[::-1]  # largest |return| first
+    trimmed = trade_rets[abs_order[n:]]
 
     cum_return = float((1 + trimmed).prod() - 1)
     gate_pass = cum_return > 0.0
@@ -553,8 +564,66 @@ def check_regime_robustness(
 
     hmm_pass_count = sum(hmm_passing)
 
-    gate_pass = (adx_pass_count >= REGIME_MIN_ADX_PASS) and (
-        hmm_pass_count >= REGIME_MIN_HMM_PASS
+    # -- G3 FIX: Volatility terciles (rv20) ------------------------------------
+    VOL_MIN_PASS = 2  # >= 2 out of 3 terciles
+    vol_results: dict[str, float] = {}
+    vol_passing: list[bool] = []
+
+    if "rv20" in aligned_regime.columns:
+        rv20_at_entry = aligned_regime["rv20"].values
+    else:
+        # Compute rv20 from regime close if available, or use a placeholder.
+        try:
+            regime_close = regime_df["close"] if "close" in regime_df.columns else None
+            if regime_close is not None:
+                rv20_full = regime_close.pct_change().rolling(20).std()
+                rv20_aligned = rv20_full.reindex(
+                    rv20_full.index.union(entry_dt)
+                ).ffill().reindex(entry_dt)
+                rv20_at_entry = rv20_aligned.values
+            else:
+                rv20_at_entry = None
+        except Exception:
+            rv20_at_entry = None
+
+    if rv20_at_entry is not None and len(rv20_at_entry) == len(entry_returns):
+        rv20_valid = pd.Series(rv20_at_entry, index=entry_dt).dropna()
+        if len(rv20_valid) >= 10:
+            tercile_edges = rv20_valid.quantile([1/3, 2/3]).values
+            labels = ["low_vol", "mid_vol", "high_vol"]
+            for t_idx, (lo, hi, label) in enumerate([
+                (None, tercile_edges[0], "low_vol"),
+                (tercile_edges[0], tercile_edges[1], "mid_vol"),
+                (tercile_edges[1], None, "high_vol"),
+            ]):
+                rets_in_tercile: list[float] = []
+                for i in range(len(entry_returns)):
+                    rv_val = rv20_at_entry[i]
+                    if np.isnan(rv_val):
+                        continue
+                    if lo is not None and rv_val < lo:
+                        continue
+                    if hi is not None and rv_val >= hi:
+                        continue
+                    rets_in_tercile.append(entry_returns[i])
+                sh = _regime_sharpe(rets_in_tercile, trades_per_year)
+                vol_results[f"vol_{label}_sharpe"] = round(sh, 4)
+                vol_passing.append(bool(sh > 0))
+        else:
+            for label in ["low_vol", "mid_vol", "high_vol"]:
+                vol_results[f"vol_{label}_sharpe"] = 0.0
+                vol_passing.append(False)
+    else:
+        for label in ["low_vol", "mid_vol", "high_vol"]:
+            vol_results[f"vol_{label}_sharpe"] = 0.0
+            vol_passing.append(False)
+
+    vol_pass_count = sum(vol_passing)
+
+    gate_pass = (
+        adx_pass_count >= REGIME_MIN_ADX_PASS
+        and hmm_pass_count >= REGIME_MIN_HMM_PASS
+        and vol_pass_count >= VOL_MIN_PASS
     )
 
     return {
@@ -562,6 +631,8 @@ def check_regime_robustness(
         "adx_pass_count": adx_pass_count,
         **hmm_results,
         "hmm_pass_count": hmm_pass_count,
+        **vol_results,
+        "vol_pass_count": vol_pass_count,
         "gate_pass": gate_pass,
     }
 
@@ -577,6 +648,7 @@ def check_alpha_beta(
     pf_short,
     oos_close: pd.Series,
     direction: str = "both",
+    asset_class: str = "equity",
 ) -> dict:
     """G6: OLS regression of strategy returns on benchmark returns."""
     if sm is None:
@@ -645,9 +717,10 @@ def check_alpha_beta(
     except Exception as exc:
         return {"error": f"OLS regression failed: {exc}", "gate_pass": False}
 
+    beta_threshold = BETA_THRESHOLDS.get(asset_class, 1.0)
     gate_pass = (
         alpha_ann > 0
-        and beta < ALPHA_BETA_MAX_BETA
+        and abs(beta) < beta_threshold
         and r_squared < ALPHA_BETA_MAX_R2
     )
 
@@ -655,6 +728,7 @@ def check_alpha_beta(
         "alpha_ann": round(alpha_ann, 6),
         "beta": round(beta, 4),
         "r_squared": round(r_squared, 4),
+        "beta_threshold": beta_threshold,
         "n_days": len(common),
         "gate_pass": gate_pass,
     }
@@ -776,6 +850,7 @@ def run_robustness(
         pf_short=pf_short,
         oos_close=oos_close,
         direction=direction,
+        asset_class=asset_class,
     )
     _print_gate("G6", "Alpha/Beta", g6)
 

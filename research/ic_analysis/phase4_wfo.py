@@ -23,6 +23,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from math import sqrt
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -63,12 +64,15 @@ from research.ic_analysis.phase3_backtest import (  # noqa: E402
 IS_BARS_DEFAULT: int = 0
 OOS_BARS_DEFAULT: int = 0
 DEFAULT_THRESHOLD: float = 0.75
+# G7: Default threshold grid for per-fold search (same as Phase 3).
+DEFAULT_THRESHOLD_GRID: list[float] = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
 
 # Quality gates
 MIN_PCT_FOLDS_POSITIVE: float = 0.70
 MIN_PCT_FOLDS_ABOVE_1: float = 0.50
 MIN_WORST_FOLD_SHARPE: float = -2.0
-MIN_STITCHED_SHARPE: float = 1.5
+# R6 FIX: Aligned to directive (was 1.5, directive says 1.0).
+MIN_STITCHED_SHARPE: float = 1.0
 MIN_AGGREGATE_PARITY: float = 0.50
 
 __all__ = ["run_wfo", "IS_BARS_DEFAULT", "OOS_BARS_DEFAULT", "DEFAULT_THRESHOLD"]
@@ -112,6 +116,7 @@ def _fold_vbt(
     spread: float,
     slippage: float,
     size: pd.Series,
+    stop_pct: pd.Series,
     swap_long_pips: float,
     swap_short_pips: float,
     pip_size: float,
@@ -128,14 +133,17 @@ def _fold_vbt(
     """
     sig = signal_z.shift(1).fillna(0.0)
     size_arr = size.reindex(close.index).fillna(0.0).values
-    med_close = float(close.median()) or 1.0
-    vbt_fees = spread / med_close
-    vbt_slip = slippage / med_close
+    stop_arr = stop_pct.reindex(close.index).fillna(0.0).values
+
+    # dynamic arrays to ensure high-priced assets aren't undercharged relative to historic medians
+    vbt_fees = (spread / close).bfill().values
+    vbt_slip = (slippage / close).bfill().values
 
     pf_long = vbt.Portfolio.from_signals(
         close,
         entries=sig > threshold,
         exits=sig <= 0.0,
+        sl_stop=stop_arr,
         size=size_arr,
         size_type="percent",
         init_cash=INIT_CASH,
@@ -179,6 +187,7 @@ def _fold_vbt(
         exits=pd.Series(False, index=close.index),
         short_entries=sig < -threshold,
         short_exits=sig >= 0.0,
+        sl_stop=stop_arr,
         size=size_arr,
         size_type="percent",
         init_cash=INIT_CASH,
@@ -210,19 +219,24 @@ def _fold_vbt(
 
     gross_ret = (sl["ret"] + ss["ret"]) / 2
     net_pnl = gross_ret * INIT_CASH + total_swap_drag
-    combined_sharpe = (sl["sharpe"] + ss["sharpe"]) / 2
 
-    # Stitch long+short returns as equal-weight average
+    # C2 FIX: Compute combined Sharpe from blended return stream.
     long_ret_s = pf_long.returns()
     short_ret_s = pf_short.returns()
     returns_series = (long_ret_s + short_ret_s) / 2
+    bl_mean = float(returns_series.mean())
+    bl_std = float(returns_series.std())
+    combined_sharpe = (
+        bl_mean / bl_std * sqrt(252) if bl_std > 1e-10 else 0.0
+    )
 
     return {
         "sharpe": combined_sharpe,
         "trades": combined_trades,
         "wr": combined_wr,
         "ret": (sl["ret"] + ss["ret"]) / 2,
-        "dd": min(sl["dd"], ss["dd"]),
+        # A4 FIX: Use max() for worst drawdown, not min().
+        "dd": max(sl["dd"], ss["dd"]),
         "gross_ret": gross_ret,
         "net_ret": net_pnl / INIT_CASH,
         "swap_drag_usd": total_swap_drag,
@@ -248,6 +262,7 @@ def run_wfo(
     is_bars: int = IS_BARS_DEFAULT,
     oos_bars: int = OOS_BARS_DEFAULT,
     wfo_type: str = "rolling",
+    threshold_grid: list[float] | None = None,
 ) -> pd.DataFrame:
     """Run walk-forward optimisation for one instrument.
 
@@ -312,7 +327,7 @@ def run_wfo(
     print(f"  Total bars: {n}  |  IS={is_bars}  |  OOS={oos_bars}  |  threshold={threshold}")
 
     # -- Position sizing (full series; sliced per fold) -----------------------
-    size_full = build_size_array(base_df, base_close, risk_pct, stop_atr, eff_max_lev)
+    size_full, stop_pct_full = build_size_array(base_df, base_close, risk_pct, stop_atr, eff_max_lev)
 
     # -- Fold boundaries -------------------------------------------------------
     if wfo_type == "rolling":
@@ -385,6 +400,8 @@ def run_wfo(
         oos_sig = signal_z.iloc[oos_start:oos_end]
         is_size = size_full.iloc[is_start:is_end]
         oos_size = size_full.iloc[oos_start:oos_end]
+        is_stop = stop_pct_full.iloc[is_start:is_end]
+        oos_stop = stop_pct_full.iloc[oos_start:oos_end]
 
         # Convert spread/slippage bps -> price units using fold median close
         med_close_is = float(is_close.median()) or 1.0
@@ -394,18 +411,35 @@ def run_wfo(
         spread_oos = eff_spread_bps / 10_000 * med_close_oos
         slip_oos = eff_slip_bps / 10_000 * med_close_oos
 
-        # IS backtest
+        # G7 FIX: Per-fold threshold search on IS Sharpe.
+        if threshold_grid is not None and len(threshold_grid) > 1:
+            best_is_sharpe = -np.inf
+            fold_threshold = threshold  # fallback
+            for th_candidate in threshold_grid:
+                sweep_res = _fold_vbt(
+                    is_close, is_sig, th_candidate,
+                    spread_is, slip_is, is_size, is_stop,
+                    swap_long_pips, swap_short_pips, pip_size,
+                    direction=direction, freq=freq,
+                )
+                if sweep_res["sharpe"] > best_is_sharpe:
+                    best_is_sharpe = sweep_res["sharpe"]
+                    fold_threshold = th_candidate
+        else:
+            fold_threshold = threshold
+
+        # IS backtest (at best threshold for this fold)
         is_res = _fold_vbt(
-            is_close, is_sig, threshold,
-            spread_is, slip_is, is_size,
+            is_close, is_sig, fold_threshold,
+            spread_is, slip_is, is_size, is_stop,
             swap_long_pips, swap_short_pips, pip_size,
             direction=direction, freq=freq,
         )
 
-        # OOS backtest
+        # OOS backtest (at same threshold selected on IS)
         oos_res = _fold_vbt(
-            oos_close, oos_sig, threshold,
-            spread_oos, slip_oos, oos_size,
+            oos_close, oos_sig, fold_threshold,
+            spread_oos, slip_oos, oos_size, oos_stop,
             swap_long_pips, swap_short_pips, pip_size,
             direction=direction, freq=freq,
         )

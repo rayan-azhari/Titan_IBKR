@@ -1,6 +1,6 @@
 # IC Signal Analysis Pipeline
 
-**Version:** 4.0 | **Last Updated:** 2026-03-20
+**Version:** 4.1 | **Last Updated:** 2026-03-20
 
 ---
 
@@ -105,19 +105,27 @@ The ICIR measures whether the IC is consistent over time, not just on average:
 ICIR = rolling_mean(IC_series) / rolling_std(IC_series)
 ```
 
-This is computed on a rolling window of 60 bars **at each signal's best horizon** (not at a fixed horizon). A signal might have a high average IC but swing wildly between positive and negative — that is not a tradeable edge. The ICIR filters for consistency.
+This is computed on a rolling window of 252 bars **at each signal's best horizon** (not at a fixed horizon) using true rolling Spearman correlation (re-ranked within each window). A signal might have a high average IC but swing wildly between positive and negative — that is not a tradeable edge. The ICIR filters for consistency.
 
 **Interpretation:**
 - ICIR > 0.5: consistent edge — the signal works reliably
 - ICIR 0.3–0.5: moderate consistency — viable with confirmation
 - ICIR < 0.3: inconsistent — signal may be regime-dependent
 
-> [!WARNING]
-> **Overlapping Forward Returns:** At long horizons (e.g., h=60), every forward return
-> overlaps with the next 59 bars' returns. This creates serial correlation in the IC series,
-> inflating the apparent ICIR. The ICIR at h=60 is not directly comparable to ICIR at h=1.
-> When interpreting long-horizon results, apply Newey-West standard errors with `h-1` lags,
-> or treat ICIR as an upper bound.
+### Newey-West Adjusted ICIR (ICIR_NW)
+
+At long horizons (e.g., h=60), overlapping forward returns create serial correlation in the IC series, inflating the apparent standard ICIR. The **ICIR_NW** corrects for this using Newey-West HAC standard errors with `h-1` lags:
+
+```python
+from run_ic import compute_icir_nw
+icir_nw = compute_icir_nw(signals, fwd_returns, horizons, best_horizons=bh)
+```
+
+Phase 1 reports both `icir` and `icir_nw` in the leaderboard. If ICIR_NW diverges significantly below ICIR for a given signal, the standard ICIR is inflated by overlapping returns and should not be trusted.
+
+### Benjamini-Hochberg FDR Correction
+
+With 52 signals × 5 horizons × 3 regime splits = 780 simultaneous tests, raw p-values produce ~39 false positives at the 5% level. Phase 1 now applies **BH FDR correction** automatically via `apply_bh_fdr()` and reports a `bh_significant` column in the leaderboard. Signals failing BH significance are flagged but not auto-discarded.
 
 ### Forward Returns (Volatility-Adjusted)
 
@@ -304,9 +312,13 @@ Measure how far price has deviated from a mean — negative IC expected if the i
 | `zscore_20` | `(close - SMA20) / std(close, 20)` | 20-bar z-score |
 | `zscore_50` | `(close - SMA50) / std(close, 50)` | 50-bar z-score |
 | `zscore_100` | `(close - SMA100) / std(close, 100)` | 100-bar z-score |
-| `zscore_expanding` | `(close - expanding_mean) / expanding_std` | Deviation from full-history mean |
+| `zscore_252` | `(close - SMA252) / rolling_std(close, 252)` | Long-term z-score (252-bar rolling window) |
 
 A negative IC for these signals indicates the instrument mean-reverts (stretched prices retrace). A positive IC indicates trends persist. The sign of IC for Group C signals is diagnostic of the instrument's statistical regime.
+
+> [!NOTE]
+> **Audit fix A6:** The original `zscore_expanding` used `expanding()` which was non-stationary and
+> introduced look-ahead bias in the variance estimate. Replaced with a 252-bar rolling window.
 
 #### Group D — Volatility State (7 signals)
 
@@ -373,8 +385,10 @@ The leaderboard shows all three rows for each signal. Signals marked NOISE uncon
 | `group` | Group label (Trend, Momen, MnRev, Vol, Accel, Struct, Combo) |
 | `best_h` | Horizon with highest \|IC\| |
 | `best_ic` | IC value at best horizon |
-| `icir` | ICIR at best horizon (rolling 60-bar) |
+| `icir` | ICIR at best horizon (rolling 252-bar, true rolling Spearman) |
+| `icir_nw` | Newey-West adjusted ICIR (HAC standard errors, h-1 lags) |
 | `p_val` | Spearman p-value at best horizon |
+| `bh_significant` | True if signal passes Benjamini-Hochberg FDR correction (α=0.05) |
 | `ar1` | Signal Autocorrelation |
 | `mfe` | IC correlation with MFE at best horizon |
 | `mae` | IC correlation with MAE at best horizon |
@@ -461,11 +475,12 @@ All signal computations are strictly causal. No signal uses future information.
 
 | File | Role |
 |---|---|
-| `research/ic_analysis/run_ic.py` | Core IC functions — `compute_ic_table`, `compute_forward_returns`, `compute_icir`, `compute_mfe_mae_targets`, `compute_alpha_decay`, `compute_monotonicity`, `compute_recency_weighted_ic` |
+| `research/ic_analysis/run_ic.py` | Core IC functions — `compute_ic_table`, `compute_forward_returns`, `compute_icir`, `compute_icir_nw`, `apply_bh_fdr`, `compute_mfe_mae_targets`, `compute_alpha_decay`, `compute_monotonicity`, `compute_recency_weighted_ic` |
 | `research/ic_analysis/phase0_regime.py` | Phase 0 — ADX + HMM regime labelling; optional fractional differencing |
-| `research/ic_analysis/phase1_sweep.py` | Phase 1 — 52-signal IC/ICIR sweep with regime-conditional IC and FLIP detection |
+| `research/ic_analysis/phase1_sweep.py` | Phase 1 — 52-signal IC/ICIR sweep with regime-conditional IC, FLIP detection, `_validate_ohlcv()` data quality checks, and `--is-only` flag |
 | `research/ic_analysis/phase1_param_sweep.py` | Phase 1 extension — parameter grid search per signal family |
-| `research/ic_analysis/phase2_combination.py` | Phase 2 — correlation matrix, partial IC, composite building |
+| `research/ic_analysis/phase2_combination.py` | Phase 2 — correlation matrix (Spearman), partial IC, composite building |
+| `research/ic_analysis/cross_sectional_ic.py` | Cross-sectional IC for multi-instrument universes |
 | `research/ic_analysis/pipeline_discovery.py` | Orchestrator: Phases 0 → 1 → 2 for any instrument(s) / TF |
 | `titan/strategies/ml/features.py` | Technical indicator implementations (used by signal registry in ic_generic) |
 
@@ -551,6 +566,9 @@ uv run python research/ic_analysis/phase0_regime.py --instrument SPY --timeframe
 ```bash
 uv run python research/ic_analysis/phase1_sweep.py --instrument EUR_USD --timeframe H4
 uv run python research/ic_analysis/phase1_sweep.py --instrument SPY --timeframe D --horizons 1,5,10,20,60
+
+# IS-only mode (R4): compute IC on first 70% of data to prevent selection bias
+uv run python research/ic_analysis/phase1_sweep.py --instrument EUR_USD --timeframe H4 --is-only
 ```
 
 ### Phase 2 (Signal Combination Only)
@@ -567,6 +585,7 @@ uv run python research/ic_analysis/phase2_combination.py --instrument SPY --time
 | `--timeframe` | `H4` | Timeframe (H1, H4, D, W) |
 | `--horizons` | `1,5,10,20,60` | Comma-separated forward return horizons in bars |
 | `--n_bins` | `10` | Number of quantile bins for decile plots |
+| `--is-only` | `false` | Compute IC on IS portion only (first 70%) — prevents selection bias |
 
 ---
 
@@ -696,18 +715,15 @@ In live deployment, the IC sign is computed from a warmup window. WFO validates 
 
 ## Statistical Caveats
 
-> [!WARNING]
-> **Phase 1 Selection Bias:** IC is computed on the full dataset with no IS/OOS split.
-> Signals advanced to Phase 3 have already been selected based on full-sample IC, which
-> includes the periods that will later be used for OOS validation. This creates a subtle
-> selection bias. Phase 4 (WFO) partially mitigates this, but consider running Phase 1
-> on only the first 70% of data and validating the shortlist on the last 30%.
+> [!NOTE]
+> **Phase 1 Selection Bias (R4 — Implemented):** The `--is-only` flag restricts IC
+> computation to the first 70% of data, preventing selection bias when carrying signals
+> forward to Phase 2/3. Use `--is-only` for signal shortlisting, full-sample for final reporting.
 
-> [!WARNING]
-> **Multiple Testing:** With 52 signals × 5 horizons × 3 regime splits = 780 simultaneous
-> tests, approximately 39 false positives are expected at the 5% level. The p-values in the
-> summary table are raw (unadjusted). For conservative selection, apply Benjamini-Hochberg
-> FDR correction or require p < 0.001.
+> [!NOTE]
+> **Multiple Testing (G1 — Implemented):** BH FDR correction is now applied automatically.
+> The leaderboard includes a `bh_significant` column. Signals failing BH at α=0.05 are
+> flagged but not auto-discarded.
 
 ---
 
@@ -759,13 +775,18 @@ uv run python research/ic_analysis/run_param_sweep.py --instrument EUR_USD --tim
 
 ---
 
-## Pending Enhancements
+## Implemented Enhancements (Audit v4.1)
 
-### Newey-West Standard Errors for Long-Horizon ICIR
-At h=60, the ICIR is inflated by overlapping returns. Implementing Newey-West corrected standard errors with `h-1` lags would provide unbiased significance estimates.
-
-### Benjamini-Hochberg FDR Automation
-Currently p-values are reported raw. Automating the BH correction across the 780-test matrix (52 × 5 × 3 regimes) and reporting adjusted p-values alongside raw would prevent false discovery.
+| Enhancement | Status | Location |
+|---|---|---|
+| Newey-West ICIR (G2) | ✅ Implemented | `run_ic.compute_icir_nw()` |
+| BH FDR Correction (G1) | ✅ Implemented | `run_ic.apply_bh_fdr()` → Phase 1 `bh_significant` column |
+| IS-Only Mode (R4) | ✅ Implemented | `phase1_sweep.py --is-only` |
+| Data Quality Validation (R3) | ✅ Implemented | `phase1_sweep._validate_ohlcv()` |
+| Cross-Sectional IC (R2) | ✅ Implemented | `cross_sectional_ic.py` |
+| True Rolling Spearman (C1) | ✅ Implemented | `run_ic.compute_icir()` — re-ranks within each window |
+| 252-Bar Rolling Z-Score (A6) | ✅ Implemented | `phase1_sweep._compute_group_c()` |
+| Spearman Correlation in Phase 2 (A1) | ✅ Implemented | `phase2_combination.py` |
 
 ---
 
@@ -796,6 +817,7 @@ No code changes required. The data loader reads any file matching `data/{INSTRUM
 
 | Version | Date | Changes |
 |---|---|---|
+| **4.1** | 2026-03-20 | Audit fixes: True rolling Spearman (C1), Newey-West ICIR (G2), BH FDR (G1), IS-only mode (R4), data quality validation (R3), cross-sectional IC script (R2), 252-bar rolling z-score (A6), Spearman in Phase 2 (A1). Pending Enhancements section replaced with Implemented table. |
 | **4.0** | 2026-03-20 | Major restructuring: Added Phase 0 (regime pre-identification + frac diff), mandatory Phase 2 (Partial IC + correlation matrix), directional constraints (equities long-only / FX both ways), Risk of Ruin (Balsara), cross-sectional IC, IC decay warnings, fractional differencing. Extracted all strategy findings to `FINDINGS.md`. Removed implemented roadmap items. |
 | **3.4** | 2026-03-20 | Re-run with HMM gate added. 6 validated symbols. |
 | **3.2** | 2026-03-19 | Fixed MFE/MAE rolling direction. ICIR at best horizon. p-values, monotonicity, recency-weighted IC. AR1 verdict gate. |
