@@ -47,9 +47,9 @@ from research.ic_analysis.run_spy_strategy import (  # noqa: E402
     REPORTS,
     THRESHOLDS,
     W,
+    _run_long,
     build_composite_for_fold,
     load_data,
-    _run_long,
 )
 
 # ── WFO config ────────────────────────────────────────────────────────────────

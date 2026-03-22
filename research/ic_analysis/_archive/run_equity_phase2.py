@@ -25,9 +25,18 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from research.ic_analysis.run_ic import compute_forward_returns, compute_ic_table, compute_icir  # noqa: E402
 from research.ic_analysis.run_signal_combination import run_combination  # noqa: E402
-from research.ic_analysis.run_signal_sweep import _load_ohlcv, build_all_signals, run_sweep  # noqa: E402
+from research.ic_analysis.run_signal_sweep import (  # noqa: E402
+    _load_ohlcv,
+    build_all_signals,
+    run_sweep,
+)
+
+from research.ic_analysis.run_ic import (  # noqa: E402
+    compute_forward_returns,
+    compute_ic_table,
+    compute_icir,
+)
 
 logging.basicConfig(
     level=logging.WARNING,

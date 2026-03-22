@@ -38,8 +38,9 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from research.ic_analysis.run_ic import compute_forward_returns  # noqa: E402
 from research.ic_analysis.run_signal_sweep import _load_ohlcv, build_all_signals  # noqa: E402
+
+from research.ic_analysis.run_ic import compute_forward_returns  # noqa: E402
 
 REPORTS_DIR = ROOT / ".tmp" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)

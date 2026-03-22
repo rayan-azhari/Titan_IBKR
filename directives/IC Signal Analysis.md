@@ -1,6 +1,6 @@
 # IC Signal Analysis Pipeline
 
-**Version:** 4.1 | **Last Updated:** 2026-03-20
+**Version:** 4.2 | **Last Updated:** 2026-03-20
 
 ---
 
@@ -95,7 +95,7 @@ Return distributions are fat-tailed and non-normal. Pearson correlation is sensi
 
 The IC is computed per bar using all available history, giving one number per (signal, horizon) pair.
 
-**Statistical significance:** `compute_ic_table()` returns raw p-values from `scipy.stats.spearmanr` alongside IC values. Signals passing IC thresholds but failing p < 0.001 should be treated with caution, especially with small sample sizes. With 52 signals × 5 horizons = 260 simultaneous tests, apply Benjamini-Hochberg FDR correction for conservative selection.
+**Statistical significance:** `compute_ic_table()` returns raw p-values from `scipy.stats.spearmanr` alongside IC values. Signals passing IC thresholds but failing p < 0.001 should be treated with caution, especially with small sample sizes. With up to 364 simultaneous tests (260 unconditional across 5 horizons + 52 regime-trending + 52 regime-ranging, each at their best horizon), apply Benjamini-Hochberg FDR correction for conservative selection.
 
 ### IC Information Ratio (ICIR)
 
@@ -105,7 +105,10 @@ The ICIR measures whether the IC is consistent over time, not just on average:
 ICIR = rolling_mean(IC_series) / rolling_std(IC_series)
 ```
 
-This is computed on a rolling window of 252 bars **at each signal's best horizon** (not at a fixed horizon) using true rolling Spearman correlation (re-ranked within each window). A signal might have a high average IC but swing wildly between positive and negative — that is not a tradeable edge. The ICIR filters for consistency.
+This is computed on a rolling window of 252 bars **at each signal's best horizon** (not at a fixed horizon) using true rolling Spearman correlation (re-ranked within each window, `exact=True`). A signal might have a high average IC but swing wildly between positive and negative — that is not a tradeable edge. The ICIR filters for consistency.
+
+> [!NOTE]
+> `exact=True` is the default in `_rolling_ic_series()`. Setting `exact=False` uses global pre-ranking (Pearson on ranked series), which introduces upward ICIR bias of 5–15% for high-autocorrelation signals. Never use `exact=False` for leaderboard reporting.
 
 **Interpretation:**
 - ICIR > 0.5: consistent edge — the signal works reliably
@@ -125,7 +128,9 @@ Phase 1 reports both `icir` and `icir_nw` in the leaderboard. If ICIR_NW diverge
 
 ### Benjamini-Hochberg FDR Correction
 
-With 52 signals × 5 horizons × 3 regime splits = 780 simultaneous tests, raw p-values produce ~39 false positives at the 5% level. Phase 1 now applies **BH FDR correction** automatically via `apply_bh_fdr()` and reports a `bh_significant` column in the leaderboard. Signals failing BH significance are flagged but not auto-discarded.
+With up to 364 simultaneous tests (260 unconditional + 52 regime-trending + 52 regime-ranging), raw p-values produce ~18 false positives at the 5% level. Phase 1 applies **BH FDR correction** automatically via `apply_bh_fdr()` across the pooled unconditional + regime p-value table, and reports a `bh_significant` column in the leaderboard.
+
+**Signals that do not survive BH at their best horizon are ineligible for STRONG or USABLE verdicts.** `_verdict()` gates on `bh_significant=True` before applying IC and ICIR thresholds. A signal can achieve |IC| = 0.06 and ICIR = 0.6 but still be classified WEAK if its p-value does not survive multiple-testing correction.
 
 ### Forward Returns (Volatility-Adjusted)
 
@@ -216,6 +221,8 @@ Before computing IC, every bar is labelled with its market regime. This enables 
 ### ADX Axis (3 states)
 
 ADX measures trend *strength* (not direction). A strong downtrend and a strong uptrend both produce ADX > 25.
+
+**Implementation:** `ADX(14)` — Wilder smoothing period of 14 bars (hardcoded in `phase0_regime.py`). A parallel implementation using `ADX(21)` would produce different regime label fractions; document any deviation from this default.
 
 | Regime | Condition | Typical bar % |
 |--------|-----------|---------------|
@@ -586,6 +593,7 @@ uv run python research/ic_analysis/phase2_combination.py --instrument SPY --time
 | `--horizons` | `1,5,10,20,60` | Comma-separated forward return horizons in bars |
 | `--n_bins` | `10` | Number of quantile bins for decile plots |
 | `--is-only` | `false` | Compute IC on IS portion only (first 70%) — prevents selection bias |
+| `--strict` | `false` | Convert data-quality warnings (duplicate timestamps, OHLC violations, stale bars) to fatal errors. Use in CI / production pipeline runs. |
 
 ---
 
@@ -775,16 +783,18 @@ uv run python research/ic_analysis/run_param_sweep.py --instrument EUR_USD --tim
 
 ---
 
-## Implemented Enhancements (Audit v4.1)
+## Implemented Enhancements (Audit v4.2)
 
 | Enhancement | Status | Location |
 |---|---|---|
-| Newey-West ICIR (G2) | ✅ Implemented | `run_ic.compute_icir_nw()` |
-| BH FDR Correction (G1) | ✅ Implemented | `run_ic.apply_bh_fdr()` → Phase 1 `bh_significant` column |
+| Newey-West ICIR — corrected formula (C1) | ✅ Fixed | `run_ic.compute_icir_nw()` — rewrote to use NW SE of the mean; prior version was statistically invalid (rank-deficient OLS) |
+| BH FDR — 364 pooled tests, gates verdicts (H3) | ✅ Fixed | `run_ic.apply_bh_fdr()` → `phase1_sweep.run_sweep()` — regime p-values pooled; `_verdict()` gates on `bh_significant` |
+| True Rolling Spearman — `exact=True` default (H2) | ✅ Fixed | `run_ic._rolling_ic_series()` — `exact=False` caused upward ICIR bias; default is now `exact=True` (optimised ~10x via Numba) |
+| Data Quality — `--strict` flag (L2) | ✅ Implemented | `phase1_sweep._validate_ohlcv()` — `--strict` converts warnings to fatal errors |
+| NaN IC sign default warning (M6) | ✅ Implemented | `phase2_combination._sign_orient()` — explicitly drops signal when IC=NaN (previously warned & defaulted to +1) |
+| Partial IC collinearity detection (L3) | ✅ Implemented | `phase2_combination.method_partial_ic()` — logs condition number, tightened threshold to 1e8 |
 | IS-Only Mode (R4) | ✅ Implemented | `phase1_sweep.py --is-only` |
-| Data Quality Validation (R3) | ✅ Implemented | `phase1_sweep._validate_ohlcv()` |
 | Cross-Sectional IC (R2) | ✅ Implemented | `cross_sectional_ic.py` |
-| True Rolling Spearman (C1) | ✅ Implemented | `run_ic.compute_icir()` — re-ranks within each window |
 | 252-Bar Rolling Z-Score (A6) | ✅ Implemented | `phase1_sweep._compute_group_c()` |
 | Spearman Correlation in Phase 2 (A1) | ✅ Implemented | `phase2_combination.py` |
 
@@ -817,6 +827,7 @@ No code changes required. The data loader reads any file matching `data/{INSTRUM
 
 | Version | Date | Changes |
 |---|---|---|
+| **4.2** | 2026-03-20 | Audit round 2: Corrected ICIR_NW formula (C1 — prior implementation was rank-deficient OLS, not NW SE of mean); `exact=True` now default in rolling Spearman & accelerated via Numba (H2); BH FDR extended to 364 pooled tests and now gates STRONG/USABLE verdicts (H3); `--strict` flag for data quality (L2); NaN IC sign explicitly drops signal (M6); partial IC collinearity condition number tightened to 1e8 (L3); ADX(14) period documented (L1). |
 | **4.1** | 2026-03-20 | Audit fixes: True rolling Spearman (C1), Newey-West ICIR (G2), BH FDR (G1), IS-only mode (R4), data quality validation (R3), cross-sectional IC script (R2), 252-bar rolling z-score (A6), Spearman in Phase 2 (A1). Pending Enhancements section replaced with Implemented table. |
 | **4.0** | 2026-03-20 | Major restructuring: Added Phase 0 (regime pre-identification + frac diff), mandatory Phase 2 (Partial IC + correlation matrix), directional constraints (equities long-only / FX both ways), Risk of Ruin (Balsara), cross-sectional IC, IC decay warnings, fractional differencing. Extracted all strategy findings to `FINDINGS.md`. Removed implemented roadmap items. |
 | **3.4** | 2026-03-20 | Re-run with HMM gate added. 6 validated symbols. |

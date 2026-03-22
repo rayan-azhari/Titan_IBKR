@@ -44,6 +44,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from research.ic_analysis.run_ic import (  # noqa: E402
+    build_rolling_ic_map,
     compute_autocorrelation,
     compute_forward_returns,
     compute_ic_table,
@@ -63,26 +64,35 @@ from titan.strategies.ml.features import (  # noqa: E402
     wma,
 )
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 HORIZONS = [1, 5, 10, 20, 60]
 
+# Set by --strict CLI flag. When True, data quality issues raise errors instead of warnings.
+_STRICT_VALIDATION: bool = False
+
+
 def _get_annual_bars(tf: str) -> int:
     """Return the approximate number of bars in one calendar year."""
     t = tf.lower()
-    if t == "m1": return 252 * 6.5 * 60
-    if t == "m5": return 252 * 6.5 * 12
-    if t == "m15": return 252 * 6.5 * 4
-    if t == "m30": return 252 * 6.5 * 2
+    if t == "m1":
+        return int(252 * 6.5 * 60)
+    if t == "m5":
+        return int(252 * 6.5 * 12)
+    if t == "m15":
+        return int(252 * 6.5 * 4)
+    if t == "m30":
+        return int(252 * 6.5 * 2)
     if t.startswith("h"):
         h = float(t.replace("h", "") or 1.0)
         return int(252 * 24 / h) if "crypto" in t or "fx" in t else int(252 * 6.5 / h)
-    if t == "w": return 52
-    if t == "m": return 12
+    if t == "w":
+        return 52
+    if t == "m":
+        return 12
     return 252  # default (Daily)
+
 
 # Populated by _tag() as signal factories run -- maps signal name -> group label
 _SIGNAL_GROUP: dict[str, str] = {}
@@ -143,33 +153,43 @@ def _load_ohlcv(
 
     logger.info(
         "Loaded %d bars | %s %s (%s - %s)",
-        len(df), instrument, timeframe,
-        df.index[0].date(), df.index[-1].date(),
+        len(df),
+        instrument,
+        timeframe,
+        df.index[0].date(),
+        df.index[-1].date(),
     )
     return df
 
 
 def _validate_ohlcv(df: pd.DataFrame, instrument: str, timeframe: str) -> None:
-    """R3: Data quality validation — warn on issues, never raise."""
+    """Data quality validation.
+
+    With _STRICT_VALIDATION=False (default): warns on issues, never raises.
+    With _STRICT_VALIDATION=True (--strict flag): raises ValueError on any issue.
+    Use --strict for production/pipeline runs where silent invalid IC results are
+    unacceptable (e.g. a dataset with 20% stale bars).
+    """
     tag = f"[{instrument} {timeframe}]"
+    issues: list[str] = []
 
     # 1. Duplicate timestamps
     if not df.index.is_unique:
         n_dupes = df.index.duplicated().sum()
-        logger.warning("%s Duplicate timestamps detected: %d rows", tag, n_dupes)
+        issues.append(f"Duplicate timestamps detected: {n_dupes} rows")
 
     # 2. Stale prices (≥5 consecutive identical closes)
     stale_run = (df["close"].diff() == 0).astype(int)
     stale_streak = stale_run.groupby((stale_run != stale_run.shift()).cumsum()).cumsum()
     n_stale = int((stale_streak >= 5).sum())
     if n_stale > 0:
-        logger.warning("%s Stale prices (≥5 identical closes): %d bars", tag, n_stale)
+        issues.append(f"Stale prices (≥5 identical closes): {n_stale} bars")
 
     # 3. OHLC integrity
     high_ok = (df["high"] >= df[["open", "close"]].max(axis=1)).all()
     low_ok = (df["low"] <= df[["open", "close"]].min(axis=1)).all()
     if not high_ok or not low_ok:
-        logger.warning("%s OHLC integrity violation (high < max(O,C) or low > min(O,C))", tag)
+        issues.append("OHLC integrity violation (high < max(O,C) or low > min(O,C))")
 
     # 4. Gap detection (>2x median bar spacing)
     if len(df) > 10:
@@ -178,10 +198,16 @@ def _validate_ohlcv(df: pd.DataFrame, instrument: str, timeframe: str) -> None:
         if median_gap.total_seconds() > 0:
             large_gaps = diffs[diffs > 2 * median_gap]
             if len(large_gaps) > 5:
-                logger.warning(
-                    "%s Large time gaps (>2x median): %d occurrences, largest=%s",
-                    tag, len(large_gaps), large_gaps.max(),
+                issues.append(
+                    f"Large time gaps (>2x median): {len(large_gaps)} occurrences, "
+                    f"largest={large_gaps.max()}"
                 )
+
+    for msg in issues:
+        if _STRICT_VALIDATION:
+            raise ValueError(f"{tag} Data quality error: {msg}")
+        else:
+            logger.warning("%s %s", tag, msg)
 
 
 # ── Signal group factories (all causal -- no look-ahead) ──────────────────────
@@ -204,16 +230,16 @@ def _compute_group_a(close: pd.Series) -> pd.DataFrame:
     w20 = wma(close, 20)
 
     out = pd.DataFrame(index=close.index)
-    out[_tag("ma_spread_5_20",   "Trend")] = (e5 - e20) / e20
-    out[_tag("ma_spread_10_50",  "Trend")] = (e10 - e50) / e50
+    out[_tag("ma_spread_5_20", "Trend")] = (e5 - e20) / e20
+    out[_tag("ma_spread_10_50", "Trend")] = (e10 - e50) / e50
     out[_tag("ma_spread_20_100", "Trend")] = (e20 - e100) / e100
     out[_tag("ma_spread_50_200", "Trend")] = (e50 - e200) / e200
-    out[_tag("wma_spread_5_20",  "Trend")] = (w5 - w20) / w20.replace(0, np.nan)
-    out[_tag("price_vs_sma20",   "Trend")] = (close - s20) / s20
-    out[_tag("price_vs_sma50",   "Trend")] = (close - s50) / s50
-    out[_tag("macd_norm",        "Trend")] = (e12 - e26) / roll_std20.replace(0, np.nan)
-    out[_tag("ema_slope_10",     "Trend")] = (e10 - e10.shift(5)) / e10.shift(5)
-    out[_tag("ema_slope_20",     "Trend")] = (e20 - e20.shift(10)) / e20.shift(10)
+    out[_tag("wma_spread_5_20", "Trend")] = (w5 - w20) / w20.replace(0, np.nan)
+    out[_tag("price_vs_sma20", "Trend")] = (close - s20) / s20
+    out[_tag("price_vs_sma50", "Trend")] = (close - s50) / s50
+    out[_tag("macd_norm", "Trend")] = (e12 - e26) / roll_std20.replace(0, np.nan)
+    out[_tag("ema_slope_10", "Trend")] = (e10 - e10.shift(5)) / e10.shift(5)
+    out[_tag("ema_slope_20", "Trend")] = (e20 - e20.shift(10)) / e20.shift(10)
     return out
 
 
@@ -230,19 +256,17 @@ def _compute_group_b(df: pd.DataFrame) -> pd.DataFrame:
     mad20 = (close - s20).abs().rolling(20).mean()
 
     out = pd.DataFrame(index=close.index)
-    out[_tag("rsi_7_dev",      "Momen")] = rsi(close, 7) - 50.0
-    out[_tag("rsi_14_dev",     "Momen")] = rsi(close, 14) - 50.0
-    out[_tag("rsi_21_dev",     "Momen")] = rsi(close, 21) - 50.0
-    out[_tag("stoch_k_dev",    "Momen")] = stoch_k_raw - 50.0
-    out[_tag("stoch_d_dev",    "Momen")] = stoch_d_raw - 50.0
-    out[_tag("cci_20",         "Momen")] = (
-        (close - s20) / (0.015 * mad20.replace(0, np.nan))
-    )
+    out[_tag("rsi_7_dev", "Momen")] = rsi(close, 7) - 50.0
+    out[_tag("rsi_14_dev", "Momen")] = rsi(close, 14) - 50.0
+    out[_tag("rsi_21_dev", "Momen")] = rsi(close, 21) - 50.0
+    out[_tag("stoch_k_dev", "Momen")] = stoch_k_raw - 50.0
+    out[_tag("stoch_d_dev", "Momen")] = stoch_d_raw - 50.0
+    out[_tag("cci_20", "Momen")] = (close - s20) / (0.015 * mad20.replace(0, np.nan))
     out[_tag("williams_r_dev", "Momen")] = wr14 + 50.0
-    out[_tag("roc_3",          "Momen")] = log_c - log_c.shift(3)
-    out[_tag("roc_10",         "Momen")] = log_c - log_c.shift(10)
-    out[_tag("roc_20",         "Momen")] = log_c - log_c.shift(20)
-    out[_tag("roc_60",         "Momen")] = log_c - log_c.shift(60)
+    out[_tag("roc_3", "Momen")] = log_c - log_c.shift(3)
+    out[_tag("roc_10", "Momen")] = log_c - log_c.shift(10)
+    out[_tag("roc_20", "Momen")] = log_c - log_c.shift(20)
+    out[_tag("roc_60", "Momen")] = log_c - log_c.shift(60)
     return out
 
 
@@ -253,10 +277,10 @@ def _compute_group_c(close: pd.Series, window_1y: int) -> pd.DataFrame:
         s = sma(close, w)
         std = close.rolling(w).std().replace(0, np.nan)
         out[_tag(f"bb_zscore_{w}", "MRev")] = (close - s) / (2.0 * std)
-        out[_tag(f"zscore_{w}",    "MRev")] = (close - s) / std
+        out[_tag(f"zscore_{w}", "MRev")] = (close - s) / std
     s100 = sma(close, 100)
     std100 = close.rolling(100).std().replace(0, np.nan)
-    out[_tag("zscore_100",       "MRev")] = (close - s100) / std100
+    out[_tag("zscore_100", "MRev")] = (close - s100) / std100
     roll_mean_1y = close.rolling(window_1y).mean()
     roll_std_1y = close.rolling(window_1y).std().replace(0, np.nan)
     out[_tag(f"zscore_{window_1y}", "MRev")] = (close - roll_mean_1y) / roll_std_1y
@@ -279,26 +303,26 @@ def _compute_group_d(df: pd.DataFrame) -> pd.DataFrame:
     pk_roll = pk_bar.rolling(20).mean().clip(lower=0.0) ** 0.5
 
     out = pd.DataFrame(index=close.index)
-    out[_tag("norm_atr_14",     "Vol")] = atr(df, 14) / close
-    out[_tag("realized_vol_5",  "Vol")] = log_r.rolling(5).std() * np.sqrt(252)
+    out[_tag("norm_atr_14", "Vol")] = atr(df, 14) / close
+    out[_tag("realized_vol_5", "Vol")] = log_r.rolling(5).std() * np.sqrt(252)
     out[_tag("realized_vol_20", "Vol")] = log_r.rolling(20).std() * np.sqrt(252)
-    out[_tag("garman_klass",    "Vol")] = gk_roll
-    out[_tag("parkinson_vol",   "Vol")] = pk_roll
-    out[_tag("bb_width",        "Vol")] = bollinger_bw(close, 20)
-    out[_tag("adx_14",          "Vol")] = adx(df, 14)
+    out[_tag("garman_klass", "Vol")] = gk_roll
+    out[_tag("parkinson_vol", "Vol")] = pk_roll
+    out[_tag("bb_width", "Vol")] = bollinger_bw(close, 20)
+    out[_tag("adx_14", "Vol")] = adx(df, 14)
     return out
 
 
 def _compute_group_e(sigs: pd.DataFrame, close: pd.Series) -> pd.DataFrame:
     """Group E: Acceleration / Deceleration (7 signals). diff(1) of base signals."""
     out = pd.DataFrame(index=sigs.index)
-    out[_tag("accel_roc10",    "Accel")] = sigs["roc_10"].diff(1)
-    out[_tag("accel_rsi14",    "Accel")] = sigs["rsi_14_dev"].diff(1)
-    out[_tag("accel_macd",     "Accel")] = macd_hist(close, 12, 26, 9).diff(1)
-    out[_tag("accel_atr",      "Accel")] = sigs["norm_atr_14"].diff(1)
+    out[_tag("accel_roc10", "Accel")] = sigs["roc_10"].diff(1)
+    out[_tag("accel_rsi14", "Accel")] = sigs["rsi_14_dev"].diff(1)
+    out[_tag("accel_macd", "Accel")] = macd_hist(close, 12, 26, 9).diff(1)
+    out[_tag("accel_atr", "Accel")] = sigs["norm_atr_14"].diff(1)
     out[_tag("accel_bb_width", "Accel")] = sigs["bb_width"].diff(1)
-    out[_tag("accel_rvol20",   "Accel")] = sigs["realized_vol_20"].diff(1)
-    out[_tag("accel_stoch_k",  "Accel")] = sigs["stoch_k_dev"].diff(1)
+    out[_tag("accel_rvol20", "Accel")] = sigs["realized_vol_20"].diff(1)
+    out[_tag("accel_stoch_k", "Accel")] = sigs["stoch_k_dev"].diff(1)
     return out
 
 
@@ -314,7 +338,7 @@ def _compute_group_f(df: pd.DataFrame) -> pd.DataFrame:
         hi = df["high"].rolling(w).max()
         rng = (hi - lo).replace(0, np.nan)
         out[_tag(f"donchian_pos_{w}", "Struct")] = (close - lo) / rng - 0.5
-    out[_tag("keltner_pos",       "Struct")] = (close - e20) / (2.0 * atr10)
+    out[_tag("keltner_pos", "Struct")] = (close - e20) / (2.0 * atr10)
     out[_tag("price_pct_rank_20", "Struct")] = close.rolling(20).rank(pct=True) - 0.5
     out[_tag("price_pct_rank_60", "Struct")] = close.rolling(60).rank(pct=True) - 0.5
     return out
@@ -327,25 +351,17 @@ def _compute_group_g(sigs: pd.DataFrame) -> pd.DataFrame:
 
     out = pd.DataFrame(index=sigs.index)
     # Trend direction gates momentum magnitude
-    out[_tag("trend_mom",        "Combo")] = (
+    out[_tag("trend_mom", "Combo")] = (
         np.sign(sigs["ma_spread_5_20"]) * sigs["rsi_14_dev"].abs() / 50.0
     )
     # Trend signal normalised by volatility regime
-    out[_tag("trend_vol_adj",    "Combo")] = (
-        sigs["ma_spread_5_20"] / (atr_norm + 1e-9)
-    )
+    out[_tag("trend_vol_adj", "Combo")] = sigs["ma_spread_5_20"] / (atr_norm + 1e-9)
     # Momentum × whether it is accelerating or decelerating
-    out[_tag("mom_accel_combo",  "Combo")] = (
-        sigs["rsi_14_dev"] * np.sign(sigs["accel_rsi14"])
-    )
+    out[_tag("mom_accel_combo", "Combo")] = sigs["rsi_14_dev"] * np.sign(sigs["accel_rsi14"])
     # Structural breakout gated by momentum
-    out[_tag("donchian_rsi",     "Combo")] = (
-        sigs["donchian_pos_20"] * (sigs["rsi_14_dev"] / 50.0)
-    )
+    out[_tag("donchian_rsi", "Combo")] = sigs["donchian_pos_20"] * (sigs["rsi_14_dev"] / 50.0)
     # Trend attenuated in elevated-vol regime
-    out[_tag("vol_regime_trend", "Combo")] = (
-        sigs["ma_spread_5_20"] * (1.0 - atr_norm / atr_ma60)
-    )
+    out[_tag("vol_regime_trend", "Combo")] = sigs["ma_spread_5_20"] * (1.0 - atr_norm / atr_ma60)
     return out
 
 
@@ -367,14 +383,19 @@ def build_all_signals(df: pd.DataFrame, window_1y: int) -> pd.DataFrame:
 # ── Display helpers ────────────────────────────────────────────────────────────
 
 
-def _verdict(ic: float, icir: float, ar1: float = 1.0) -> str:
-    """Classify a signal by its IC and ICIR into a qualitative tier."""
+def _verdict(ic: float, icir: float, ar1: float = 1.0, bh_sig: bool = True) -> str:
+    """Classify a signal by its IC and ICIR into a qualitative tier.
+
+    bh_sig: whether the signal survives BH FDR correction across all tests.
+    Signals that do not survive BH are capped at WEAK even if IC >= 0.05,
+    because the apparent edge may be a false discovery.
+    """
     abs_ic = abs(ic) if not np.isnan(ic) else 0.0
     abs_ir = abs(icir) if not np.isnan(icir) else 0.0
     ar1_ok = (not np.isnan(ar1)) and ar1 > 0.3
-    if abs_ic >= 0.05 and abs_ir >= 0.5 and ar1_ok:
+    if abs_ic >= 0.05 and abs_ir >= 0.5 and ar1_ok and bh_sig:
         return "STRONG"
-    elif abs_ic >= 0.05:
+    elif abs_ic >= 0.05 and bh_sig:
         return "USABLE"
     elif abs_ic >= 0.03:
         return "WEAK"
@@ -390,9 +411,15 @@ def _print_leaderboard(
     timeframe: str,
     n_bars: int,
     regime_rows: dict[str, dict] | None = None,
+    bh_sig_map: dict[str, bool] | None = None,
 ) -> pd.DataFrame:
     """Print ranked leaderboard. regime_rows: signal -> {ic_unconditional,
-    ic_trending, ic_ranging, flip}. Shown as extra columns when provided."""
+    ic_trending, ic_ranging, flip}. Shown as extra columns when provided.
+
+    bh_sig_map: signal -> bool (True if signal survives BH FDR correction across
+    all tests including regime-split). Signals not in map default to True (no
+    penalty when regime data is unavailable).
+    """
     best_h_col = ic_df.abs().idxmax(axis=1)
     best_ic = pd.Series(
         {sig: ic_df.loc[sig, col] for sig, col in best_h_col.items()},
@@ -406,6 +433,8 @@ def _print_leaderboard(
         ir_val = icir_s.get(sig, np.nan)
         ir_nw_val = icir_nw_s.get(sig, np.nan)
         ar1_val = ar1_s.get(sig, np.nan)
+        # Use BH significance if available; default True when map not provided
+        bh_sig = bh_sig_map.get(sig, True) if bh_sig_map is not None else True
         row: dict = {
             "signal": sig,
             "group": _SIGNAL_GROUP.get(sig, "?"),
@@ -414,7 +443,13 @@ def _print_leaderboard(
             "icir": ir_val,
             "icir_nw": ir_nw_val,
             "ar1": ar1_val,
-            "verdict": _verdict(ic_val, ir_nw_val if not pd.isna(ir_nw_val) else ir_val, ar1_val),
+            "bh_significant": bh_sig,
+            "verdict": _verdict(
+                ic_val,
+                ir_nw_val if not pd.isna(ir_nw_val) else ir_val,
+                ar1_val,
+                bh_sig=bh_sig,
+            ),
         }
         if regime_rows and sig in regime_rows:
             row.update(regime_rows[sig])
@@ -469,14 +504,16 @@ def _print_leaderboard(
     counts = df_rank["verdict"].value_counts()
     print(f"  STRONG  (|IC|>=0.05, ICIR>=0.5) : {counts.get('STRONG', 0):>3} signals")
     print(f"  USABLE  (|IC|>=0.05, ICIR< 0.5) : {counts.get('USABLE', 0):>3} signals")
-    print(f"  WEAK    (0.03<=|IC|<0.05)        : {counts.get('WEAK',   0):>3} signals")
-    print(f"  NOISE   (|IC|<0.03)              : {counts.get('NOISE',  0):>3} signals")
+    print(f"  WEAK    (0.03<=|IC|<0.05)        : {counts.get('WEAK', 0):>3} signals")
+    print(f"  NOISE   (|IC|<0.03)              : {counts.get('NOISE', 0):>3} signals")
 
     if has_regime and "flip" in df_rank.columns:
         n_flip = int(df_rank["flip"].sum())
         if n_flip:
-            print(f"\n  *** {n_flip} FLIP signal(s) detected "
-                  "(sign reversal across trending/ranging regimes) ***")
+            print(
+                f"\n  *** {n_flip} FLIP signal(s) detected "
+                "(sign reversal across trending/ranging regimes) ***"
+            )
             flip_sigs = df_rank[df_rank["flip"]]["signal"].tolist()
             print(f"  FLIP signals: {', '.join(flip_sigs)}")
     print("=" * W)
@@ -495,10 +532,7 @@ def _print_decile_plots(
     for _, row in ranked.head(top_n).iterrows():
         sig = row["signal"]
         fwd_col = row["best_h"].replace("h=", "fwd_")
-        print(
-            f"\n  [{row['verdict']}] {sig}  "
-            f"(best {row['best_h']}, IC={row['ic']:+.4f})"
-        )
+        print(f"\n  [{row['verdict']}] {sig}  (best {row['best_h']}, IC={row['ic']:+.4f})")
         if sig not in signals.columns or fwd_col not in fwd_returns.columns:
             print("  (data not available)")
             continue
@@ -512,10 +546,7 @@ def _print_decile_plots(
         print("  " + "-" * 50)
         for idx, qrow in qs.iterrows():
             bar = _bar(float(qrow["mean_fwd_return"]) * scale)
-            print(
-                f"  {idx:<5}  {qrow['mean_fwd_return']:>+14.6f}  "
-                f"{int(qrow['n_obs']):>5}  {bar}"
-            )
+            print(f"  {idx:<5}  {qrow['mean_fwd_return']:>+14.6f}  {int(qrow['n_obs']):>5}  {bar}")
 
 
 # ── Regime-conditional IC helpers ─────────────────────────────────────────────
@@ -525,10 +556,17 @@ def _compute_regime_ic(
     all_signals: pd.DataFrame,
     fwd_returns: pd.DataFrame,
     regime_df: pd.DataFrame,
-) -> dict[str, dict]:
+) -> tuple[dict[str, dict], dict[str, float], dict[str, float]]:
     """Compute per-signal IC split by adx_regime (trending vs ranging).
 
-    Returns a dict: signal -> {ic_unconditional, ic_trending, ic_ranging, flip}.
+    Returns
+    -------
+    result : dict signal -> {ic_unconditional, ic_trending, ic_ranging, flip}
+    pv_trending : dict signal -> p-value for best-horizon trending IC
+    pv_ranging  : dict signal -> p-value for best-horizon ranging IC
+
+    The p-value dicts are used to extend BH FDR correction to regime-split tests
+    (otherwise only the 260 unconditional tests are corrected, missing 104 regime tests).
     """
     regime_aligned = regime_df["adx_regime"].reindex(all_signals.index)
 
@@ -539,46 +577,49 @@ def _compute_regime_ic(
     n_ranging = int(ranging_mask.sum())
     logger.info(
         "Regime split: %d trending bars, %d ranging bars (of %d total)",
-        n_trending, n_ranging, len(all_signals),
+        n_trending,
+        n_ranging,
+        len(all_signals),
     )
 
     result: dict[str, dict] = {}
-    # Pre-define to avoid recreating in loop
+    pv_trending: dict[str, float] = {}
+    pv_ranging: dict[str, float] = {}
+
     from scipy import stats  # local import to keep top-level imports clean
 
-    def _spearman_ic(s: pd.Series, f: pd.DataFrame) -> float:
-        """IC at best horizon for the given subset."""
+    def _spearman_ic(s: pd.Series, f: pd.DataFrame) -> tuple[float, float]:
+        """IC and p-value at best horizon for the given subset.
+
+        Returns (best_rho, pvalue_at_best_rho). p-value is np.nan when
+        no horizon has >= 30 paired observations.
+        """
         best_rho = np.nan
+        best_pv = np.nan
         for col in f.columns:
             paired = pd.concat([s, f[col]], axis=1).dropna()
             if len(paired) < 30:
                 continue
-            rho, _ = stats.spearmanr(paired.iloc[:, 0], paired.iloc[:, 1])
+            rho, pv = stats.spearmanr(paired.iloc[:, 0], paired.iloc[:, 1])
             if np.isnan(best_rho) or abs(rho) > abs(best_rho):
                 best_rho = float(rho)
-        return best_rho
+                best_pv = float(pv)
+        return best_rho, best_pv
 
     for sig in all_signals.columns:
         sig_series = all_signals[sig]
 
-        # Best horizon for this signal (use full IC table computed earlier)
-        # We recompute a quick single-signal IC unconditional here for best-h
-
-        ic_unc = _spearman_ic(sig_series, fwd_returns)
+        ic_unc, _ = _spearman_ic(sig_series, fwd_returns)
 
         if n_trending >= 30:
-            ic_trend = _spearman_ic(
-                sig_series[trending_mask], fwd_returns[trending_mask]
-            )
+            ic_trend, pv_trend = _spearman_ic(sig_series[trending_mask], fwd_returns[trending_mask])
         else:
-            ic_trend = np.nan
+            ic_trend, pv_trend = np.nan, np.nan
 
         if n_ranging >= 30:
-            ic_range = _spearman_ic(
-                sig_series[ranging_mask], fwd_returns[ranging_mask]
-            )
+            ic_range, pv_range = _spearman_ic(sig_series[ranging_mask], fwd_returns[ranging_mask])
         else:
-            ic_range = np.nan
+            ic_range, pv_range = np.nan, np.nan
 
         # FLIP: both regimes have |IC| >= 0.03 AND opposite signs
         flip = (
@@ -595,8 +636,12 @@ def _compute_regime_ic(
             "ic_ranging": round(ic_range, 5) if not np.isnan(ic_range) else np.nan,
             "flip": flip,
         }
+        if not np.isnan(pv_trend):
+            pv_trending[sig] = pv_trend
+        if not np.isnan(pv_range):
+            pv_ranging[sig] = pv_range
 
-    return result
+    return result, pv_trending, pv_ranging
 
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
@@ -611,6 +656,7 @@ def run_sweep(
     fmt: str = "parquet",
     regime_df: pd.DataFrame | None = None,
     is_only: bool = False,
+    strict: bool = False,
 ) -> pd.DataFrame:
     """Run the full Phase 1 sweep for one instrument/timeframe.
 
@@ -625,23 +671,22 @@ def run_sweep(
     regime_df:   Optional DataFrame with adx_regime column (from phase0_regime.py).
                  If None, the function tries to auto-load from
                  .tmp/regime/{instrument}_{timeframe}_regime.parquet.
+    strict:      If True, data quality warnings become fatal errors (see L2).
 
     Returns
     -------
     pd.DataFrame  Ranked leaderboard with IC, ICIR, verdict, and optional regime
                   columns if regime data was available.
     """
+    global _STRICT_VALIDATION
+    _STRICT_VALIDATION = strict
     if horizons is None:
         horizons = HORIZONS
 
     # Auto-load regime file if not supplied
     if regime_df is None:
-        tf_slug = (
-            timeframe.lower().split("_")[-1] if "_" in timeframe else timeframe.lower()
-        )
-        regime_path = (
-            ROOT / ".tmp" / "regime" / f"{instrument}_{tf_slug}_regime.parquet"
-        )
+        tf_slug = timeframe.lower().split("_")[-1] if "_" in timeframe else timeframe.lower()
+        regime_path = ROOT / ".tmp" / "regime" / f"{instrument}_{tf_slug}_regime.parquet"
         if regime_path.exists():
             try:
                 regime_df = pd.read_parquet(regime_path)
@@ -661,7 +706,7 @@ def run_sweep(
 
     df = _load_ohlcv(instrument, timeframe, data_dir=data_dir, fmt=fmt)
     close = df["close"]
-    
+
     window_1y = _get_annual_bars(timeframe)
     logger.info("Timeframe '%s' -> using %d bars for 1-year rolling windows", timeframe, window_1y)
 
@@ -672,12 +717,12 @@ def run_sweep(
 
     # Drop warmup rows where any group has no valid signal yet
     valid = all_signals.notna().any(axis=1) & fwd_returns.notna().any(axis=1)
-    
+
     if is_only:
         is_cutoff = int(len(df) * 0.70)
         logger.warning(
             "IS-only mode: IC computed on first 70%% of data (%d bars) to prevent selection bias.",
-            is_cutoff
+            is_cutoff,
         )
         is_mask = np.zeros(len(valid), dtype=bool)
         is_mask[:is_cutoff] = True
@@ -693,50 +738,107 @@ def run_sweep(
 
     # G1 FIX: Apply BH FDR correction across all signal×horizon p-values.
     from research.ic_analysis.run_ic import apply_bh_fdr
+
     adj_pv_df, reject_df = apply_bh_fdr(pv_df, alpha=0.05)
 
     # Compute best horizons first, then ICIR at each signal's best horizon
     best_h_col = ic_df.abs().idxmax(axis=1)
     best_horizons_dict = {sig: col for sig, col in best_h_col.items()}
 
+    logger.info(
+        "Computing rolling IC map (%d signals, window=%d bars, parallel)...",
+        len(all_signals.columns),
+        window_1y,
+    )
+    rolling_ic_map = build_rolling_ic_map(
+        all_signals,
+        fwd_returns,
+        horizons,
+        window=window_1y,
+        best_horizons=best_horizons_dict,
+    )
+
     logger.info("Computing ICIR (window=%d bars, at best horizon)...", window_1y)
     icir_s = compute_icir(
-        all_signals, fwd_returns, horizons,
-        window=window_1y, best_horizons=best_horizons_dict,
+        all_signals,
+        fwd_returns,
+        horizons,
+        window=window_1y,
+        best_horizons=best_horizons_dict,
+        rolling_ic_map=rolling_ic_map,
     )
-    
+
     logger.info("Computing Newey-West ICIR (window=%d bars, at best horizon)...", window_1y)
     icir_nw_s = compute_icir_nw(
-        all_signals, fwd_returns, horizons,
-        window=window_1y, best_horizons=best_horizons_dict,
+        all_signals,
+        fwd_returns,
+        horizons,
+        window=window_1y,
+        best_horizons=best_horizons_dict,
+        rolling_ic_map=rolling_ic_map,
     )
 
     logger.info("Computing Autocorrelation (AR1)...")
     ar1_s = compute_autocorrelation(all_signals)
 
-    # Regime-conditional IC (optional)
+    # Regime-conditional IC (optional).
+    # _compute_regime_ic() now also returns regime p-values so we can extend
+    # BH correction from 260 unconditional tests to ~364 (+ 52 trending + 52 ranging).
     regime_rows: dict[str, dict] | None = None
+    pv_trending_regime: dict[str, float] = {}
+    pv_ranging_regime: dict[str, float] = {}
     if regime_df is not None:
         logger.info("Computing regime-conditional IC (trending / ranging)...")
-        regime_rows = _compute_regime_ic(all_signals, fwd_returns, regime_df)
+        regime_rows, pv_trending_regime, pv_ranging_regime = _compute_regime_ic(
+            all_signals, fwd_returns, regime_df
+        )
+
+    # H3 FIX: Extend BH FDR to include regime-split p-values.
+    # Build a combined p-value DataFrame: index=signal, columns=test_label.
+    # Unconditional tests: 52 signals × 5 horizons = 260 tests.
+    # Regime tests: up to 52 trending + 52 ranging = 104 additional tests.
+    # Total: up to 364 simultaneous tests corrected together.
+    from research.ic_analysis.run_ic import apply_bh_fdr
+
+    all_pv_df = pv_df.copy()  # 52 × 5 unconditional
+    if pv_trending_regime:
+        trend_s = pd.Series(pv_trending_regime, name="regime_trending")
+        all_pv_df = all_pv_df.join(trend_s, how="left")
+    if pv_ranging_regime:
+        range_s = pd.Series(pv_ranging_regime, name="regime_ranging")
+        all_pv_df = all_pv_df.join(range_s, how="left")
+
+    n_total_tests = all_pv_df.notna().sum().sum()
+    logger.info(
+        "BH FDR correction applied to %d tests (%d unconditional + %d trending + %d ranging)",
+        n_total_tests,
+        pv_df.notna().sum().sum(),
+        len(pv_trending_regime),
+        len(pv_ranging_regime),
+    )
+    adj_pv_all, reject_all = apply_bh_fdr(all_pv_df, alpha=0.05)
+
+    # A signal is BH-significant if it passes at its best unconditional horizon.
+    # (Regime columns are used for FLIP detection BH correction, not primary verdict.)
+    bh_sig_map: dict[str, bool] = {}
+    for sig in ic_df.index:
+        best_h = best_horizons_dict.get(sig)
+        if best_h and sig in reject_all.index and best_h in reject_all.columns:
+            bh_sig_map[sig] = bool(reject_all.loc[sig, best_h])
+        else:
+            bh_sig_map[sig] = False
 
     ranked = _print_leaderboard(
-        ic_df, icir_s, icir_nw_s, ar1_s, instrument, timeframe, n_bars,
+        ic_df,
+        icir_s,
+        icir_nw_s,
+        ar1_s,
+        instrument,
+        timeframe,
+        n_bars,
         regime_rows=regime_rows,
+        bh_sig_map=bh_sig_map,
     )
-
-    # G1 FIX: Add BH FDR significance flag to leaderboard.
-    bh_sig_flags = {}
-    for sig in ranked["signal"]:
-        if sig in reject_df.index:
-            best_h = best_horizons_dict.get(sig)
-            if best_h and best_h in reject_df.columns:
-                bh_sig_flags[sig] = bool(reject_df.loc[sig, best_h])
-            else:
-                bh_sig_flags[sig] = False
-        else:
-            bh_sig_flags[sig] = False
-    ranked["bh_significant"] = ranked["signal"].map(bh_sig_flags)
 
     _print_decile_plots(all_signals, fwd_returns, ranked, top_n=5, n_bins=n_bins)
 
@@ -744,16 +846,24 @@ def run_sweep(
     report_dir = ROOT / ".tmp" / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    tf_slug = (
-        timeframe.lower().split("_")[-1] if "_" in timeframe else timeframe.lower()
-    )
+    tf_slug = timeframe.lower().split("_")[-1] if "_" in timeframe else timeframe.lower()
     inst_slug = instrument.lower()
 
     ic_path = report_dir / f"phase1_{inst_slug}_{tf_slug}.csv"
     icir_path = report_dir / f"phase1_icir_{inst_slug}_{tf_slug}.csv"
 
-    # Build save columns -- always include base columns
-    save_cols = ["signal", "group", "best_h", "ic", "icir", "icir_nw", "ar1", "verdict"]
+    # Build save columns -- always include base columns + BH flag
+    save_cols = [
+        "signal",
+        "group",
+        "best_h",
+        "ic",
+        "icir",
+        "icir_nw",
+        "ar1",
+        "bh_significant",
+        "verdict",
+    ]
     if regime_rows is not None:
         save_cols += ["ic_unconditional", "ic_trending", "ic_ranging", "flip"]
 
@@ -772,7 +882,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Phase 1 -- 52-Signal IC/ICIR Sweep")
     parser.add_argument("--instrument", default="EUR_USD", help="Instrument name")
     parser.add_argument(
-        "--timeframe", default="H4",
+        "--timeframe",
+        default="H4",
         help="Timeframe (H1/H4/D/1yr_5m/...)",
     )
     parser.add_argument(
@@ -795,15 +906,21 @@ def main() -> None:
     parser.add_argument(
         "--all",
         action="store_true",
-        help=(
-            "Run sweep on all instruments found in --data-dir "
-            "matching the timeframe"
-        ),
+        help=("Run sweep on all instruments found in --data-dir matching the timeframe"),
     )
     parser.add_argument(
         "--is-only",
         action="store_true",
         help="IS-only mode: IC computed on first 70%% of data to prevent selection bias",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Strict mode: convert data quality warnings to fatal errors. "
+            "Use for production/pipeline runs to prevent silently invalid IC results "
+            "(e.g. a dataset with 20%% stale bars)."
+        ),
     )
     args = parser.parse_args()
     horizons = [int(h) for h in args.horizons.split(",")]
@@ -830,6 +947,7 @@ def main() -> None:
                     data_dir=effective_dir,
                     fmt=args.fmt,
                     is_only=args.is_only,
+                    strict=args.strict,
                 )
             except Exception as exc:
                 logger.error("FAILED %s: %s", inst, exc)
@@ -845,6 +963,7 @@ def main() -> None:
             n_bins=args.n_bins,
             data_dir=data_dir,
             fmt=args.fmt,
+            strict=args.strict,
         )
 
 

@@ -9,7 +9,6 @@ as the canonical entry point for reading and evaluating 52 signals.
 This file now serves strictly as a shared library for IC calculations.
 """
 
-import argparse
 import logging
 import sys
 import tomllib
@@ -18,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy import stats
+from numba import njit
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -75,7 +75,7 @@ def compute_mtf_confluence(instrument: str, primary_tf: str) -> pd.Series | None
     Weighted sum per config/mtf.toml. Returns continuous signal in range [-1, +1].
     Returns None if config or required parquet files are missing.
     """
-    MTF_CONFIG_PATH = ROOT / "config" / "mtf.toml" # Moved inside function
+    MTF_CONFIG_PATH = ROOT / "config" / "mtf.toml"  # Moved inside function
     if not MTF_CONFIG_PATH.exists():
         logger.warning("mtf.toml not found -- skipping MTF confluence signal")
         return None
@@ -114,7 +114,7 @@ def compute_mtf_confluence(instrument: str, primary_tf: str) -> pd.Series | None
         # Compute MA crossover and RSI on native TF bars
         fast_ma = close_tf.ewm(span=fast, adjust=False).mean()
         slow_ma = close_tf.ewm(span=slow, adjust=False).mean()
-        ma_score = (fast_ma > slow_ma).astype(float) - 0.5   # +0.5 or -0.5
+        ma_score = (fast_ma > slow_ma).astype(float) - 0.5  # +0.5 or -0.5
         rsi_score = (_rsi(close_tf, rsi_p) > 50).astype(float) - 0.5  # +0.5 or -0.5
         tf_contribution = (ma_score + rsi_score) * w  # range: [-w, +w]
 
@@ -123,10 +123,7 @@ def compute_mtf_confluence(instrument: str, primary_tf: str) -> pd.Series | None
             tf_contribution = tf_contribution.shift(1)
 
         # Align to primary TF index using forward fill (causal)
-        tf_contribution = (
-            tf_contribution
-            .reindex(primary_close.index, method="ffill")
-        )
+        tf_contribution = tf_contribution.reindex(primary_close.index, method="ffill")
         contributions.append(tf_contribution)
 
     if not contributions:
@@ -134,8 +131,10 @@ def compute_mtf_confluence(instrument: str, primary_tf: str) -> pd.Series | None
         return None
 
     confluence = pd.concat(contributions, axis=1).sum(axis=1).rename("mtf_confluence")
-    logger.info(f"MTF confluence computed: {len(confluence)} bars, "
-                f"range [{confluence.min():.3f}, {confluence.max():.3f}]")
+    logger.info(
+        f"MTF confluence computed: {len(confluence)} bars, "
+        f"range [{confluence.min():.3f}, {confluence.max():.3f}]"
+    )
     return confluence
 
 
@@ -201,7 +200,7 @@ def compute_forward_returns(
     feature. The signal at bar t is correlated against the return from t to t+h.
     """
     log_close = np.log(close)
-    
+
     if vol_adjust:
         # 20-bar rolling standard deviation of log returns
         bar_vol = log_close.diff().rolling(20).std().replace(0, np.nan)
@@ -212,7 +211,7 @@ def compute_forward_returns(
     for h in horizons:
         v = bar_vol * np.sqrt(h) if vol_adjust else 1.0
         fwd[f"fwd_{h}"] = (log_close.shift(-h) - log_close) / v
-        
+
     return pd.DataFrame(fwd, index=close.index)
 
 
@@ -262,7 +261,8 @@ def compute_mfe_mae_targets(
 
 
 def compute_ic_table(
-    signals: pd.DataFrame, fwd_returns: pd.DataFrame,
+    signals: pd.DataFrame,
+    fwd_returns: pd.DataFrame,
     return_pvalues: bool = False,
 ) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -333,36 +333,95 @@ def apply_bh_fdr(
 
     return adj_df, reject_df
 
+
+@njit
+def _tied_rank(x: np.ndarray) -> np.ndarray:
+    n = len(x)
+    ranks = np.empty(n)
+    idx = np.argsort(x)
+    i = 0
+    while i < n:
+        j = i
+        while j < n - 1 and x[idx[j]] == x[idx[j + 1]]:
+            j += 1
+        avg_rank = (i + j) / 2.0 + 1.0
+        for k in range(i, j + 1):
+            ranks[idx[k]] = avg_rank
+        i = j + 1
+    return ranks
+
+@njit
+def _rolling_spearman_numba(sig_vals: np.ndarray, fwd_vals: np.ndarray, window: int) -> np.ndarray:
+    """Numba-compiled exact rolling Spearman calculation."""
+    n = len(sig_vals)
+    out = np.full(n, np.nan)
+    for i in range(window, n + 1):
+        ws = sig_vals[i - window : i]
+        wf = fwd_vals[i - window : i]
+        
+        mean_ws, mean_wf = 0.0, 0.0
+        for k in range(window):
+            mean_ws += ws[k]
+            mean_wf += wf[k]
+        mean_ws /= window
+        mean_wf /= window
+        
+        var_s, var_f = 0.0, 0.0
+        for k in range(window):
+            var_s += (ws[k] - mean_ws)**2
+            var_f += (wf[k] - mean_wf)**2
+            
+        if var_s < 1e-14 or var_f < 1e-14:
+            continue
+            
+        rank_s = _tied_rank(ws)
+        rank_f = _tied_rank(wf)
+        
+        mean_rs, mean_rf = 0.0, 0.0
+        for k in range(window):
+            mean_rs += rank_s[k]
+            mean_rf += rank_f[k]
+        mean_rs /= window
+        mean_rf /= window
+        
+        cov, var_rs, var_rf = 0.0, 0.0, 0.0
+        for k in range(window):
+            diff_s = rank_s[k] - mean_rs
+            diff_f = rank_f[k] - mean_rf
+            cov += diff_s * diff_f
+            var_rs += diff_s * diff_s
+            var_rf += diff_f * diff_f
+            
+        if var_rs < 1e-14 or var_rf < 1e-14:
+            continue
+            
+        out[i-1] = cov / np.sqrt(var_rs * var_rf)
+        
+    return out
+
 def _rolling_ic_series(
     sig: pd.Series,
     fwd: pd.Series,
     window: int,
-    exact: bool = False,
+    exact: bool = True,
 ) -> np.ndarray:
-    """Fast vectorised rolling Spearman IC.
+    """Rolling Spearman IC.
 
-    Default (exact=False): uses rolling Pearson on globally pre-ranked series.
-    This is an O(n) pandas Cython operation and is mathematically accurate when
-    the window is large enough that global ranks are stable (window >= 60).
+    Default (exact=True): re-ranks within every window — correct causal Spearman.
+    O(n*window) but honest; use exact=False only for quick exploratory runs.
 
-    If exact=True: re-ranks within every window — O(n*window), slow but exact.
+    exact=False uses rolling Pearson on globally pre-ranked series (O(n) Cython).
+    WARNING: global ranking is not causal — ICIR values are upward-biased 5-15%
+    because each bar's rank depends on values it has not yet seen.
     """
     df = pd.concat([sig, fwd], axis=1).dropna()
     if len(df) < window:
         return np.array([])
 
     if exact:
-        from scipy.stats import spearmanr as _spearmanr
         sig_vals = df.iloc[:, 0].values
         fwd_vals = df.iloc[:, 1].values
-        n = len(sig_vals)
-        arr = np.full(n, np.nan)
-        for i in range(window, n):
-            ws, wf = sig_vals[i - window:i], fwd_vals[i - window:i]
-            if np.std(ws) < 1e-12 or np.std(wf) < 1e-12:
-                continue
-            rho, _ = _spearmanr(ws, wf)
-            arr[i] = rho
+        arr = _rolling_spearman_numba(sig_vals, fwd_vals, window)
         return arr[~np.isnan(arr)]
 
     # Fast path: rank globally, then use pandas rolling Pearson (Cython)
@@ -372,38 +431,99 @@ def _rolling_ic_series(
     return roll_ic.dropna().values
 
 
+def _resolve_fwd_col(
+    sig_col: str,
+    horizons: list[int],
+    fwd_returns: pd.DataFrame,
+    best_horizons: dict[str, str] | None,
+) -> str:
+    """Return the forward-return column to use for a given signal."""
+    if best_horizons and sig_col in best_horizons:
+        fwd_col = best_horizons[sig_col]
+    else:
+        fwd_col = f"fwd_{horizons[0]}"
+    if fwd_col not in fwd_returns.columns:
+        fwd_col = f"fwd_{horizons[0]}"
+    return fwd_col
+
+
+def _compute_one_rolling_ic(
+    sig_col: str,
+    sig_vals: np.ndarray,
+    fwd_vals: np.ndarray,
+    window: int,
+) -> tuple[str, np.ndarray]:
+    """Worker: compute rolling IC for one signal. Safe to call from subprocesses."""
+    arr = _rolling_spearman_numba(sig_vals, fwd_vals, window)
+    return sig_col, arr[~np.isnan(arr)]
+
+
+def build_rolling_ic_map(
+    signals: pd.DataFrame,
+    fwd_returns: pd.DataFrame,
+    horizons: list[int],
+    window: int,
+    best_horizons: dict[str, str] | None = None,
+    n_jobs: int = -1,
+) -> dict[str, np.ndarray]:
+    """Compute rolling IC for every signal once, in parallel.
+
+    Returns a dict {sig_col: rolling_ic_array}. Pass this to compute_icir()
+    and compute_icir_nw() to avoid computing it twice.
+
+    n_jobs=-1 uses all available CPU cores.
+    """
+    from joblib import Parallel, delayed
+
+    tasks = []
+    for sig_col in signals.columns:
+        fwd_col = _resolve_fwd_col(sig_col, horizons, fwd_returns, best_horizons)
+        df = pd.concat([signals[sig_col], fwd_returns[fwd_col]], axis=1).dropna()
+        if len(df) < window:
+            tasks.append((sig_col, np.array([]), np.array([]), window))
+        else:
+            tasks.append((sig_col, df.iloc[:, 0].values, df.iloc[:, 1].values, window))
+
+    # Warm up Numba JIT on the first signal before launching subprocesses.
+    if tasks:
+        first = tasks[0]
+        if len(first[1]) >= window:
+            _rolling_spearman_numba(first[1][:window], first[2][:window], window)
+
+    results: list[tuple[str, np.ndarray]] = Parallel(n_jobs=n_jobs, backend="loky")(
+        delayed(_compute_one_rolling_ic)(sig_col, sv, fv, w)
+        for sig_col, sv, fv, w in tasks
+    )
+    return dict(results)
+
+
 def compute_icir(
     signals: pd.DataFrame,
     fwd_returns: pd.DataFrame,
     horizons: list[int],
-    window: int = 252, # ROLLING_IC_WINDOW moved here
+    window: int = 252,
     best_horizons: dict[str, str] | None = None,
+    rolling_ic_map: dict[str, np.ndarray] | None = None,
 ) -> pd.Series:
-    """
-    Rolling ICIR = mean(rolling IC) / std(rolling IC).
-    Computed at each signal's best horizon (from best_horizons dict).
-    Falls back to the first horizon if best_horizons is not provided.
-    Returns Series: index=signal names, values=ICIR.
+    """Rolling ICIR = mean(rolling IC) / std(rolling IC).
+
+    If rolling_ic_map is provided (from build_rolling_ic_map), the expensive
+    rolling Spearman step is skipped — reuse the pre-computed arrays.
     """
     icirs = {}
     for sig_col in signals.columns:
-        # Determine which horizon to use for this signal
-        if best_horizons and sig_col in best_horizons:
-            fwd_col = best_horizons[sig_col]
+        if rolling_ic_map is not None:
+            roll_ic = rolling_ic_map.get(sig_col, np.array([]))
         else:
-            fwd_col = f"fwd_{horizons[0]}"
+            fwd_col = _resolve_fwd_col(sig_col, horizons, fwd_returns, best_horizons)
+            roll_ic = _rolling_ic_series(signals[sig_col], fwd_returns[fwd_col], window)
 
-        # Skip if fwd_col not available (e.g. MFE/MAE prefix)
-        if fwd_col not in fwd_returns.columns:
-            fwd_col = f"fwd_{horizons[0]}"
-
-        fwd = fwd_returns[fwd_col]
-
-        roll_ic = _rolling_ic_series(signals[sig_col], fwd, window)
         if len(roll_ic) < 10:
             icirs[sig_col] = np.nan
         else:
-            icirs[sig_col] = float(roll_ic.mean() / roll_ic.std()) if roll_ic.std() > 1e-12 else np.nan
+            icirs[sig_col] = (
+                float(roll_ic.mean() / roll_ic.std()) if roll_ic.std() > 1e-12 else np.nan
+            )
 
     return pd.Series(icirs, name="icir")
 
@@ -414,11 +534,12 @@ def compute_icir_nw(
     horizons: list[int],
     window: int = 252,
     best_horizons: dict[str, str] | None = None,
+    rolling_ic_map: dict[str, np.ndarray] | None = None,
 ) -> pd.Series:
     """ICIR with Newey-West standard error adjustment (h-1 lags).
 
-    Accounts for serial correlation in overlapping returns at long horizons.
-    Returns Series: index=signal names, values=ICIR_NW.
+    If rolling_ic_map is provided (from build_rolling_ic_map), the expensive
+    rolling Spearman step is skipped — reuse the pre-computed arrays.
     """
     try:
         import statsmodels.api as sm
@@ -427,13 +548,7 @@ def compute_icir_nw(
 
     icirs_nw: dict[str, float] = {}
     for sig_col in signals.columns:
-        if best_horizons and sig_col in best_horizons:
-            fwd_col = best_horizons[sig_col]
-        else:
-            fwd_col = f"fwd_{horizons[0]}"
-
-        if fwd_col not in fwd_returns.columns:
-            fwd_col = f"fwd_{horizons[0]}"
+        fwd_col = _resolve_fwd_col(sig_col, horizons, fwd_returns, best_horizons)
 
         try:
             h = int(fwd_col.replace("fwd_", ""))
@@ -441,19 +556,24 @@ def compute_icir_nw(
             h = 1
         nw_lags = max(h - 1, 0)
 
-        fwd = fwd_returns[fwd_col]
+        if rolling_ic_map is not None:
+            roll_ic_clean = rolling_ic_map.get(sig_col, np.array([]))
+        else:
+            roll_ic_clean = _rolling_ic_series(
+                signals[sig_col], fwd_returns[fwd_col], window
+            )
 
-        roll_ic_clean = _rolling_ic_series(signals[sig_col], fwd, window)
         if len(roll_ic_clean) < 30:
             icirs_nw[sig_col] = np.nan
             continue
 
         try:
             y = roll_ic_clean
-            X = sm.add_constant(np.ones(len(y)))
-            ols = sm.OLS(y, X[:, :1]).fit(cov_type="HAC", cov_kwds={"maxlags": nw_lags})
-            t_stat = float(ols.tvalues[0])
-            icirs_nw[sig_col] = t_stat / np.sqrt(len(y))
+            # Regress IC series on a constant; HAC SE of the intercept equals the
+            # Newey-West SE of the mean.  ICIR_NW = mean(IC) / SE_NW = tvalues[0].
+            X = np.ones((len(y), 1))
+            ols = sm.OLS(y, X).fit(cov_type="HAC", cov_kwds={"maxlags": max(nw_lags, 1)})
+            icirs_nw[sig_col] = float(ols.tvalues[0])
         except Exception:
             icirs_nw[sig_col] = np.nan
 
@@ -529,7 +649,9 @@ def compute_autocorrelation(signals: pd.DataFrame) -> pd.Series:
 
 
 def quantile_spread(
-    signal: pd.Series, fwd: pd.Series, n_bins: int = 10 # N_BINS moved here
+    signal: pd.Series,
+    fwd: pd.Series,
+    n_bins: int = 10,  # N_BINS moved here
 ) -> pd.DataFrame:
     """
     Sort signal into n_bins equal-frequency buckets. Report mean forward return
@@ -547,11 +669,13 @@ def quantile_spread(
         .rename(columns={"mean": "mean_fwd_return", "count": "n_obs"})
     )
     result["mean_fwd_return"] = result["mean_fwd_return"].round(6)
-    result.index = [f"Q{i+1}" for i in result.index]
+    result.index = [f"Q{i + 1}" for i in result.index]
     return result
 
 
-def compute_monotonicity(signal: pd.Series, fwd: pd.Series, n_bins: int = 10) -> float: # N_BINS moved here
+def compute_monotonicity(
+    signal: pd.Series, fwd: pd.Series, n_bins: int = 10
+) -> float:  # N_BINS moved here
     """
     Compute monotonicity score: Spearman rank correlation of bin index vs mean
     forward return across quantile bins. +1.0 = perfectly monotonic positive,
@@ -566,7 +690,8 @@ def compute_monotonicity(signal: pd.Series, fwd: pd.Series, n_bins: int = 10) ->
 
 
 def compute_recency_weighted_ic(
-    signals: pd.DataFrame, fwd_returns: pd.DataFrame,
+    signals: pd.DataFrame,
+    fwd_returns: pd.DataFrame,
     halflife_bars: int = 500,
 ) -> pd.DataFrame:
     """
@@ -586,7 +711,7 @@ def compute_recency_weighted_ic(
                 row[fwd_col] = np.nan
             else:
                 # Weighted Spearman: rank with recency weighting
-                w = decay[-len(df):]
+                w = decay[-len(df) :]
                 sig_ranked = df.iloc[:, 0].rank()
                 fwd_ranked = df.iloc[:, 1].rank()
                 # Weighted Pearson of ranks approximates weighted Spearman

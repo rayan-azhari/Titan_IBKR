@@ -19,11 +19,11 @@ Usage:
 
 import argparse
 import sys
+from math import sqrt
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from math import sqrt
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -211,9 +211,7 @@ def _fold_vbt(
 
     combined_trades = sl["trades"] + ss["trades"]
     if combined_trades > 0:
-        combined_wr = (
-            sl["wr"] * sl["trades"] + ss["wr"] * ss["trades"]
-        ) / combined_trades
+        combined_wr = (sl["wr"] * sl["trades"] + ss["wr"] * ss["trades"]) / combined_trades
     else:
         combined_wr = 0.0
 
@@ -226,9 +224,7 @@ def _fold_vbt(
     returns_series = (long_ret_s + short_ret_s) / 2
     bl_mean = float(returns_series.mean())
     bl_std = float(returns_series.std())
-    combined_sharpe = (
-        bl_mean / bl_std * sqrt(252) if bl_std > 1e-10 else 0.0
-    )
+    combined_sharpe = bl_mean / bl_std * sqrt(252) if bl_std > 1e-10 else 0.0
 
     return {
         "sharpe": combined_sharpe,
@@ -263,6 +259,8 @@ def run_wfo(
     oos_bars: int = OOS_BARS_DEFAULT,
     wfo_type: str = "rolling",
     threshold_grid: list[float] | None = None,
+    hmm_gate: bool = False,
+    ref_horizon: int = 1,
 ) -> pd.DataFrame:
     """Run walk-forward optimisation for one instrument.
 
@@ -287,9 +285,9 @@ def run_wfo(
     -------
     pd.DataFrame with one row per fold.
     """
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"  Phase 4 WFO  |  {instrument}  |  {wfo_type}  |  {direction}")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     # -- Cost profile ----------------------------------------------------------
     profile = dict(COST_PROFILES[asset_class])
@@ -327,7 +325,9 @@ def run_wfo(
     print(f"  Total bars: {n}  |  IS={is_bars}  |  OOS={oos_bars}  |  threshold={threshold}")
 
     # -- Position sizing (full series; sliced per fold) -----------------------
-    size_full, stop_pct_full = build_size_array(base_df, base_close, risk_pct, stop_atr, eff_max_lev)
+    size_full, stop_pct_full = build_size_array(
+        base_df, base_close, risk_pct, stop_atr, eff_max_lev
+    )
 
     # -- Fold boundaries -------------------------------------------------------
     if wfo_type == "rolling":
@@ -337,10 +337,7 @@ def run_wfo(
         fold_starts = list(range(is_bars, n - oos_bars + 1, oos_bars))
 
     if not fold_starts:
-        msg = (
-            f"Not enough data for WFO: n={n}, is_bars={is_bars}, "
-            f"oos_bars={oos_bars}"
-        )
+        msg = f"Not enough data for WFO: n={n}, is_bars={is_bars}, oos_bars={oos_bars}"
         print(f"  [ERROR] {msg}")
         return pd.DataFrame()
 
@@ -386,9 +383,18 @@ def run_wfo(
         # Composite & z-score (calibrated on this fold's IS)
         try:
             composite = build_composite(
-                tf_signals, base_close, tfs, target_signals, is_mask
+                tf_signals,
+                base_close,
+                tfs,
+                target_signals,
+                is_mask,
+                ref_horizon=ref_horizon,
             )
             signal_z = zscore_normalise(composite, is_mask)
+            if hmm_gate:
+                from research.ic_analysis.phase3_backtest import _apply_hmm_gate
+
+                signal_z = _apply_hmm_gate(signal_z, instrument, base_tf, is_mask)
         except ValueError as exc:
             print(f"  [WARN] Fold {fold_i}: composite failed — {exc}")
             continue
@@ -411,16 +417,31 @@ def run_wfo(
         spread_oos = eff_spread_bps / 10_000 * med_close_oos
         slip_oos = eff_slip_bps / 10_000 * med_close_oos
 
-        # G7 FIX: Per-fold threshold search on IS Sharpe.
+        # Per-fold threshold search on IS Sharpe (WFO methodology).
+        # M4 NOTE: Phase 4 re-optimises the entry threshold on each fold's IS
+        # data independently. This means Phase 4's stitched equity curve uses a
+        # different threshold per fold than Phase 3's single fixed threshold
+        # (which is swept on full IS). Phase 5 inherits Phase 3's fixed threshold.
+        # The two are testing subtly different strategies — this is intentional:
+        # Phase 4 tests whether the edge survives realistic per-period re-fitting;
+        # Phase 5 tests the live-deployment configuration (single fixed threshold).
         if threshold_grid is not None and len(threshold_grid) > 1:
             best_is_sharpe = -np.inf
             fold_threshold = threshold  # fallback
             for th_candidate in threshold_grid:
                 sweep_res = _fold_vbt(
-                    is_close, is_sig, th_candidate,
-                    spread_is, slip_is, is_size, is_stop,
-                    swap_long_pips, swap_short_pips, pip_size,
-                    direction=direction, freq=freq,
+                    is_close,
+                    is_sig,
+                    th_candidate,
+                    spread_is,
+                    slip_is,
+                    is_size,
+                    is_stop,
+                    swap_long_pips,
+                    swap_short_pips,
+                    pip_size,
+                    direction=direction,
+                    freq=freq,
                 )
                 if sweep_res["sharpe"] > best_is_sharpe:
                     best_is_sharpe = sweep_res["sharpe"]
@@ -430,18 +451,34 @@ def run_wfo(
 
         # IS backtest (at best threshold for this fold)
         is_res = _fold_vbt(
-            is_close, is_sig, fold_threshold,
-            spread_is, slip_is, is_size, is_stop,
-            swap_long_pips, swap_short_pips, pip_size,
-            direction=direction, freq=freq,
+            is_close,
+            is_sig,
+            fold_threshold,
+            spread_is,
+            slip_is,
+            is_size,
+            is_stop,
+            swap_long_pips,
+            swap_short_pips,
+            pip_size,
+            direction=direction,
+            freq=freq,
         )
 
         # OOS backtest (at same threshold selected on IS)
         oos_res = _fold_vbt(
-            oos_close, oos_sig, fold_threshold,
-            spread_oos, slip_oos, oos_size, oos_stop,
-            swap_long_pips, swap_short_pips, pip_size,
-            direction=direction, freq=freq,
+            oos_close,
+            oos_sig,
+            fold_threshold,
+            spread_oos,
+            slip_oos,
+            oos_size,
+            oos_stop,
+            swap_long_pips,
+            swap_short_pips,
+            pip_size,
+            direction=direction,
+            freq=freq,
         )
 
         is_sharpe = is_res["sharpe"]
@@ -504,7 +541,13 @@ def run_wfo(
     worst_sharpe = float(df_folds["oos_sharpe"].min())
     agg_parity = float(df_folds["parity"].mean())
 
-    # Stitched OOS equity
+    # Stitched OOS equity.
+    # L5 NOTE: stitched equity is produced by concat+sort_index across folds.
+    # If folds have calendar gaps (e.g. one OOS ends Friday, next IS starts
+    # Monday), the stitched series looks continuous but isn't. Annualisation
+    # uses bars_per_year (constant), not actual elapsed calendar days, so
+    # Sharpe is slightly overstated when folds are far apart in time. This is
+    # a minor artefact of rolling WFO and is accepted as a known limitation.
     if oos_returns_list:
         stitched = pd.concat(oos_returns_list).sort_index()
         bpy = float(bars_per_year)
@@ -583,9 +626,7 @@ def run_wfo(
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(
-        description="Phase 4 — Walk-Forward Optimisation (WFO)"
-    )
+    p = argparse.ArgumentParser(description="Phase 4 — Walk-Forward Optimisation (WFO)")
     p.add_argument("--instrument", default="EUR_USD")
     p.add_argument(
         "--instruments",
@@ -618,6 +659,18 @@ def main() -> None:
         default="rolling",
         choices=["rolling", "anchored"],
     )
+    p.add_argument(
+        "--hmm-gate",
+        action="store_true",
+        default=False,
+        help="Gate entries to IS-majority HMM state (requires Phase 0 regime file)",
+    )
+    p.add_argument(
+        "--ref-horizon",
+        type=int,
+        default=1,
+        help="Horizon for signal sign orientation (match Phase 1 natural horizon). Default=1.",
+    )
     args = p.parse_args()
 
     target_signals = [s.strip() for s in args.signals.split(",") if s.strip()]
@@ -643,6 +696,8 @@ def main() -> None:
             is_bars=args.is_bars,
             oos_bars=args.oos_bars,
             wfo_type=args.wfo_type,
+            hmm_gate=args.hmm_gate,
+            ref_horizon=args.ref_horizon,
         )
 
         if df_folds.empty:
@@ -653,14 +708,16 @@ def main() -> None:
         pct_pos = (df_folds["oos_sharpe"] > 0).mean()
         mean_oos_sharpe = df_folds["oos_sharpe"].mean()
         mean_parity = df_folds["parity"].mean()
-        summary_rows.append({
-            "instrument": instr,
-            "folds": n_folds,
-            "pct_oos_positive": round(pct_pos, 3),
-            "mean_oos_sharpe": round(mean_oos_sharpe, 3),
-            "mean_parity": round(mean_parity, 3),
-            "status": "OK",
-        })
+        summary_rows.append(
+            {
+                "instrument": instr,
+                "folds": n_folds,
+                "pct_oos_positive": round(pct_pos, 3),
+                "mean_oos_sharpe": round(mean_oos_sharpe, 3),
+                "mean_parity": round(mean_parity, 3),
+                "status": "OK",
+            }
+        )
 
     if len(instruments) > 1:
         print()

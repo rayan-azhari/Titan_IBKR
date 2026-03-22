@@ -337,7 +337,7 @@ def run_frac_diff(
 
         # Determine winner
         ics_tgt = {
-            f"d=0":     ic0_tgt  if not np.isnan(ic0_tgt)  else -999,
+            "d=0":     ic0_tgt  if not np.isnan(ic0_tgt)  else -999,
             f"d={min_d:.1f}": icopttgt if not np.isnan(icopttgt) else -999,
             "d=1":      ic1_tgt  if not np.isnan(ic1_tgt)  else -999,
         }
@@ -405,7 +405,7 @@ def run_frac_diff(
                   f"vs d=1 uplift={uplift_vs_d1:>+.4f}  "
                   f"vs d=0 uplift={uplift_vs_d0:>+.4f}  "
                   f"memory={r['memory']*100:.1f}%  verdict={r['verdict']}")
-        print(f"\n  RECOMMENDATION: Add fd versions of the above signals as Group H in")
+        print("\n  RECOMMENDATION: Add fd versions of the above signals as Group H in")
         print(f"  run_signal_sweep.py using frac_diff_ffd(series, d={frac_wins[0]['min_d']:.1f})")
     else:
         print("\n  No candidate achieved higher |IC| at a fractional d than at d=0 or d=1.")
@@ -451,7 +451,7 @@ def main() -> None:
         horizons.sort()
 
     print(f"\n{'='*W}")
-    print(f"  FRACTIONAL DIFFERENTIATION RESEARCH")
+    print("  FRACTIONAL DIFFERENTIATION RESEARCH")
     print(f"  Instrument: {args.instrument}  |  Timeframe: {args.timeframe}")
     print(f"  Testing d in {list(D_GRID)}  |  Target horizon: h={target_h}")
     print(f"{'='*W}")

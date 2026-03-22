@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 # Data loading
 # ---------------------------------------------------------------------------
 
+
 def _load_ohlcv(instrument: str, timeframe: str) -> pd.DataFrame:
     path = ROOT / "data" / f"{instrument}_{timeframe}.parquet"
     if not path.exists():
@@ -47,6 +48,7 @@ def _load_ohlcv(instrument: str, timeframe: str) -> pd.DataFrame:
 # Fractional differencing
 # ---------------------------------------------------------------------------
 
+
 def _frac_diff(series: pd.Series, d: float = 0.35, threshold: float = 1e-5) -> pd.Series:
     """Fractionally difference a series with order d using fixed-width window."""
     weights = [1.0]
@@ -68,6 +70,7 @@ def _frac_diff(series: pd.Series, d: float = 0.35, threshold: float = 1e-5) -> p
 # ---------------------------------------------------------------------------
 # Core function
 # ---------------------------------------------------------------------------
+
 
 def compute_regime_labels(
     df: pd.DataFrame,
@@ -148,6 +151,23 @@ def compute_regime_labels(
     hmm_state = model.predict(X_full)
     out["hmm_state"] = hmm_state.astype(int)
 
+    # M5 FIX: Warn when OOS features fall outside the IS normalisation range.
+    # If OOS volatility far exceeds IS volatility (e.g. COVID crash vs. calm IS
+    # period), OOS features are extreme outliers and the HMM may classify all OOS
+    # bars into a single state, making regime labels unreliable.
+    oos_X = X_full[is_n:]
+    if len(oos_X) > 0:
+        outlier_mask = np.abs(oos_X).max(axis=1) > 3.0
+        outlier_frac = float(outlier_mask.mean())
+        if outlier_frac > 0.20:
+            log.warning(
+                "HMM REGIME RELIABILITY WARNING: %.1f%% of OOS bars have "
+                "|feature_z| > 3 (IS normalisation range exceeded). "
+                "HMM regime labels may be unreliable for the OOS period. "
+                "Consider extending IS window or retraining on a wider period.",
+                outlier_frac * 100,
+            )
+
     # --- Fractional differencing (optional) ---
     if frac_diff:
         log.info("Computing fractionally differenced close (d=0.35)...")
@@ -159,6 +179,7 @@ def compute_regime_labels(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Phase 0 — Regime Labelling (ADX + HMM)")

@@ -46,9 +46,10 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from research.ic_analysis.run_mtf_stack import run_mtf_stack  # noqa: E402
 from research.ic_analysis.run_signal_combination import run_combination  # noqa: E402
 from research.ic_analysis.run_signal_sweep import HORIZONS, run_sweep  # noqa: E402
+
+from research.ic_analysis.run_mtf_stack import run_mtf_stack  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)

@@ -50,15 +50,15 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 import research.ic_analysis.phase1_sweep as _sweep  # noqa: E402
-from research.ic_analysis.run_ic import (  # noqa: E402
-    compute_forward_returns,
-    compute_ic_table,
-    compute_icir,
-)
 from research.ic_analysis.phase1_sweep import (  # noqa: E402
     _get_annual_bars,
     _load_ohlcv,
     build_all_signals,
+)
+from research.ic_analysis.run_ic import (  # noqa: E402
+    compute_forward_returns,
+    compute_ic_table,
+    compute_icir,
 )
 
 logging.basicConfig(

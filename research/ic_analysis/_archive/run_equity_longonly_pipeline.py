@@ -44,6 +44,8 @@ import vectorbt as vbt
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+import importlib.util as _ilu
+
 from research.ic_analysis.run_ic_backtest import (
     DEFAULT_RISK_PCT,
     DEFAULT_STOP_ATR,
@@ -55,7 +57,6 @@ from research.ic_analysis.run_ic_backtest import (
     zscore_normalise,
 )
 
-import importlib.util as _ilu
 HMM_AVAILABLE: bool = _ilu.find_spec("hmmlearn") is not None
 
 REPORTS = ROOT / ".tmp" / "reports"

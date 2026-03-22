@@ -1,6 +1,6 @@
 # Backtesting & Validation Pipeline
 
-**Version:** 1.2 | **Last Updated:** 2026-03-20
+**Version:** 1.3 | **Last Updated:** 2026-03-20
 
 ---
 
@@ -194,11 +194,34 @@ size_pct  = min(size_pct, max_leverage)   # cap leverage
 
 By expressing stop as a fraction of price, the formula works identically for EUR/USD (~1.08) and USD/JPY (~145) without pip-value conversion.
 
+### Natural Horizon (`--ref-horizon`)
+
+The entry/exit logic must use the **natural horizon** discovered in Phase 1 — the horizon h at which the composite IC peaks. This determines the IC sign orientation (which direction is bullish) and informs the strategy's expected holding period.
+
+```bash
+# Pass the Phase 1 natural horizon explicitly:
+uv run python research/ic_analysis/phase3_backtest.py \
+  --instrument EUR_USD --tfs H1 --ref-horizon 20 ...
+```
+
+> [!WARNING]
+> **Audit fix C2:** Hardcoding `REF_HORIZON = 1` caused signal orientation to be derived from
+> h=1 IC, which can differ in sign from the natural horizon. For volatility signals on H1 data,
+> this produced a backwards composite (longs became shorts) and zero entries after HMM gating.
+> Always derive `--ref-horizon` from Phase 1/2 CSV output — never hardcode it.
+
 ### Threshold Search (IS Only)
 
 Default grid: `[0.25, 0.50, 0.75, 1.00, 1.25, 1.50, 2.00]`
 
 Best threshold = `argmax(IS_Sharpe)`. Applied unchanged to OOS.
+
+> [!NOTE]
+> **Phase 3 vs Phase 4 threshold disconnect (M4):** Phase 3 selects one threshold on the full
+> IS window. Phase 4 re-selects the threshold independently on each fold's IS data. Phase 5 uses
+> Phase 3's single threshold. This means Phase 5 is not reproducing Phase 4's per-fold behaviour
+> — it tests a slightly different strategy. This is documented and acceptable; do not conflate
+> Phase 4 fold performance with Phase 5 robustness numbers.
 
 ### Risk of Ruin Gate (Balsara)
 
@@ -235,6 +258,8 @@ Phase 3 outputs a **histogram of actual trade durations** (in bars). Compare the
 
 ### Phase 3 Quality Gates
 
+All 8 gates are **hard requirements**. The backtest is labelled PASS only when every gate passes. Do not proceed to Phase 4 if any gate fails.
+
 | Gate | Threshold | Notes |
 |---|---|---|
 | OOS Trade Sharpe | > 1.0 | Minimum viable edge after friction |
@@ -245,6 +270,11 @@ Phase 3 outputs a **histogram of actual trade durations** (in bars). Compare the
 | Max Drawdown | ≤ 25% | Hard ceiling; strategy-specific |
 | Risk of Ruin | P(ruin 25% DD) < 5% | Survival before performance |
 | Break-Even Friction | ≥ 2.0× base | Edge must survive doubled costs |
+
+> [!NOTE]
+> **Audit fix H1:** Prior to this fix, only 3 of 8 gates were enforced as hard stops. A strategy
+> could "pass" Phase 3 with 8 OOS trades, 20% win rate, and 30% max drawdown. All 8 gates now
+> block promotion to Phase 4.
 
 ---
 
@@ -293,6 +323,19 @@ Validate temporal stability by repeatedly re-fitting the strategy on a rolling I
 ### Stitched OOS Equity Curve
 
 All OOS periods are concatenated into one continuous equity curve. This is the most honest performance representation — it shows how the strategy would have performed with periodic re-calibration, as it would in live deployment.
+
+### Phase 0 HMM Reliability in OOS (M5)
+
+HMM is fit on the IS window using IS-normalised features. When the OOS period contains volatility regimes that far exceed IS levels (e.g., a crash OOS after a calm IS), the normalised OOS features are outliers and the HMM may misclassify all OOS bars into a single state.
+
+`phase0_regime.py` automatically warns when > 20% of OOS bars have `|feature_z| > 3`:
+
+```
+WARNING: HMM regime labels may be unreliable for OOS period —
+  IS normalisation range was exceeded by 31.4% of OOS bars.
+```
+
+When this warning fires, treat regime-conditional results (G5 ADX/HMM split) with extra caution. Consider re-fitting the HMM on a more recent IS window.
 
 ### Phase 4 Quality Gates
 
@@ -382,6 +425,12 @@ Gate: OOS Sharpe > 0 in at least 2/3 ADX regimes
 Gate: OOS Sharpe > 0 in at least 1/2 HMM states
 ```
 
+**Implementation notes:**
+
+- **Frequency-aware Sharpe (M1 fix):** `bars_per_year` is derived from `--tfs` — `252` for daily, `252×24` for H1, `252×6` for H4, etc. Prior to this fix, daily instruments computed Sharpe ~25× too high (hardcoded 252×24).
+- **HMM gate interaction (M2 fix):** When `--hmm-gate` is active, entries in the gated HMM state are suppressed by design (zero trades). That state is excluded from the G5 HMM pass count — it cannot count as a "failing" regime since it never traded. The gate counts passing regimes from active states only.
+- **Volatility tercile edges (L4 fix):** Tercile boundaries are computed from the IS rv20 distribution (first 70% of the regime DataFrame), not from OOS trade entry times. This prevents post-hoc boundary fitting.
+
 **Why this matters:** A trend-following strategy that only works when ADX > 25 will suffer catastrophic losses during the next prolonged ranging period. Regime robustness ensures the strategy either (a) works across regimes or (b) has an effective regime gate that prevents losses in adverse regimes.
 
 > [!IMPORTANT]
@@ -427,6 +476,12 @@ r_sq  = model.rsquared
 | Commodity | 0.8 | Moderate independence expected |
 
 **Why this matters:** A strategy with Sharpe = 1.5 but beta = 1.3 to SPY is just leveraged buy-and-hold. It will generate the same Sharpe as 1.3× SPY with no new information. True alpha requires low beta and positive intercept.
+
+> [!NOTE]
+> **Audit fix M3 (circular benchmark):** When `--instrument` equals the benchmark (e.g.,
+> `--instrument SPY --benchmark SPY`), G6 is skipped with a clear error rather than attempting
+> self-referential OLS. The Phase 5 script also warns at startup if `--benchmark` matches
+> `--instrument`.
 
 ### Phase 5 Summary Table
 
@@ -630,6 +685,7 @@ Re-run Phases 3–5 if:
 
 | Version | Date | Changes |
 |---|---|---|
+| **1.3** | 2026-03-20 | Audit round 2: All 8 Phase 3 quality gates now enforced as hard stops (H1 — was only 3); `--ref-horizon` arg added to Phase 3 with C2 fix warning; M4 threshold disconnect documented; Phase 5 G5 frequency-aware Sharpe (M1), HMM gate state exclusion (M2), IS vol tercile edges (L4); G6 circular benchmark guard (M3); Phase 0 OOS outlier warning documented (M5); tz-aware index handling (L6). |
 | **1.2** | 2026-03-20 | Audit fixes: Asset-class beta thresholds in Gate 6 (A5), R-unit Balsara normalisation (C3), holding histogram timeframe awareness (A3), time-varying swap rates (C8 via `swap_curve.py`), combined Sharpe from blended returns (C2), OOS years fix for daily bars (C5), per-fold threshold search (G7), volatility tercile gate in G5 (G3), dual Trade/Daily Sharpe gating (G6). Added `decimal.Decimal` compliance note (R5). |
 | **1.1** | 2026-03-20 | Updated Scripts Reference to reflect pipeline restructure: `phase3_backtest.py`, `phase4_wfo.py`, `phase5_robustness.py`, `pipeline_validation.py` replace all instrument-specific scripts (archived to `_archive/`). Phase 6 TOML expanded with `signals`, `tfs`, `asset_class`, `phase3_max_dd_pct`, `phase3_trade_rate`. Added Config Handoff subsection documenting `phase6_deploy.py` workflow. `ic_generic/strategy.py` replaces `ic_mtf` and `ic_equity_daily`. |
 | **1.0** | 2026-03-20 | Initial unified directive. Consolidated from IC MTF Backtesting Guide, MTF Optimization Protocol, and IC Equity Daily Strategy into a single asset-agnostic process spec. Added 6 improvements: Sharpe definition clarity, cost sensitivity sweep, regime robustness gate (ADX+HMM), alpha/beta decomposition, holding period distribution, per-trade % return warning. Risk of Ruin gate added to Phase 3. Kill switch triggers added to Phase 6. |

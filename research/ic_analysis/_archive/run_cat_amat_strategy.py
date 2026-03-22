@@ -34,9 +34,8 @@ except ImportError:
     print("ERROR: vectorbt not installed. Run: uv add vectorbt")
     sys.exit(1)
 
-from scipy.stats import spearmanr  # noqa: E402
-
 from research.ic_analysis.run_signal_sweep import _load_ohlcv, build_all_signals  # noqa: E402
+from scipy.stats import spearmanr  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Config

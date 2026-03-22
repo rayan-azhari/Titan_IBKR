@@ -158,13 +158,13 @@ def _build_and_align(
             print(f"  [WARN] No data for {instrument} {tf} -- skipping.")
             continue
         native_sigs = build_all_signals(df)
-        
-        # PREVENT LOOKAHEAD BIAS: 
-        # Higher tf bars are timestamped at the OPEN. We must shift them by 1 before 
+
+        # PREVENT LOOKAHEAD BIAS:
+        # Higher tf bars are timestamped at the OPEN. We must shift them by 1 before
         # forward-filling so the signal is only available AFTER the bar closes.
         if tf != base_tf:
             native_sigs = native_sigs.shift(1)
-            
+
         aligned = native_sigs.reindex(base_index, method="ffill")
         tf_signals[tf] = aligned
         print(f"  {tf:3s}: {len(df):>5d} native bars -> {len(aligned):>5d} aligned H1 bars")

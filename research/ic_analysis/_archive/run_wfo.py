@@ -106,11 +106,11 @@ def _build_and_align_all(
             print(f"  [WARN] No data for {instrument} {tf} -- skipping.")
             continue
         native_sigs = build_all_signals(df)
-        
+
         # PREVENT LOOKAHEAD BIAS
         if tf != base_tf:
             native_sigs = native_sigs.shift(1)
-            
+
         aligned = native_sigs.reindex(base_index, method="ffill")
         tf_signals[tf] = aligned
 

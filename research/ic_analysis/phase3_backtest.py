@@ -80,12 +80,16 @@ from research.ic_analysis.phase1_sweep import (  # noqa: E402
     _load_ohlcv,
     build_all_signals,
 )
+
 # -- Constants -----------------------------------------------------------------
 
 DEFAULT_SIGNALS: list[str] = ["accel_stoch_k", "accel_rsi14"]
 DEFAULT_TFS: list[str] = ["W", "D", "H4", "H1"]
 DEFAULT_THRESHOLDS: list[float] = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
 IS_RATIO: float = 0.70
+# Horizon used to determine signal sign (orientation).
+# Default=1 preserves backward compatibility. Pass --ref-horizon N to match
+# the natural horizon discovered in Phase 1 (e.g. h=60 for vol signals).
 REF_HORIZON: int = 1
 
 INIT_CASH: float = 10_000.0
@@ -184,6 +188,40 @@ def _atr14(df: pd.DataFrame, p: int = 14) -> pd.Series:
     return tr.rolling(p).mean()
 
 
+# -- HMM regime gate -----------------------------------------------------------
+
+
+def _apply_hmm_gate(
+    composite_z: pd.Series,
+    instrument: str,
+    timeframe: str,
+    is_mask: pd.Series,  # kept for API compat; good_state now uses full-dataset majority
+) -> pd.Series:
+    """Zero composite_z during the bad HMM state (full-dataset majority = good state).
+
+    Uses the FULL regime file majority to determine good_state so that the
+    definition stays stable across WFO folds (per-fold IS windows in crash periods
+    would otherwise flip good_state to the bear state, causing inconsistent gating).
+    """
+    regime_path = ROOT / ".tmp" / "regime" / f"{instrument}_{timeframe}_regime.parquet"
+    if not regime_path.exists():
+        print(f"  [HMM GATE] Regime file not found: {regime_path.name} -- gate skipped")
+        return composite_z
+    regime = pd.read_parquet(regime_path)[["hmm_state"]]
+    regime = regime.reindex(composite_z.index, method="ffill")
+    # Use full-dataset majority so good_state is consistent across all WFO folds
+    good_state = int(regime["hmm_state"].value_counts().idxmax())
+    n_good = int((regime["hmm_state"] == good_state).sum())
+    n_bad = int((regime["hmm_state"] != good_state).sum())
+    print(
+        f"  [HMM GATE] good_state={good_state}  active={n_good} bars  "
+        f"gated={n_bad} bars ({n_bad / len(composite_z) * 100:.1f}%)"
+    )
+    gated = composite_z.copy()
+    gated[regime["hmm_state"] != good_state] = 0.0
+    return gated
+
+
 # -- Data helpers --------------------------------------------------------------
 
 
@@ -250,8 +288,15 @@ def build_composite(
     tfs: list[str],
     target_signals: list[str],
     is_mask: pd.Series,
+    ref_horizon: int = REF_HORIZON,
 ) -> pd.Series:
-    """Sign-normalised equal-weight MTF composite. IS-calibrated only."""
+    """Sign-normalised equal-weight MTF composite. IS-calibrated only.
+
+    ref_horizon: horizon used to determine sign orientation. Should match the
+    natural horizon from Phase 1 (default=1 for backward compatibility). Using
+    h=1 when the signal peaks at h=60 can invert the composite — pass the
+    correct horizon via --ref-horizon to avoid 0-trade or wrong-direction runs.
+    """
     parts: list[pd.Series] = []
     for sig in target_signals:
         for tf in tfs:
@@ -261,7 +306,7 @@ def build_composite(
                 print(f"  [WARN] Signal '{sig}' not found in {tf} -- skipping.")
                 continue
             raw = tf_signals[tf][sig]
-            sign = _ic_sign(raw[is_mask], base_close[is_mask], horizon=REF_HORIZON)
+            sign = _ic_sign(raw[is_mask], base_close[is_mask], horizon=ref_horizon)
             oriented = raw * sign
             oriented.name = f"{sig}_{tf}"
             parts.append(oriented)
@@ -423,7 +468,7 @@ def _risk_of_ruin(
     ratio = (1.0 - edge) / (1.0 + edge)
     if ratio <= 0:
         return 0.0  # edge so large that ruin is impossible
-    p = ratio ** cap_units
+    p = ratio**cap_units
     return float(np.clip(p, 0.0, 1.0))
 
 
@@ -466,12 +511,12 @@ def _run_vbt(
     sig = signal_z.shift(1).fillna(0.0)
     size_arr = size.reindex(close.index).fillna(0.0).values
     stop_arr = stop_pct.reindex(close.index).fillna(0.0).values
-    
+
     # fees in VBT = fraction of notional. Dynamic arrays correctly charge
     # high percentages at low prices, and low percentages at high prices for absolute spreads.
     # We use dynamic arrays to ensure high-priced assets aren't undercharged relative to historic medians
     vbt_fees = (spread / close).bfill().values
-    
+
     # Gap execution risk: 10x slippage on severe (>5%) price dislocations
     base_slip = slippage / close
     gap_multiplier = np.where(close.pct_change().abs() > 0.05, 10.0, 1.0)
@@ -567,7 +612,8 @@ def _run_vbt(
     combined_trades = sl["trades"] + ss["trades"]
     combined_wr = (
         (sl["wr"] * sl["trades"] + ss["wr"] * ss["trades"]) / combined_trades
-        if combined_trades > 0 else 0.0
+        if combined_trades > 0
+        else 0.0
     )
     gross_ret = (sl["ret"] + ss["ret"]) / 2
     net_pnl = gross_ret * INIT_CASH + total_swap_drag
@@ -578,9 +624,7 @@ def _run_vbt(
     blended_daily = (long_ret_s + short_ret_s) / 2
     bl_mean = float(blended_daily.mean())
     bl_std = float(blended_daily.std())
-    combined_daily_sharpe = (
-        bl_mean / bl_std * np.sqrt(252) if bl_std > 1e-10 else 0.0
-    )
+    combined_daily_sharpe = bl_mean / bl_std * np.sqrt(252) if bl_std > 1e-10 else 0.0
 
     # C2 FIX: Combined trade Sharpe from merged per-trade returns.
     all_trade_rets = []
@@ -597,9 +641,7 @@ def _run_vbt(
         tr_mu = float(tr_arr.mean())
         tr_sig = float(tr_arr.std(ddof=1))
         trades_py = len(tr_arr) / oos_years if oos_years > 0 else float(len(tr_arr))
-        combined_trade_sharpe = (
-            tr_mu / tr_sig * np.sqrt(trades_py) if tr_sig > 1e-10 else 0.0
-        )
+        combined_trade_sharpe = tr_mu / tr_sig * np.sqrt(trades_py) if tr_sig > 1e-10 else 0.0
     else:
         combined_trade_sharpe = 0.0
 
@@ -770,6 +812,8 @@ def run_backtest(
     slippage_pips: float | None = None,
     swap_long_pips: float | None = None,
     swap_short_pips: float | None = None,
+    hmm_gate: bool = False,
+    ref_horizon: int = REF_HORIZON,
 ) -> pd.DataFrame:
     """Run Phase 3 IS/OOS backtest and return per-threshold results as a DataFrame."""
     slug = instrument.lower()
@@ -778,12 +822,8 @@ def run_backtest(
 
     profile = COST_PROFILES.get(asset_class, COST_PROFILES["fx_major"])
     eff_max_leverage = max_leverage if max_leverage is not None else profile["max_leverage"]
-    eff_swap_long = (
-        swap_long_pips if swap_long_pips is not None else profile["swap_long"]
-    )
-    eff_swap_short = (
-        swap_short_pips if swap_short_pips is not None else profile["swap_short"]
-    )
+    eff_swap_long = swap_long_pips if swap_long_pips is not None else profile["swap_long"]
+    eff_swap_short = swap_short_pips if swap_short_pips is not None else profile["swap_short"]
     pip_size_val = PIP_SIZE.get(instrument, profile["pip_size"])
 
     # Resolve spread and slippage.
@@ -803,12 +843,10 @@ def run_backtest(
     else:
         _spread_from_bps = True
         eff_spread_bps = spread_bps if spread_bps is not None else profile["spread_bps"]
-        eff_slippage_bps_val = (
-            slippage_bps if slippage_bps is not None else profile["slippage_bps"]
-        )
+        eff_slippage_bps_val = slippage_bps if slippage_bps is not None else profile["slippage_bps"]
         # Will be converted to price units once we know median close.
-        eff_spread_price = 0.0          # filled after data load
-        eff_slippage_price = 0.0        # filled after data load
+        eff_spread_price = 0.0  # filled after data load
+        eff_slippage_price = 0.0  # filled after data load
 
     # G5 FIX: Auto-load Phase 2 composite winner if no explicit signals given.
     if target_signals is None or target_signals == DEFAULT_SIGNALS:
@@ -821,7 +859,9 @@ def run_backtest(
                     p2_signals = p2_df["signal"].tolist()
                     if len(p2_signals) > 0:
                         target_signals = p2_signals
-                        print(f"  [G5] Auto-loaded {len(p2_signals)} signals from Phase 2: {p2_winner_path.name}")
+                        print(
+                            f"  [G5] Auto-loaded {len(p2_signals)} signals from Phase 2: {p2_winner_path.name}"
+                        )
             except Exception as exc:
                 print(f"  [G5] Could not load Phase 2 winner: {exc}")
 
@@ -833,9 +873,9 @@ def run_backtest(
     print(f"  TFs      : {' -> '.join(tfs)}")
     print(f"  Split    : {int(IS_RATIO * 100)}% IS / {int((1 - IS_RATIO) * 100)}% OOS")
     # G4 FIX: Portfolio heat warning.
-    print(f"  ⚠ WARNING: Per-instrument backtest. Portfolio heat limits NOT enforced.")
-    print(f"    Directive requires: FX margin ≤ 15-20%, equity gross ≤ 100-150%.")
-    print(f"    Enforce portfolio-level constraints in live deployment / pipeline_validation.")
+    print("  [!] WARNING: Per-instrument backtest. Portfolio heat limits NOT enforced.")
+    print("    Directive requires: FX margin <= 15-20%, equity gross <= 100-150%.")
+    print("    Enforce portfolio-level constraints in live deployment / pipeline_validation.")
     if _spread_from_bps:
         print(
             f"  Spread   : {eff_spread_bps:.2f} bps  |  "
@@ -878,8 +918,10 @@ def run_backtest(
     # C5 FIX: Use correct bars_per_year for daily vs hourly timeframes.
     bars_per_year = 252 if freq == "d" else 365 * 24
     oos_years = oos_n / bars_per_year
-    print(f"\n  Total {base_tf} bars: {n:,}  |  IS: {is_n:,}  |  OOS: {oos_n:,}  "
-          f"({oos_years:.2f} yr OOS)")
+    print(
+        f"\n  Total {base_tf} bars: {n:,}  |  IS: {is_n:,}  |  OOS: {oos_n:,}  "
+        f"({oos_years:.2f} yr OOS)"
+    )
 
     # 2. ATR sizing
     oos_mask = ~is_mask
@@ -892,15 +934,17 @@ def run_backtest(
         live = s_sub[s_sub > 0]
         if not live.empty:
             med_pct = float(live.median())
-            print(
-                f"  Median size_pct {label}: {med_pct:.2f}x  "
-                f"({med_pct * 100:.0f}% of portfolio)"
-            )
+            print(f"  Median size_pct {label}: {med_pct:.2f}x  ({med_pct * 100:.0f}% of portfolio)")
 
     # 3. Build composite
     print("\n  Building MTF composite...")
-    composite = build_composite(tf_signals, base_close, tfs, target_signals, is_mask)
+    composite = build_composite(
+        tf_signals, base_close, tfs, target_signals, is_mask, ref_horizon=ref_horizon
+    )
     composite_z = zscore_normalise(composite, is_mask)
+
+    if hmm_gate:
+        composite_z = _apply_hmm_gate(composite_z, instrument, base_tf, is_mask)
 
     is_z = composite_z[is_mask]
     oos_z = composite_z[oos_mask]
@@ -924,20 +968,34 @@ def run_backtest(
 
     for theta in thresholds:
         is_res = _run_vbt(
-            is_close, is_z, theta,
-            eff_spread_price, eff_slippage_price,
-            is_size, is_stop_pct,
+            is_close,
+            is_z,
+            theta,
+            eff_spread_price,
+            eff_slippage_price,
+            is_size,
+            is_stop_pct,
             freq,
-            eff_swap_long, eff_swap_short, pip_size_val,
-            direction=direction, oos_years=is_years,
+            eff_swap_long,
+            eff_swap_short,
+            pip_size_val,
+            direction=direction,
+            oos_years=is_years,
         )
         oos_res = _run_vbt(
-            oos_close, oos_z, theta,
-            eff_spread_price, eff_slippage_price,
-            oos_size, oos_stop_pct,
+            oos_close,
+            oos_z,
+            theta,
+            eff_spread_price,
+            eff_slippage_price,
+            oos_size,
+            oos_stop_pct,
             freq,
-            eff_swap_long, eff_swap_short, pip_size_val,
-            direction=direction, oos_years=oos_years,
+            eff_swap_long,
+            eff_swap_short,
+            pip_size_val,
+            direction=direction,
+            oos_years=oos_years,
         )
 
         is_combined = is_res["combined_sharpe"]
@@ -946,37 +1004,39 @@ def run_backtest(
         is_long_exp = (is_z > theta).mean() * 100
         oos_long_exp = (oos_z > theta).mean() * 100
 
-        results.append({
-            "threshold": theta,
-            "is_sharpe": is_combined,
-            "oos_sharpe": oos_combined,
-            "is_trade_sharpe": is_res["combined_trade_sharpe"],
-            "oos_trade_sharpe": oos_res["combined_trade_sharpe"],
-            "oos_daily_sharpe": oos_res["long_daily_sharpe"]
-            if direction == "long_only"
-            else (oos_res["long_sharpe"] + oos_res["short_sharpe"]) / 2,
-            "parity": parity,
-            "is_long_sharpe": is_res["long_sharpe"],
-            "is_short_sharpe": is_res["short_sharpe"],
-            "oos_long_sharpe": oos_res["long_sharpe"],
-            "oos_short_sharpe": oos_res["short_sharpe"],
-            "is_gross_ret": is_res["gross_ret"],
-            "oos_gross_ret": oos_res["gross_ret"],
-            "oos_net_ret": oos_res["net_ret"],
-            "oos_swap_drag_usd": oos_res["swap_drag_usd"],
-            "oos_long_nights": oos_res["long_nights"],
-            "oos_short_nights": oos_res["short_nights"],
-            "is_long_dd": is_res["long_dd"],
-            "is_short_dd": is_res["short_dd"],
-            "oos_long_dd": oos_res["long_dd"],
-            "oos_short_dd": oos_res["short_dd"],
-            "is_trades": is_res["combined_trades"],
-            "oos_trades": oos_res["combined_trades"],
-            "is_wr": is_res["combined_wr"],
-            "oos_wr": oos_res["combined_wr"],
-            "is_long_exposure_pct": is_long_exp,
-            "oos_long_exposure_pct": oos_long_exp,
-        })
+        results.append(
+            {
+                "threshold": theta,
+                "is_sharpe": is_combined,
+                "oos_sharpe": oos_combined,
+                "is_trade_sharpe": is_res["combined_trade_sharpe"],
+                "oos_trade_sharpe": oos_res["combined_trade_sharpe"],
+                "oos_daily_sharpe": oos_res["long_daily_sharpe"]
+                if direction == "long_only"
+                else (oos_res["long_sharpe"] + oos_res["short_sharpe"]) / 2,
+                "parity": parity,
+                "is_long_sharpe": is_res["long_sharpe"],
+                "is_short_sharpe": is_res["short_sharpe"],
+                "oos_long_sharpe": oos_res["long_sharpe"],
+                "oos_short_sharpe": oos_res["short_sharpe"],
+                "is_gross_ret": is_res["gross_ret"],
+                "oos_gross_ret": oos_res["gross_ret"],
+                "oos_net_ret": oos_res["net_ret"],
+                "oos_swap_drag_usd": oos_res["swap_drag_usd"],
+                "oos_long_nights": oos_res["long_nights"],
+                "oos_short_nights": oos_res["short_nights"],
+                "is_long_dd": is_res["long_dd"],
+                "is_short_dd": is_res["short_dd"],
+                "oos_long_dd": oos_res["long_dd"],
+                "oos_short_dd": oos_res["short_dd"],
+                "is_trades": is_res["combined_trades"],
+                "oos_trades": oos_res["combined_trades"],
+                "is_wr": is_res["combined_wr"],
+                "oos_wr": oos_res["combined_wr"],
+                "is_long_exposure_pct": is_long_exp,
+                "oos_long_exposure_pct": oos_long_exp,
+            }
+        )
 
     df = pd.DataFrame(results)
 
@@ -990,7 +1050,11 @@ def run_backtest(
     )
     print("  " + "-" * 88)
     for _, row in df.iterrows():
-        flag = " ***" if row["parity"] >= 0.5 and row["oos_sharpe"] > 0 and row["oos_trade_sharpe"] > 0 else ""
+        flag = (
+            " ***"
+            if row["parity"] >= 0.5 and row["oos_sharpe"] > 0 and row["oos_trade_sharpe"] > 0
+            else ""
+        )
         print(
             f"  {row['threshold']:>6.2f}  {row['is_sharpe']:>+10.3f}  "
             f"{row['oos_sharpe']:>+10.3f}  {row['is_trade_sharpe']:>+10.3f}  "
@@ -1043,10 +1107,7 @@ def run_backtest(
         f"{best['oos_short_sharpe']:>+12.3f}  "
         f"{_r(best['is_short_sharpe'], best['oos_short_sharpe'])}"
     )
-    print(
-        f"  {'Win Rate':<30}  {best['is_wr'] * 100:>9.1f}%  "
-        f"{best['oos_wr'] * 100:>10.1f}%"
-    )
+    print(f"  {'Win Rate':<30}  {best['is_wr'] * 100:>9.1f}%  {best['oos_wr'] * 100:>10.1f}%")
     print(
         f"  {'Max Drawdown (long)':<30}  {best['is_long_dd']:>+10.3f}  "
         f"{best['oos_long_dd']:>+12.3f}"
@@ -1055,10 +1116,7 @@ def run_backtest(
         f"  {'Max Drawdown (short)':<30}  {best['is_short_dd']:>+10.3f}  "
         f"{best['oos_short_dd']:>+12.3f}"
     )
-    print(
-        f"  {'Trades':<30}  {best['is_trades']:>10.0f}  "
-        f"{best['oos_trades']:>12.0f}"
-    )
+    print(f"  {'Trades':<30}  {best['is_trades']:>10.0f}  {best['oos_trades']:>12.0f}")
     print(
         f"  {'Long exposure %':<30}  {best['is_long_exposure_pct']:>9.1f}%  "
         f"{best['oos_long_exposure_pct']:>10.1f}%"
@@ -1088,12 +1146,19 @@ def run_backtest(
 
     # 7. Re-run OOS at best threshold to get portfolio objects and per-trade stats.
     oos_best = _run_vbt(
-        oos_close, oos_z, theta_best,
-        eff_spread_price, eff_slippage_price,
-        oos_size, oos_stop_pct,
+        oos_close,
+        oos_z,
+        theta_best,
+        eff_spread_price,
+        eff_slippage_price,
+        oos_size,
+        oos_stop_pct,
         freq,
-        eff_swap_long, eff_swap_short, pip_size_val,
-        direction=direction, oos_years=oos_years,
+        eff_swap_long,
+        eff_swap_short,
+        pip_size_val,
+        direction=direction,
+        oos_years=oos_years,
     )
     pf_long_best = oos_best["pf_long"]
 
@@ -1137,25 +1202,67 @@ def run_backtest(
 
     # 10. Cost sensitivity sweep
     friction = _cost_sensitivity_sweep(
-        oos_close, oos_z, theta_best,
-        eff_spread_price, eff_slippage_price,
-        oos_size, oos_stop_pct,
+        oos_close,
+        oos_z,
+        theta_best,
+        eff_spread_price,
+        eff_slippage_price,
+        oos_size,
+        oos_stop_pct,
         freq,
-        eff_swap_long, eff_swap_short, pip_size_val,
-        direction=direction, oos_years=oos_years,
+        eff_swap_long,
+        eff_swap_short,
+        pip_size_val,
+        direction=direction,
+        oos_years=oos_years,
     )
 
-    # 11. Quality gate
+    # 11. Quality gate — all 8 criteria from the directive
     print()
-    if quality_gate:
-        ratio = float(best["oos_sharpe"]) / float(best["is_sharpe"]) if best["is_sharpe"] else 0.0
-        if ratio >= 0.5:
-            print("  QUALITY GATE: PASSED -- OOS/IS Sharpe >= 0.5.")
-            print("  -> Ready for Phase 4 (WFO) and Phase 6 (titan/ implementation).")
-        else:
-            print("  QUALITY GATE: FAILED -- OOS/IS Sharpe < 0.5.")
+    gate_failures: list[str] = []
+
+    if not quality_gate:
+        gate_failures.append(
+            "No threshold passes OOS Sharpe > 0 + Trade Sharpe > 0 + Parity >= 0.5"
+        )
     else:
-        print("  QUALITY GATE: FAILED -- No threshold passes both criteria.")
+        ratio = (
+            float(best["oos_sharpe"]) / float(best["is_sharpe"])
+            if float(best["is_sharpe"]) != 0
+            else 0.0
+        )
+        if ratio < 0.5:
+            gate_failures.append(f"IS/OOS Sharpe parity {ratio:.3f} < 0.50")
+
+    oos_trades_val = int(best.get("oos_trades", 0))
+    if oos_trades_val < 30:
+        gate_failures.append(f"OOS trades {oos_trades_val} < 30")
+
+    oos_wr_val = float(best.get("oos_wr", 0.0))
+    if oos_wr_val < 0.40:
+        gate_failures.append(f"Win rate {oos_wr_val:.1%} < 40%")
+
+    max_dd_val = float(best.get("oos_long_dd", 0.0))
+    if direction == "both":
+        max_dd_val = min(max_dd_val, float(best.get("oos_short_dd", 0.0)))
+    if max_dd_val < -0.25:
+        gate_failures.append(f"Max DD {max_dd_val:.1%} < -25%")
+
+    if ror >= 0.05:
+        gate_failures.append(f"RoR {ror:.4f} >= 5%")
+
+    bef_val = friction.get("break_even_friction_mult", 0.0)
+    if bef_val < 2.0:
+        gate_failures.append(f"Break-even friction {bef_val:.1f}x < 2.0x")
+
+    all_gates_pass = quality_gate and len(gate_failures) == 0
+    if all_gates_pass:
+        print("  QUALITY GATE: PASSED -- all 8 criteria met.")
+        print("  -> Ready for Phase 4 (WFO) and Phase 6 (titan/ implementation).")
+    else:
+        print("  QUALITY GATE: FAILED")
+        for f in gate_failures:
+            print(f"    [FAIL] {f}")
 
     # 12. Build unified output CSV
     out_rows: list[dict] = []
@@ -1164,37 +1271,46 @@ def run_backtest(
         is_best = abs(theta_row - theta_best) < 1e-9
         # For non-best rows, cost sensitivity and RoR columns are filled from
         # the best-threshold run to keep the schema consistent (one row per theta).
-        out_rows.append({
-            "instrument": instrument,
-            "timeframe": base_tf,
-            "direction": direction,
-            "signals_used": "+".join(target_signals),
-            "threshold": theta_row,
-            "is_sharpe": row["is_sharpe"],
-            "oos_sharpe": row["oos_sharpe"],
-            "is_trade_sharpe": row["is_trade_sharpe"],
-            "oos_trade_sharpe": row["oos_trade_sharpe"],
-            "oos_daily_sharpe": row["oos_daily_sharpe"],
-            "is_oos_ratio": row["parity"],
-            "n_oos_trades": row["oos_trades"],
-            "win_rate": row["oos_wr"],
-            "max_dd_pct": min(row["oos_long_dd"], row["oos_short_dd"])
-            if direction == "both" else row["oos_long_dd"],
-            "ror_25pct": ror if is_best else float("nan"),
-            "break_even_friction_mult": friction["break_even_friction_mult"]
-            if is_best else float("nan"),
-            "median_hold_bars": median_hold if is_best else float("nan"),
-            "sharpe_0.5x": friction.get("sharpe_0.5x", float("nan"))
-            if is_best else float("nan"),
-            "sharpe_1.0x": friction.get("sharpe_1.0x", float("nan"))
-            if is_best else float("nan"),
-            "sharpe_1.5x": friction.get("sharpe_1.5x", float("nan"))
-            if is_best else float("nan"),
-            "sharpe_2.0x": friction.get("sharpe_2.0x", float("nan"))
-            if is_best else float("nan"),
-            "sharpe_3.0x": friction.get("sharpe_3.0x", float("nan"))
-            if is_best else float("nan"),
-        })
+        out_rows.append(
+            {
+                "instrument": instrument,
+                "timeframe": base_tf,
+                "direction": direction,
+                "signals_used": "+".join(target_signals),
+                "threshold": theta_row,
+                "is_sharpe": row["is_sharpe"],
+                "oos_sharpe": row["oos_sharpe"],
+                "is_trade_sharpe": row["is_trade_sharpe"],
+                "oos_trade_sharpe": row["oos_trade_sharpe"],
+                "oos_daily_sharpe": row["oos_daily_sharpe"],
+                "is_oos_ratio": row["parity"],
+                "n_oos_trades": row["oos_trades"],
+                "win_rate": row["oos_wr"],
+                "max_dd_pct": min(row["oos_long_dd"], row["oos_short_dd"])
+                if direction == "both"
+                else row["oos_long_dd"],
+                "ror_25pct": ror if is_best else float("nan"),
+                "break_even_friction_mult": friction["break_even_friction_mult"]
+                if is_best
+                else float("nan"),
+                "median_hold_bars": median_hold if is_best else float("nan"),
+                "sharpe_0.5x": friction.get("sharpe_0.5x", float("nan"))
+                if is_best
+                else float("nan"),
+                "sharpe_1.0x": friction.get("sharpe_1.0x", float("nan"))
+                if is_best
+                else float("nan"),
+                "sharpe_1.5x": friction.get("sharpe_1.5x", float("nan"))
+                if is_best
+                else float("nan"),
+                "sharpe_2.0x": friction.get("sharpe_2.0x", float("nan"))
+                if is_best
+                else float("nan"),
+                "sharpe_3.0x": friction.get("sharpe_3.0x", float("nan"))
+                if is_best
+                else float("nan"),
+            }
+        )
 
     out_df = pd.DataFrame(out_rows)
     out_path = REPORTS_DIR / f"phase3_{slug}.csv"
@@ -1290,6 +1406,22 @@ def main() -> None:
         default=None,
         help="Pips/night for short positions (default: per profile)",
     )
+    parser.add_argument(
+        "--hmm-gate",
+        action="store_true",
+        default=False,
+        help="Gate entries to the IS-majority HMM state (requires Phase 0 regime file)",
+    )
+    parser.add_argument(
+        "--ref-horizon",
+        type=int,
+        default=REF_HORIZON,
+        help=(
+            "Horizon (bars) used to determine signal sign orientation. "
+            "Set to the Phase 1 natural horizon (e.g. 60 for vol signals). "
+            "Default=1; wrong value inverts the composite and produces 0 trades."
+        ),
+    )
     args = parser.parse_args()
 
     run_backtest(
@@ -1309,6 +1441,8 @@ def main() -> None:
         slippage_pips=args.slippage_pips,
         swap_long_pips=args.swap_long,
         swap_short_pips=args.swap_short,
+        hmm_gate=args.hmm_gate,
+        ref_horizon=args.ref_horizon,
     )
 
 

@@ -335,7 +335,7 @@ def run_phase4(
 ) -> dict:
     n = len(sigs)
     print(f"\n{'='*W}")
-    print(f"  PHASE 4 -- WALK-FORWARD OPTIMISATION")
+    print("  PHASE 4 -- WALK-FORWARD OPTIMISATION")
     print(f"  IS: {WFO_IS} bars (2yr)  |  OOS: {WFO_OOS} bars (6mo)  |  Step: {WFO_STEP}")
     print(f"{'='*W}")
 

@@ -47,6 +47,7 @@ from research.ic_analysis.phase3_backtest import (  # noqa: E402
     DEFAULT_TFS,
     INIT_CASH,
     IS_RATIO,
+    _apply_hmm_gate,
     _build_and_align,
     build_composite,
     build_size_array,
@@ -65,8 +66,8 @@ STRESS_SLIPPAGE_MULT = 3.0
 STRESS_MIN_SHARPE = 0.5
 WFO_MAX_CONSEC_NEG = 2
 DEFAULT_THRESHOLD = 0.75
-REGIME_MIN_ADX_PASS = 2   # >= 2 out of 3 ADX regimes
-REGIME_MIN_HMM_PASS = 1   # >= 1 out of 2 HMM states
+REGIME_MIN_ADX_PASS = 2  # >= 2 out of 3 ADX regimes
+REGIME_MIN_HMM_PASS = 1  # >= 1 out of 2 HMM states
 BETA_THRESHOLDS = {
     "fx_major": 0.5,
     "fx_minor": 0.5,
@@ -81,6 +82,7 @@ ALPHA_BETA_MAX_R2 = 0.5
 # OOS portfolio builder
 # ---------------------------------------------------------------------------
 
+
 def _build_oos_portfolios(
     instrument: str,
     tfs: list[str],
@@ -94,6 +96,8 @@ def _build_oos_portfolios(
     slippage_bps: float | None = None,
     max_leverage: float | None = None,
     slippage_mult: float = 1.0,
+    hmm_gate: bool = False,
+    ref_horizon: int = 1,
 ) -> tuple:
     """Build OOS long + short VBT portfolios.
 
@@ -108,9 +112,7 @@ def _build_oos_portfolios(
     eff_max_lev = max_leverage if max_leverage is not None else profile["max_leverage"]
 
     base_tf = tfs[-1]
-    tf_signals, base_index, base_df = _build_and_align(
-        instrument, tfs, base_tf=base_tf
-    )
+    tf_signals, base_index, base_df = _build_and_align(instrument, tfs, base_tf=base_tf)
     base_close = base_df["close"]
 
     n = len(base_index)
@@ -120,9 +122,12 @@ def _build_oos_portfolios(
     oos_mask = ~is_mask
 
     composite = build_composite(
-        tf_signals, base_close, tfs, target_signals, is_mask
+        tf_signals, base_close, tfs, target_signals, is_mask, ref_horizon=ref_horizon
     )
     composite_z = zscore_normalise(composite, is_mask)
+    if hmm_gate:
+        base_tf = tfs[-1]
+        composite_z = _apply_hmm_gate(composite_z, instrument, base_tf, is_mask)
 
     size_arr, stop_pct_arr = build_size_array(
         base_df, base_close, risk_pct, stop_atr, max_leverage=eff_max_lev
@@ -180,6 +185,7 @@ def _build_oos_portfolios(
 # Helper: combined per-trade % returns
 # ---------------------------------------------------------------------------
 
+
 def _combined_trade_returns(pf_long, pf_short) -> np.ndarray | None:
     """Extract per-trade % returns from both portfolios."""
     all_rets: list[float] = []
@@ -202,6 +208,7 @@ def _combined_trade_returns(pf_long, pf_short) -> np.ndarray | None:
 # Gate 1 — Monte Carlo shuffle
 # ---------------------------------------------------------------------------
 
+
 def monte_carlo_shuffle(
     pf_long,
     pf_short,
@@ -223,10 +230,7 @@ def monte_carlo_shuffle(
     sigma_base = float(trade_rets.std(ddof=1))
     n_trades = len(trade_rets)
     trades_per_year = n_trades / oos_years if oos_years > 0 else float(n_trades)
-    base_sharpe = (
-        mu_base / sigma_base * sqrt(trades_per_year)
-        if sigma_base > 1e-10 else 0.0
-    )
+    base_sharpe = mu_base / sigma_base * sqrt(trades_per_year) if sigma_base > 1e-10 else 0.0
 
     rng = np.random.default_rng(42)
     sim_sharpes: list[float] = []
@@ -256,6 +260,7 @@ def monte_carlo_shuffle(
 # Gate 2 — Remove top-N winning trades
 # ---------------------------------------------------------------------------
 
+
 def remove_top_n(pf_long, pf_short, n: int = TOP_N_REMOVE) -> dict:
     """G2: Remove top-N wins and check remaining cumulative return is positive."""
     trade_rets = _combined_trade_returns(pf_long, pf_short)
@@ -284,6 +289,7 @@ def remove_top_n(pf_long, pf_short, n: int = TOP_N_REMOVE) -> dict:
 # Gate 3 — 3x slippage stress
 # ---------------------------------------------------------------------------
 
+
 def stress_triple_slippage(
     instrument: str,
     tfs: list[str],
@@ -295,6 +301,8 @@ def stress_triple_slippage(
     stop_atr: float,
     spread_bps: float | None,
     max_leverage: float | None,
+    hmm_gate: bool = False,
+    ref_horizon: int = 1,
 ) -> dict:
     """G3: Rebuild OOS portfolios with 3x slippage and check Sharpe."""
     try:
@@ -310,6 +318,8 @@ def stress_triple_slippage(
             spread_bps=spread_bps,
             max_leverage=max_leverage,
             slippage_mult=STRESS_SLIPPAGE_MULT,
+            hmm_gate=hmm_gate,
+            ref_horizon=ref_horizon,
         )
     except Exception as exc:
         return {"error": str(exc), "gate_pass": False}
@@ -355,6 +365,7 @@ def stress_triple_slippage(
 # Gate 4 — WFO consecutive negative folds
 # ---------------------------------------------------------------------------
 
+
 def check_wfo_consecutive(instrument: str) -> dict:
     """G4: Read phase4 CSV and count max consecutive negative fold Sharpes."""
     slug = instrument.lower()
@@ -372,10 +383,7 @@ def check_wfo_consecutive(instrument: str) -> dict:
 
     if csv_path is None:
         return {
-            "error": (
-                f"Phase 4 WFO CSV not found for {instrument}. "
-                "Run phase4_wfo.py first."
-            ),
+            "error": (f"Phase 4 WFO CSV not found for {instrument}. Run phase4_wfo.py first."),
             "gate_pass": False,
         }
 
@@ -421,6 +429,7 @@ def check_wfo_consecutive(instrument: str) -> dict:
 # Gate 5 — Regime robustness (NEW)
 # ---------------------------------------------------------------------------
 
+
 def _regime_sharpe(
     returns: list[float],
     trades_per_year: float,
@@ -443,8 +452,19 @@ def check_regime_robustness(
     pf_short,
     base_index: pd.DatetimeIndex,
     oos_mask: pd.Series,
+    freq: str = "h",
+    hmm_gate: bool = False,
 ) -> dict:
-    """G5: Check OOS Sharpe > 0 in >= 2/3 ADX regimes and >= 1/2 HMM states."""
+    """G5: Check OOS Sharpe > 0 in >= 2/3 ADX regimes and >= 1/2 HMM states.
+
+    freq: base timeframe frequency — "d" for daily, "h" for hourly.
+          Used for correct bars-per-year annualisation (M1 fix).
+          Hardcoding hourly for daily instruments inflates Sharpe ~25×.
+
+    hmm_gate: if True, the bad HMM state has zero trades by construction and
+              is excluded from the HMM pass count (M2 fix). Without this, a
+              healthy strategy with hmm_gate active always fails G5 HMM sub-test.
+    """
     regime_path = REGIME_DIR / f"{instrument}_{timeframe}_regime.parquet"
 
     if not regime_path.exists():
@@ -504,17 +524,19 @@ def check_regime_robustness(
 
     # Align entry times to regime using ffill so coarser regime TFs still map.
     try:
-        aligned_regime = regime_df.reindex(
-            regime_df.index.union(entry_dt)
-        ).ffill().reindex(entry_dt)
+        aligned_regime = (
+            regime_df.reindex(regime_df.index.union(entry_dt)).ffill().reindex(entry_dt)
+        )
     except Exception as exc:
         return {"error": f"Regime alignment failed: {exc}", "gate_pass": False}
 
     n_total_trades = len(entry_returns)
-    # Estimate OOS years from oos_mask (base_index is H1 or D).
     oos_bars = int(oos_mask.sum())
-    # We don't know the freq here; conservatively assume H1.
-    oos_years = max(oos_bars / (252 * 24), 0.01)
+    # M1 FIX: Use correct bars-per-year for the instrument's base frequency.
+    # Previously hardcoded 252*24 (hourly) for all instruments, inflating
+    # Sharpe ~25× for daily instruments (correct bpy=252, not 6048).
+    bpy = 252 if freq == "d" else 252 * 24
+    oos_years = max(oos_bars / bpy, 0.01)
     trades_per_year = n_total_trades / oos_years
 
     # -- ADX regimes -----------------------------------------------------------
@@ -542,13 +564,41 @@ def check_regime_robustness(
     adx_pass_count = sum(adx_passing)
 
     # -- HMM states ------------------------------------------------------------
+    # M2 FIX: When hmm_gate=True, the bad HMM state has zero trades by
+    # construction (all entries in that state were blocked at strategy level).
+    # Counting a zero-trade state as a fail would always fail G5 HMM even for
+    # a perfectly healthy strategy. Derive the good (gated) state from the IS
+    # majority and exclude the blocked state from the pass count.
+    hmm_good_state: int | None = None
+    if hmm_gate and "hmm_state" in regime_df.columns:
+        try:
+            # IS = base_index entries NOT in oos_mask
+            is_times = base_index[~oos_mask.reindex(base_index, fill_value=False).values]
+            is_hmm = (
+                regime_df["hmm_state"]
+                .reindex(regime_df.index.union(is_times))
+                .ffill()
+                .reindex(is_times)
+                .dropna()
+            )
+            if len(is_hmm) > 0:
+                hmm_good_state = int(is_hmm.mode()[0])
+        except Exception:
+            pass  # if derivation fails, fall back to counting all states
+
     hmm_results: dict[str, float] = {}
     hmm_passing: list[bool] = []
 
     for state in [0, 1]:
-        rets_in_state: list[float] = []
+        # Skip the gated (bad) state: it has zero trades by design, not by
+        # strategy failure.  Only skip if we successfully identified good_state.
+        if hmm_gate and hmm_good_state is not None and state != hmm_good_state:
+            hmm_results[f"hmm_{state}_sharpe"] = float("nan")
+            hmm_results[f"hmm_{state}_note"] = "skipped (gated by hmm_gate)"
+            continue
 
-        for i, ts in enumerate(entry_dt):
+        rets_in_state: list[float] = []
+        for i, _ts in enumerate(entry_dt):
             try:
                 hmm_val = None
                 if "hmm_state" in aligned_regime.columns:
@@ -564,55 +614,68 @@ def check_regime_robustness(
 
     hmm_pass_count = sum(hmm_passing)
 
-    # -- G3 FIX: Volatility terciles (rv20) ------------------------------------
+    # -- Volatility terciles (rv20) --------------------------------------------
+    # L4 FIX: Compute tercile edges from IS rv20 distribution (first IS_RATIO
+    # fraction of regime bars) rather than all OOS trade entry times. Using OOS
+    # trade entries is a minor post-hoc bias — boundaries are set retrospectively.
     VOL_MIN_PASS = 2  # >= 2 out of 3 terciles
     vol_results: dict[str, float] = {}
     vol_passing: list[bool] = []
 
-    if "rv20" in aligned_regime.columns:
-        rv20_at_entry = aligned_regime["rv20"].values
-    else:
-        # Compute rv20 from regime close if available, or use a placeholder.
+    # Step 1: get rv20 series (from regime_df column or compute from close).
+    rv20_full: pd.Series | None = None
+    if "rv20" in regime_df.columns:
+        rv20_full = regime_df["rv20"]
+    elif "close" in regime_df.columns:
         try:
-            regime_close = regime_df["close"] if "close" in regime_df.columns else None
-            if regime_close is not None:
-                rv20_full = regime_close.pct_change().rolling(20).std()
-                rv20_aligned = rv20_full.reindex(
-                    rv20_full.index.union(entry_dt)
-                ).ffill().reindex(entry_dt)
-                rv20_at_entry = rv20_aligned.values
-            else:
-                rv20_at_entry = None
+            rv20_full = regime_df["close"].pct_change().rolling(20).std()
+        except Exception:
+            rv20_full = None
+
+    if rv20_full is not None:
+        # Step 2: derive tercile edges from IS portion only (pre-OOS data).
+        is_n_regime = int(len(rv20_full) * IS_RATIO)
+        rv20_is = rv20_full.iloc[:is_n_regime].dropna()
+        if len(rv20_is) >= 10:
+            tercile_edges = rv20_is.quantile([1 / 3, 2 / 3]).values
+        else:
+            tercile_edges = None
+
+        # Step 3: align rv20 to entry timestamps.
+        try:
+            rv20_aligned = (
+                rv20_full.reindex(rv20_full.index.union(entry_dt)).ffill().reindex(entry_dt)
+            )
+            rv20_at_entry = rv20_aligned.values
         except Exception:
             rv20_at_entry = None
+    else:
+        tercile_edges = None
+        rv20_at_entry = None
 
-    if rv20_at_entry is not None and len(rv20_at_entry) == len(entry_returns):
-        rv20_valid = pd.Series(rv20_at_entry, index=entry_dt).dropna()
-        if len(rv20_valid) >= 10:
-            tercile_edges = rv20_valid.quantile([1/3, 2/3]).values
-            labels = ["low_vol", "mid_vol", "high_vol"]
-            for t_idx, (lo, hi, label) in enumerate([
-                (None, tercile_edges[0], "low_vol"),
-                (tercile_edges[0], tercile_edges[1], "mid_vol"),
-                (tercile_edges[1], None, "high_vol"),
-            ]):
-                rets_in_tercile: list[float] = []
-                for i in range(len(entry_returns)):
-                    rv_val = rv20_at_entry[i]
-                    if np.isnan(rv_val):
-                        continue
-                    if lo is not None and rv_val < lo:
-                        continue
-                    if hi is not None and rv_val >= hi:
-                        continue
-                    rets_in_tercile.append(entry_returns[i])
-                sh = _regime_sharpe(rets_in_tercile, trades_per_year)
-                vol_results[f"vol_{label}_sharpe"] = round(sh, 4)
-                vol_passing.append(bool(sh > 0))
-        else:
-            for label in ["low_vol", "mid_vol", "high_vol"]:
-                vol_results[f"vol_{label}_sharpe"] = 0.0
-                vol_passing.append(False)
+    if (
+        rv20_at_entry is not None
+        and tercile_edges is not None
+        and len(rv20_at_entry) == len(entry_returns)
+    ):
+        for lo, hi, label in [
+            (None, tercile_edges[0], "low_vol"),
+            (tercile_edges[0], tercile_edges[1], "mid_vol"),
+            (tercile_edges[1], None, "high_vol"),
+        ]:
+            rets_in_tercile: list[float] = []
+            for i in range(len(entry_returns)):
+                rv_val = rv20_at_entry[i]
+                if np.isnan(rv_val):
+                    continue
+                if lo is not None and rv_val < lo:
+                    continue
+                if hi is not None and rv_val >= hi:
+                    continue
+                rets_in_tercile.append(entry_returns[i])
+            sh = _regime_sharpe(rets_in_tercile, trades_per_year)
+            vol_results[f"vol_{label}_sharpe"] = round(sh, 4)
+            vol_passing.append(bool(sh > 0))
     else:
         for label in ["low_vol", "mid_vol", "high_vol"]:
             vol_results[f"vol_{label}_sharpe"] = 0.0
@@ -641,6 +704,7 @@ def check_regime_robustness(
 # Gate 6 — Alpha/beta decomposition (NEW)
 # ---------------------------------------------------------------------------
 
+
 def check_alpha_beta(
     instrument: str,
     benchmark: str,
@@ -650,9 +714,27 @@ def check_alpha_beta(
     direction: str = "both",
     asset_class: str = "equity",
 ) -> dict:
-    """G6: OLS regression of strategy returns on benchmark returns."""
+    """G6: OLS regression of strategy returns on benchmark returns.
+
+    M3 FIX: Guard against self-referential benchmark (instrument == benchmark).
+    When benchmarking SPY against SPY, there are 0 overlapping days because the
+    strategy only covers the OOS period. This produces a misleading error instead
+    of a clear explanation. Return a skip result with a clear message.
+    """
     if sm is None:
         return {"error": "statsmodels not installed", "gate_pass": False}
+
+    # M3 FIX: reject circular benchmark before attempting to load data.
+    inst_slug = instrument.upper().replace("_", "").replace("-", "")
+    bench_slug = benchmark.upper().replace("_", "").replace("-", "")
+    if inst_slug == bench_slug:
+        return {
+            "gate_pass": False,
+            "error": (
+                f"Benchmark equals instrument ({benchmark}) — G6 is circular. "
+                "Use a different benchmark (e.g. SPX for SPY, DXY for EUR_USD)."
+            ),
+        }
 
     bench_path = ROOT / "data" / f"{benchmark}_D.parquet"
     if not bench_path.exists():
@@ -718,11 +800,7 @@ def check_alpha_beta(
         return {"error": f"OLS regression failed: {exc}", "gate_pass": False}
 
     beta_threshold = BETA_THRESHOLDS.get(asset_class, 1.0)
-    gate_pass = (
-        alpha_ann > 0
-        and abs(beta) < beta_threshold
-        and r_squared < ALPHA_BETA_MAX_R2
-    )
+    gate_pass = alpha_ann > 0 and abs(beta) < beta_threshold and r_squared < ALPHA_BETA_MAX_R2
 
     return {
         "alpha_ann": round(alpha_ann, 6),
@@ -738,6 +816,7 @@ def check_alpha_beta(
 # Main orchestrator
 # ---------------------------------------------------------------------------
 
+
 def run_robustness(
     instrument: str,
     tfs: list[str] | None = None,
@@ -752,6 +831,8 @@ def run_robustness(
     max_leverage: float | None = None,
     benchmark: str | None = None,
     timeframe: str = "H4",
+    hmm_gate: bool = False,
+    ref_horizon: int = 1,
 ) -> dict:
     """Run all 6 robustness gates for one instrument."""
     if tfs is None:
@@ -789,6 +870,8 @@ def run_robustness(
             slippage_bps=slippage_bps,
             max_leverage=max_leverage,
             slippage_mult=1.0,
+            hmm_gate=hmm_gate,
+            ref_horizon=ref_horizon,
         )
     except Exception as exc:
         print(f"  ERROR building portfolios: {exc}")
@@ -821,6 +904,8 @@ def run_robustness(
         stop_atr=stop_atr,
         spread_bps=spread_bps,
         max_leverage=max_leverage,
+        hmm_gate=hmm_gate,
+        ref_horizon=ref_horizon,
     )
     _print_gate("G3", "3x Slippage", g3)
 
@@ -838,6 +923,8 @@ def run_robustness(
         pf_short=pf_short,
         base_index=base_index,
         oos_mask=oos_mask,
+        freq=freq,  # M1: pass actual freq for correct bars_per_year
+        hmm_gate=hmm_gate,  # M2: skip gated state from HMM pass count
     )
     _print_gate("G5", "Regime Robustness", g5)
 
@@ -856,8 +943,14 @@ def run_robustness(
 
     # ---- Summary --------------------------------------------------------
     gates = [g1, g2, g3, g4, g5, g6]
-    gate_labels = ["G1 Monte Carlo", "G2 Remove Top-N", "G3 3x Slip",
-                   "G4 WFO Consec", "G5 Regime", "G6 Alpha/Beta"]
+    gate_labels = [
+        "G1 Monte Carlo",
+        "G2 Remove Top-N",
+        "G3 3x Slip",
+        "G4 WFO Consec",
+        "G5 Regime",
+        "G6 Alpha/Beta",
+    ]
 
     all_pass = all(g.get("gate_pass", False) for g in gates)
 
@@ -919,6 +1012,7 @@ def run_robustness(
 # Print helper
 # ---------------------------------------------------------------------------
 
+
 def _print_gate(tag: str, name: str, result: dict) -> None:
     status = "PASS" if result.get("gate_pass", False) else "FAIL"
     print(f"  [{tag}] {name}: {status}")
@@ -935,10 +1029,9 @@ def _print_gate(tag: str, name: str, result: dict) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
-    p = argparse.ArgumentParser(
-        description="Phase 5 — 6-gate robustness validation"
-    )
+    p = argparse.ArgumentParser(description="Phase 5 — 6-gate robustness validation")
     p.add_argument("--instrument", default="EUR_USD")
     p.add_argument("--instruments", nargs="+", default=None)
     p.add_argument(
@@ -973,6 +1066,21 @@ def main() -> None:
         default="H4",
         help="Base timeframe for regime file lookup (e.g. H4, D)",
     )
+    p.add_argument(
+        "--hmm-gate",
+        action="store_true",
+        default=False,
+        help="Gate entries to IS-majority HMM state (requires Phase 0 regime file)",
+    )
+    p.add_argument(
+        "--ref-horizon",
+        type=int,
+        default=1,
+        help=(
+            "Horizon used for signal sign orientation (match Phase 1 natural horizon). "
+            "Default=1; wrong value inverts the composite. E.g. 60 for vol signals."
+        ),
+    )
     args = p.parse_args()
 
     tfs = [x.strip() for x in args.tfs.split(",")] if args.tfs else None
@@ -996,14 +1104,18 @@ def main() -> None:
             max_leverage=args.max_leverage,
             benchmark=args.benchmark,
             timeframe=args.timeframe,
+            hmm_gate=args.hmm_gate,
+            ref_horizon=args.ref_horizon,
         )
         all_results.append(result)
 
     if len(instruments) > 1:
         print("\n" + "=" * 80)
         print("  BATCH SUMMARY")
-        print(f"  {'Instrument':<20} {'G1':>4} {'G2':>4} {'G3':>4} {'G4':>4}"
-              f" {'G5':>4} {'G6':>4} {'ALL':>5}")
+        print(
+            f"  {'Instrument':<20} {'G1':>4} {'G2':>4} {'G3':>4} {'G4':>4}"
+            f" {'G5':>4} {'G6':>4} {'ALL':>5}"
+        )
         print("  " + "-" * 60)
         for res in all_results:
             instr = res.get("instrument", "?")

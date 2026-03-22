@@ -42,9 +42,9 @@ sys.path.insert(0, str(ROOT))
 
 import research.ic_analysis.phase1_sweep as _sweep  # noqa: E402
 from research.ic_analysis.phase1_sweep import (  # noqa: E402
+    _get_annual_bars,
     _load_ohlcv,
     build_all_signals,
-    _get_annual_bars,
 )
 from research.ic_analysis.run_ic import (  # noqa: E402
     compute_forward_returns,
@@ -52,14 +52,13 @@ from research.ic_analysis.run_ic import (  # noqa: E402
     compute_icir,
 )
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 IC_USABLE_THRESHOLD = 0.03
 CLUSTER_CORR_THRESHOLD = 0.70
 DEFAULT_TOP_N = [3, 5, 10]
+ICIR_WINDOW = 1638  # default H1 annual bars; overridden dynamically in run_combination
 
 
 # ── Verdict ───────────────────────────────────────────────────────────────
@@ -84,6 +83,7 @@ def _score_composite(
     composite: pd.Series,
     fwd_returns: pd.DataFrame,
     horizon: int,
+    window: int = ICIR_WINDOW,
 ) -> tuple[float, float, str]:
     """Compute IC and ICIR for a composite signal at a single horizon."""
     fwd_col = f"fwd_{horizon}"
@@ -96,9 +96,10 @@ def _score_composite(
     ic = float(ic_df.iloc[0, 0]) if not ic_df.empty else np.nan
 
     icir_s = compute_icir(
-        sig_df, fwd_returns[[fwd_col]],
+        sig_df,
+        fwd_returns[[fwd_col]],
         horizons=[horizon],
-        window=ICIR_WINDOW,
+        window=window,
     )
     icir = float(icir_s.iloc[0]) if not icir_s.empty else np.nan
 
@@ -125,7 +126,8 @@ def _select_usable(
     if not selected:
         logger.warning(
             "No signals pass |IC| >= %.3f at h=%d -- using top 5 by |IC|",
-            threshold, horizon,
+            threshold,
+            horizon,
         )
         selected = ic_df[fwd_col].abs().nlargest(5).index.tolist()
 
@@ -138,9 +140,29 @@ def _sign_orient(
     ic_df: pd.DataFrame,
     horizon: int,
 ) -> pd.DataFrame:
-    """Multiply each signal by sign(IC) so all point in the same direction."""
+    """Multiply each signal by sign(IC) so all point in the same direction.
+
+    M6 FIX: When IC is NaN (insufficient data or computation failure), the
+    sign defaults to +1 (arbitrary positive orientation). Log a warning so the
+    user knows which signals carry no measurable IC and are included by default.
+    Ideally these signals should already be below the USABLE threshold and
+    excluded before combination, but we warn defensively.
+    """
     fwd_col = f"fwd_{horizon}"
-    signs = np.sign(ic_df.loc[signals.columns, fwd_col].fillna(1.0))
+    ic_at_horizon = ic_df.loc[signals.columns, fwd_col]
+    nan_signals = ic_at_horizon[ic_at_horizon.isna()].index.tolist()
+    if nan_signals:
+        logger.warning(
+            "sign_orient: IC is NaN for %d signal(s) at horizon %d. "
+            "Dropping these signals from the composite to prevent orientation to noise: %s",
+            len(nan_signals),
+            horizon,
+            nan_signals,
+        )
+        signals = signals.drop(columns=nan_signals)
+        ic_at_horizon = ic_at_horizon.dropna()
+        
+    signs = np.sign(ic_at_horizon)
     return signals.multiply(signs, axis=1)
 
 
@@ -180,7 +202,7 @@ def method_correlation_analysis(
             parent[px] = py
 
     for i, a in enumerate(signals):
-        for b in signals[i + 1:]:
+        for b in signals[i + 1 :]:
             if abs(corr.loc[a, b]) > threshold:
                 union(a, b)
 
@@ -190,7 +212,8 @@ def method_correlation_analysis(
 
     clusters = sorted(
         [g for g in groups.values() if len(g) > 1],
-        key=len, reverse=True,
+        key=len,
+        reverse=True,
     )
     independent = sorted([g[0] for g in groups.values() if len(g) == 1])
 
@@ -224,28 +247,49 @@ def method_partial_ic(
     rows = []
     for sig in all_signals.columns:
         if sig == dominant:
-            rows.append({
-                "signal": sig,
-                "partial_ic": ic_df.loc[sig, fwd_col],
-                "is_dominant": True,
-            })
+            rows.append(
+                {
+                    "signal": sig,
+                    "partial_ic": ic_df.loc[sig, fwd_col],
+                    "is_dominant": True,
+                }
+            )
             continue
 
-        both = pd.concat(
-            [all_signals[[dominant, sig]], fwd_returns[[fwd_col]]], axis=1
-        ).dropna()
+        both = pd.concat([all_signals[[dominant, sig]], fwd_returns[[fwd_col]]], axis=1).dropna()
         if len(both) < 50:
             rows.append({"signal": sig, "partial_ic": np.nan, "is_dominant": False})
             continue
 
-        # Regress out the dominant signal from this signal
+        # Regress out the dominant signal from this signal.
+        # L3 FIX: Check condition number before regression. When two signals are
+        # nearly perfectly collinear, residuals are near-zero → Spearman returns
+        # NaN, which is indistinguishable from a data-quality NaN. Log the root
+        # cause explicitly ("collinear" vs "insufficient data") so downstream
+        # consumers can distinguish the two failure modes.
         X = both[[dominant]].values
         y = both[sig].values
+        cond_num = float(np.linalg.cond(X))
+        if cond_num > 1e8:
+            logger.warning(
+                "partial_ic: near-perfect collinearity between '%s' and dominant "
+                "signal '%s' (condition number=%.2e). Partial IC will be assigned NaN.",
+                sig,
+                dominant,
+                cond_num,
+            )
         lr = LinearRegression().fit(X, y)
         residual = y - lr.predict(X)
 
         rho, _ = spearmanr(residual, both[fwd_col].values)
-        rows.append({"signal": sig, "partial_ic": float(rho), "is_dominant": False})
+        rows.append(
+            {
+                "signal": sig,
+                "partial_ic": float(rho) if not np.isnan(rho) else np.nan,
+                "is_dominant": False,
+                "cond_num": round(cond_num, 2),
+            }
+        )
 
     return pd.DataFrame(rows)
 
@@ -259,19 +303,24 @@ def method_equal_weight(
     fwd_returns: pd.DataFrame,
     horizon: int,
     top_n: int | None = None,
+    window: int = ICIR_WINDOW,
 ) -> dict:
     """Average top-N USABLE signals (by |IC|), sign-normalised."""
     fwd_col = f"fwd_{horizon}"
-    ranked = ic_df.loc[
-        [c for c in usable.columns if c in ic_df.index],
-        fwd_col,
-    ].abs().nlargest(top_n or len(usable.columns))
+    ranked = (
+        ic_df.loc[
+            [c for c in usable.columns if c in ic_df.index],
+            fwd_col,
+        ]
+        .abs()
+        .nlargest(top_n or len(usable.columns))
+    )
 
     selected = usable[[c for c in ranked.index if c in usable.columns]]
     oriented = _sign_orient(selected, ic_df, horizon)
     composite = oriented.mean(axis=1).rename(f"ew_top{top_n or 'all'}")
 
-    ic, icir, verdict = _score_composite(composite, fwd_returns, horizon)
+    ic, icir, verdict = _score_composite(composite, fwd_returns, horizon, window=window)
     return {
         "name": f"Equal-weight (top {top_n or len(selected)})",
         "composite": composite,
@@ -293,13 +342,18 @@ def method_icir_weighted(
     fwd_returns: pd.DataFrame,
     horizon: int,
     top_n: int | None = None,
+    window: int = ICIR_WINDOW,
 ) -> dict:
     """Weight each signal by |ICIR_i| / sum(|ICIR|), sign-normalised first."""
     fwd_col = f"fwd_{horizon}"
-    ranked = ic_df.loc[
-        [c for c in usable.columns if c in ic_df.index],
-        fwd_col,
-    ].abs().nlargest(top_n or len(usable.columns))
+    ranked = (
+        ic_df.loc[
+            [c for c in usable.columns if c in ic_df.index],
+            fwd_col,
+        ]
+        .abs()
+        .nlargest(top_n or len(usable.columns))
+    )
 
     selected_names = [c for c in ranked.index if c in usable.columns]
     selected = usable[selected_names]
@@ -316,7 +370,7 @@ def method_icir_weighted(
     composite = oriented.multiply(weights, axis=1).sum(axis=1)
     composite.name = f"icir_w_top{top_n or len(selected_names)}"
 
-    ic, icir, verdict = _score_composite(composite, fwd_returns, horizon)
+    ic, icir, verdict = _score_composite(composite, fwd_returns, horizon, window=window)
     return {
         "name": f"ICIR-weighted (top {top_n or len(selected_names)})",
         "composite": composite,
@@ -337,6 +391,7 @@ def method_group_diversified(
     group_map: dict[str, str],
     fwd_returns: pd.DataFrame,
     horizon: int,
+    window: int = ICIR_WINDOW,
 ) -> dict:
     """Take best |IC| signal from each group, average them equally (sign-normalised)."""
     fwd_col = f"fwd_{horizon}"
@@ -345,7 +400,8 @@ def method_group_diversified(
 
     for grp in unique_groups:
         candidates = [
-            s for s, g in group_map.items()
+            s
+            for s, g in group_map.items()
             if g == grp and s in all_signals.columns and s in ic_df.index
         ]
         if not candidates:
@@ -358,7 +414,7 @@ def method_group_diversified(
     oriented = _sign_orient(selected, ic_df, horizon)
     composite = oriented.mean(axis=1).rename("group_diversified")
 
-    ic, icir, verdict = _score_composite(composite, fwd_returns, horizon)
+    ic, icir, verdict = _score_composite(composite, fwd_returns, horizon, window=window)
     return {
         "name": f"Group-diversified ({len(selected.columns)} groups)",
         "composite": composite,
@@ -378,6 +434,7 @@ def method_pca(
     ic_df: pd.DataFrame,
     fwd_returns: pd.DataFrame,
     horizon: int,
+    window: int = ICIR_WINDOW,
 ) -> dict:
     """First principal component of USABLE signals after StandardScaler.
 
@@ -385,15 +442,16 @@ def method_pca(
     Logs the explained variance ratio (low = signals are diverse; high = redundant).
     """
     clean = usable.dropna()
-    if len(clean) < ICIR_WINDOW or clean.shape[1] < 2:
-        logger.warning(
-            "PCA: insufficient data (%d bars, %d signals)", len(clean), clean.shape[1]
-        )
+    if len(clean) < window or clean.shape[1] < 2:
+        logger.warning("PCA: insufficient data (%d bars, %d signals)", len(clean), clean.shape[1])
         return {
             "name": "PCA (PC1)",
             "composite": pd.Series(dtype=float),
-            "ic": np.nan, "icir": np.nan, "verdict": "NOISE",
-            "n_signals": 0, "signals_used": [],
+            "ic": np.nan,
+            "icir": np.nan,
+            "verdict": "NOISE",
+            "n_signals": 0,
+            "signals_used": [],
         }
 
     scaler = StandardScaler()
@@ -404,19 +462,20 @@ def method_pca(
     ev = float(pca.explained_variance_ratio_[0])
     logger.info(
         "PCA PC1 explains %.1f%% of variance across %d USABLE signals",
-        ev * 100, clean.shape[1],
+        ev * 100,
+        clean.shape[1],
     )
 
     pc1 = pd.Series(pc1_values, index=clean.index, name="pca_pc1")
 
     # Sign-orient: negate if IC is negative
-    ic_tmp, _, _ = _score_composite(pc1, fwd_returns, horizon)
+    ic_tmp, _, _ = _score_composite(pc1, fwd_returns, horizon, window=window)
     if not np.isnan(ic_tmp) and ic_tmp < 0:
         pc1 = -pc1
 
-    ic, icir, verdict = _score_composite(pc1, fwd_returns, horizon)
+    ic, icir, verdict = _score_composite(pc1, fwd_returns, horizon, window=window)
     return {
-        "name": f"PCA (PC1, {ev*100:.0f}% var, {clean.shape[1]} sigs)",
+        "name": f"PCA (PC1, {ev * 100:.0f}% var, {clean.shape[1]} sigs)",
         "composite": pc1,
         "ic": ic,
         "icir": icir,
@@ -435,6 +494,7 @@ def method_gating(
     fwd_returns: pd.DataFrame,
     horizon: int,
     pairs: list[tuple[str, str]] | None = None,
+    window: int = ICIR_WINDOW,
 ) -> list[dict]:
     """Gate signal_A by sign(signal_B): composite = oriented_A * sign(oriented_B).
 
@@ -442,9 +502,9 @@ def method_gating(
     """
     if pairs is None:
         pairs = [
-            ("accel_stoch_k", "ma_spread_5_20"),    # momentum accel gated by trend
-            ("bb_zscore_20",  "adx_14"),             # mean-reversion gated by trend strength
-            ("roc_10",        "realized_vol_20"),    # momentum gated by vol regime
+            ("accel_stoch_k", "ma_spread_5_20"),  # momentum accel gated by trend
+            ("bb_zscore_20", "adx_14"),  # mean-reversion gated by trend strength
+            ("roc_10", "realized_vol_20"),  # momentum gated by vol regime
         ]
 
     fwd_col = f"fwd_{horizon}"
@@ -452,9 +512,7 @@ def method_gating(
 
     for sig_a, sig_b in pairs:
         if sig_a not in all_signals.columns or sig_b not in all_signals.columns:
-            logger.warning(
-                "Gate pair (%s, %s): missing signal(s) -- skipping", sig_a, sig_b
-            )
+            logger.warning("Gate pair (%s, %s): missing signal(s) -- skipping", sig_a, sig_b)
             continue
 
         # Orient A so that high values predict positive returns
@@ -471,16 +529,18 @@ def method_gating(
         gate = np.sign(oriented_b).replace(0, 1.0)
         composite = (oriented_a * gate).rename(f"gate_{sig_a[:8]}_{sig_b[:8]}")
 
-        ic, icir, verdict = _score_composite(composite, fwd_returns, horizon)
-        results.append({
-            "name": f"Gate: {sig_a} x sign({sig_b})",
-            "composite": composite,
-            "ic": ic,
-            "icir": icir,
-            "verdict": verdict,
-            "n_signals": 2,
-            "signals_used": [sig_a, sig_b],
-        })
+        ic, icir, verdict = _score_composite(composite, fwd_returns, horizon, window=window)
+        results.append(
+            {
+                "name": f"Gate: {sig_a} x sign({sig_b})",
+                "composite": composite,
+                "ic": ic,
+                "icir": icir,
+                "verdict": verdict,
+                "n_signals": 2,
+                "signals_used": [sig_a, sig_b],
+            }
+        )
 
     return results
 
@@ -502,10 +562,7 @@ def _print_report(
 ) -> None:
     W = 74
     print("\n" + "=" * W)
-    print(
-        f"  SIGNAL COMBINATION ANALYSIS -- {instrument} {timeframe}"
-        f"  (horizon={horizon} bars)"
-    )
+    print(f"  SIGNAL COMBINATION ANALYSIS -- {instrument} {timeframe}  (horizon={horizon} bars)")
     print(
         f"  Bars: {n_bars:,}  |  USABLE signals: {n_usable}"
         f"  |  Threshold: |IC| >= {IC_USABLE_THRESHOLD:.3f}"
@@ -529,8 +586,7 @@ def _print_report(
         print("  PARTIAL IC (incremental alpha vs dominant signal):")
         print("  " + "-" * (W - 2))
         incremental = partial_ic_df[
-            (~partial_ic_df["is_dominant"])
-            & (partial_ic_df["partial_ic"].abs() > 0.02)
+            (~partial_ic_df["is_dominant"]) & (partial_ic_df["partial_ic"].abs() > 0.02)
         ].sort_values("partial_ic", key=lambda s: s.abs(), ascending=False)
         dominant_row = partial_ic_df[partial_ic_df["is_dominant"]]
         if not dominant_row.empty:
@@ -540,9 +596,7 @@ def _print_report(
         if incremental.empty:
             print("  No signals with Partial IC > 0.02 found.")
         else:
-            print(
-                f"  {'Signal':<28}  {'Partial IC':>10}  Note"
-            )
+            print(f"  {'Signal':<28}  {'Partial IC':>10}  Note")
             for _, row in incremental.iterrows():
                 pic = row["partial_ic"]
                 pic_s = f"{pic:>+10.4f}" if not np.isnan(pic) else "       NaN"
@@ -553,9 +607,7 @@ def _print_report(
     print()
     print("  COMBINATION METHOD RESULTS:")
     print("  " + "-" * (W - 2))
-    print(
-        f"  {'Method':<38}  {'IC':>8}  {'ICIR':>7}  {'Verdict':<8}  vs_best_ind"
-    )
+    print(f"  {'Method':<38}  {'IC':>8}  {'ICIR':>7}  {'Verdict':<8}  vs_best_ind")
     print("  " + "-" * (W - 2))
     for r in combo_results:
         if r["ic"] is None or np.isnan(r["ic"]):
@@ -568,9 +620,7 @@ def _print_report(
             delta = abs(r["ic"]) - abs(best_ind_ic)
             delta_s = f"{delta:>+8.4f}"
             v = r["verdict"]
-        print(
-            f"  {r['name']:<38}  {ic_s}  {ir_s}  {v:<8}  {delta_s}"
-        )
+        print(f"  {r['name']:<38}  {ic_s}  {ir_s}  {v:<8}  {delta_s}")
 
     # Correlation clusters
     print()
@@ -585,7 +635,7 @@ def _print_report(
     ind = corr_analysis.get("independent_signals", [])
     if ind:
         print(f"\n  Independent signals ({len(ind)}): {', '.join(ind[:10])}", end="")
-        print(f" ...+{len(ind)-10} more" if len(ind) > 10 else "")
+        print(f" ...+{len(ind) - 10} more" if len(ind) > 10 else "")
 
     # Best composite
     valid = [r for r in combo_results if not np.isnan(r.get("ic") or np.nan)]
@@ -608,7 +658,7 @@ def run_combination(
     timeframe: str,
     horizon: int,
     top_n_list: list[int] | None = None,
-    regime_df: pd.DataFrame | None = None,   # reserved for future use
+    regime_df: pd.DataFrame | None = None,  # reserved for future use
 ) -> pd.DataFrame:
     if top_n_list is None:
         top_n_list = DEFAULT_TOP_N
@@ -650,12 +700,14 @@ def run_combination(
     for sig in ic_df.index:
         ic_val = ic_df.loc[sig, fwd_col]
         ir_val = icir_s.get(sig, np.nan)
-        ind_rows.append({
-            "signal": sig,
-            "ic": ic_val,
-            "icir": ir_val,
-            "verdict": _verdict_local(ic_val, ir_val),
-        })
+        ind_rows.append(
+            {
+                "signal": sig,
+                "ic": ic_val,
+                "icir": ir_val,
+                "verdict": _verdict_local(ic_val, ir_val),
+            }
+        )
     ind_df = (
         pd.DataFrame(ind_rows)
         .assign(abs_ic=lambda x: x["ic"].abs())
@@ -673,9 +725,7 @@ def run_combination(
     logger.info("Method 1b: partial IC test...")
     partial_ic_df = method_partial_ic(all_signals, ic_df, fwd_returns, horizon)
     incremental_count = (
-        int(
-            ((partial_ic_df["partial_ic"].abs() > 0.02) & (~partial_ic_df["is_dominant"])).sum()
-        )
+        int(((partial_ic_df["partial_ic"].abs() > 0.02) & (~partial_ic_df["is_dominant"])).sum())
         if not partial_ic_df.empty
         else 0
     )
@@ -691,55 +741,62 @@ def run_combination(
     logger.info("Method 2: equal-weight composites...")
     for n in top_n_list:
         actual_n = min(n, n_usable)
-        r = method_equal_weight(usable, ic_df, fwd_returns, horizon, top_n=actual_n)
+        r = method_equal_weight(
+            usable, ic_df, fwd_returns, horizon, top_n=actual_n, window=window_1y
+        )
         combo_results.append(r)
 
     # Method 3: ICIR-weighted
     logger.info("Method 3: ICIR-weighted composites...")
     for n in top_n_list[:2]:
         actual_n = min(n, n_usable)
-        r = method_icir_weighted(usable, ic_df, icir_s, fwd_returns, horizon, top_n=actual_n)
+        r = method_icir_weighted(
+            usable, ic_df, icir_s, fwd_returns, horizon, top_n=actual_n, window=window_1y
+        )
         combo_results.append(r)
 
     # Method 4: group-diversified
     logger.info("Method 4: group-diversified composite...")
-    r = method_group_diversified(all_signals, ic_df, group_map, fwd_returns, horizon)
+    r = method_group_diversified(
+        all_signals, ic_df, group_map, fwd_returns, horizon, window=window_1y
+    )
     combo_results.append(r)
 
     # Method 5: PCA
     logger.info("Method 5: PCA composite...")
-    r = method_pca(usable, ic_df, fwd_returns, horizon)
+    r = method_pca(usable, ic_df, fwd_returns, horizon, window=window_1y)
     combo_results.append(r)
 
     # Method 6: gating
     logger.info("Method 6: AND-gating pairs...")
-    gate_results = method_gating(all_signals, ic_df, fwd_returns, horizon)
+    gate_results = method_gating(all_signals, ic_df, fwd_returns, horizon, window=window_1y)
     combo_results.extend(gate_results)
 
     # 10. Print report
     _print_report(
-        instrument, timeframe, horizon, n_bars, n_usable,
-        ind_df, combo_results, best_ind_ic, corr_analysis,
+        instrument,
+        timeframe,
+        horizon,
+        n_bars,
+        n_usable,
+        ind_df,
+        combo_results,
+        best_ind_ic,
+        corr_analysis,
         partial_ic_df=partial_ic_df,
     )
 
     # 11. Build partial IC lookup for CSV enrichment
     partial_ic_lookup: dict[str, float] = {}
     if not partial_ic_df.empty:
-        partial_ic_lookup = dict(
-            zip(partial_ic_df["signal"], partial_ic_df["partial_ic"])
-        )
+        partial_ic_lookup = dict(zip(partial_ic_df["signal"], partial_ic_df["partial_ic"]))
 
     # 12. Save CSV
     report_dir = ROOT / ".tmp" / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
     rows = []
     for r in combo_results:
-        delta = (
-            abs(r["ic"]) - abs(best_ind_ic)
-            if not np.isnan(r.get("ic") or np.nan)
-            else np.nan
-        )
+        delta = abs(r["ic"]) - abs(best_ind_ic) if not np.isnan(r.get("ic") or np.nan) else np.nan
         # partial_ic_vs_dominant: mean partial IC of signals used in this method
         used = r.get("signals_used", [])
         if used and partial_ic_lookup:
@@ -749,16 +806,18 @@ def run_combination(
         else:
             mean_pic = np.nan
 
-        rows.append({
-            "method": r["name"],
-            "ic": r["ic"],
-            "icir": r["icir"],
-            "verdict": r["verdict"],
-            "n_signals": r["n_signals"],
-            "vs_best_ind": delta,
-            "partial_ic_vs_dominant": mean_pic,
-            "signals_used": ",".join(used),
-        })
+        rows.append(
+            {
+                "method": r["name"],
+                "ic": r["ic"],
+                "icir": r["icir"],
+                "verdict": r["verdict"],
+                "n_signals": r["n_signals"],
+                "vs_best_ind": delta,
+                "partial_ic_vs_dominant": mean_pic,
+                "signals_used": ",".join(used),
+            }
+        )
     result_df = pd.DataFrame(rows)
     out_path = report_dir / f"phase2_{instrument}_{timeframe}_h{horizon}.csv"
     result_df.to_csv(out_path, index=False)
@@ -775,11 +834,14 @@ def main() -> None:
     parser.add_argument("--instrument", default="EUR_USD")
     parser.add_argument("--timeframe", default="H4")
     parser.add_argument(
-        "--horizon", type=int, default=20,
+        "--horizon",
+        type=int,
+        default=20,
         help="Forward return horizon in bars (single value for combination testing)",
     )
     parser.add_argument(
-        "--top_n", default="3,5,10",
+        "--top_n",
+        default="3,5,10",
         help="Comma-separated N values for equal-weight/ICIR-weighted tests",
     )
     args = parser.parse_args()
