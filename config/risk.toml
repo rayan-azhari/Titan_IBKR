@@ -13,3 +13,10 @@ max_open_trades = 7                      # Allow all 7 equity tickers simultaneo
 max_leverage = 4.0                       # Maximum account leverage across all active equity positions
 max_daily_loss_pct = 2.5                 # Specific daily loss limit for equities
 
+[portfolio]
+portfolio_max_dd_pct       = 15.0        # KILL ALL strategies when portfolio DD exceeds 15%
+portfolio_heat_scale_pct   = 10.0        # Begin proportional size-scaling at 10% portfolio DD
+correlation_window_days    = 60          # Rolling lookback (days) for live correlation checks
+correlation_halt_threshold = 0.85        # Log WARNING if any strategy pair r > 0.85
+portfolio_max_single_pct   = 60.0        # Max fraction (%) any single strategy holds
+
