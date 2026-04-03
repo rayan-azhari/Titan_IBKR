@@ -1,0 +1,10 @@
+**Return Stacking** is an innovative portfolio construction strategy designed to give investors more than $1.00 of market exposure for every $1.00 invested. It achieves this by allowing investors to maintain their foundational core asset allocations—such as traditional stocks and bonds—while "stacking" or layering alternative strategies, like managed futures, trend-following, or carry, on top of that core portfolio.
+
+The strategy is essentially a modern repackaging of **"Portable Alpha,"** a 40-year-old institutional concept pioneered by PIMCO in the 1980s. 
+
+Here is how Return Stacking works in practice:
+*   **Capital Efficiency Through Derivatives:** The strategy uses derivative products, such as futures, to embed leverage in a risk-effective manner. For example, a traditional trend-following fund might use 30% of its capital for margin while leaving 70% sitting in Treasury bills. In a return-stacked approach, that underlying capital might instead be invested in an S&P 500 ETF, with a portion kept in T-bills to serve as collateral for both S&P 500 futures (to get full equity beta) and the managed futures program. 
+*   **Addition Without Subtraction:** Historically, to add an alternative investment like managed futures to a portfolio, an investor had to sell off portions of their stock and bond holdings. Return stacking solves this by introducing diversifying return streams without forcing investors to sacrifice their core stock and bond mix. 
+*   **ETF Implementation:** Corey Hoffstein and Resolve Asset Management have packaged this concept into the Return Stacked ETF suite. These ETFs act as flexible "Lego building blocks" for allocators, providing the benefits of portable alpha while avoiding the structural inefficiencies, liquidity mismatches, and counterparty risks that plagued early institutional iterations of the strategy during the 2008 financial crisis. 
+
+Ultimately, Return Stacking aims to enhance capital efficiency, improve diversification, and provide the potential for better total returns without forcing investors to abandon the traditional asset classes they know and trust.

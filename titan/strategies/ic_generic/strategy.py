@@ -143,18 +143,18 @@ class ICGenericConfig(StrategyConfig):
 
     instrument_id: str
     bar_types: dict[str, str]  # {"H1": "EUR/USD.IDEALPRO-1-HOUR-MID-EXTERNAL", ...}
-    ticker: str                # symbol used to locate parquet data files, e.g. "EUR_USD"
-    signals: list[str]         # e.g. ["accel_rsi14", "accel_stoch_k"]
-    tfs: list[str]             # e.g. ["W", "D", "H4", "H1"]
-    direction: str = "both"    # "both" (FX/futures) or "long_only" (equities)
+    ticker: str  # symbol used to locate parquet data files, e.g. "EUR_USD"
+    signals: list[str]  # e.g. ["accel_rsi14", "accel_stoch_k"]
+    tfs: list[str]  # e.g. ["W", "D", "H4", "H1"]
+    direction: str = "both"  # "both" (FX/futures) or "long_only" (equities)
     threshold: float = 0.75
     risk_pct: float = 0.01
     stop_atr_mult: float = 1.5
     leverage_cap: float = 20.0
     warmup_bars: int = 1000
-    asset_class: str = "fx_major"         # informational label
-    phase3_max_dd_pct: float = 0.0        # 0 = monitoring disabled
-    phase3_trade_rate: float = 0.0        # expected trades/month; 0 = disabled
+    asset_class: str = "fx_major"  # informational label
+    phase3_max_dd_pct: float = 0.0  # 0 = monitoring disabled
+    phase3_trade_rate: float = 0.0  # expected trades/month; 0 = disabled
 
 
 # ---------------------------------------------------------------------------
@@ -272,21 +272,21 @@ class ICGenericStrategy(Strategy):
                 tf_df[tf] = df.dropna(subset=["close"])
                 # Seed live history buffer
                 for t, row in df.iterrows():
-                    self.history[tf].append({
-                        "time": t,
-                        "open": float(row.get("open", row["close"])),
-                        "high": float(row.get("high", row["close"])),
-                        "low": float(row.get("low", row["close"])),
-                        "close": float(row["close"]),
-                    })
+                    self.history[tf].append(
+                        {
+                            "time": t,
+                            "open": float(row.get("open", row["close"])),
+                            "high": float(row.get("high", row["close"])),
+                            "low": float(row.get("low", row["close"])),
+                            "close": float(row["close"]),
+                        }
+                    )
                 self.log.info(f"Loaded {len(df)} warmup bars for {tf}")
             except Exception as exc:
                 self.log.error(f"Failed to load {path}: {exc}")
 
         if self._base_tf not in tf_df:
-            self.log.error(
-                f"Base TF {self._base_tf} warmup data missing — cannot calibrate."
-            )
+            self.log.error(f"Base TF {self._base_tf} warmup data missing — cannot calibrate.")
             return
 
         base_df = tf_df[self._base_tf]
@@ -367,16 +367,18 @@ class ICGenericStrategy(Strategy):
             return
 
         # Append to rolling history
-        self.history[tf].append({
-            "time": unix_nanos_to_dt(bar.ts_event),
-            "open": float(bar.open),
-            "high": float(bar.high),
-            "low": float(bar.low),
-            "close": float(bar.close),
-        })
+        self.history[tf].append(
+            {
+                "time": unix_nanos_to_dt(bar.ts_event),
+                "open": float(bar.open),
+                "high": float(bar.high),
+                "low": float(bar.low),
+                "close": float(bar.close),
+            }
+        )
         max_history = self.config.warmup_bars + 200
         if len(self.history[tf]) > max_history:
-            self.history[tf] = self.history[tf][-self.config.warmup_bars:]
+            self.history[tf] = self.history[tf][-self.config.warmup_bars :]
 
         # Recompute signals for this TF
         self._update_tf_signals(tf)
@@ -400,8 +402,11 @@ class ICGenericStrategy(Strategy):
             return
 
         df = pd.DataFrame(data)
-        df = df.rename(columns={"time": "timestamp"}).set_index("timestamp") \
-            if "timestamp" in df.columns else df
+        df = (
+            df.rename(columns={"time": "timestamp"}).set_index("timestamp")
+            if "timestamp" in df.columns
+            else df
+        )
 
         for sig_name in self.config.signals:
             fn = _SIGNAL_REGISTRY.get(sig_name)
@@ -513,9 +518,7 @@ class ICGenericStrategy(Strategy):
         # Entry / direction flip
         if new_bias != 0 and new_bias != current_dir:
             if current_dir != 0:
-                self.log.info(
-                    f"Signal flip {current_dir:+d} → {new_bias:+d} | z={z:+.3f}"
-                )
+                self.log.info(f"Signal flip {current_dir:+d} → {new_bias:+d} | z={z:+.3f}")
                 self.cancel_all_orders(self.instrument_id)
                 self.close_all_positions(self.instrument_id)
             side = OrderSide.BUY if new_bias == 1 else OrderSide.SELL
@@ -614,6 +617,7 @@ class ICGenericStrategy(Strategy):
 
         # Monthly trade counter
         import datetime
+
         now = datetime.datetime.utcnow()
         if now.month != self._current_month:
             self._current_month = now.month
@@ -627,10 +631,7 @@ class ICGenericStrategy(Strategy):
         if event.client_order_id in self._entry_order_ids:
             self._entry_order_ids.discard(event.client_order_id)
             self._entry_pending = False
-            self.log.info(
-                f"Entry filled @ {event.last_px}"
-                f" | id={event.client_order_id}"
-            )
+            self.log.info(f"Entry filled @ {event.last_px} | id={event.client_order_id}")
             return
 
         # Exit fill — record per-trade return for monitoring
@@ -657,14 +658,10 @@ class ICGenericStrategy(Strategy):
         self.log.info(f"ORDER SUBMITTED: {event.client_order_id}")
 
     def on_order_accepted(self, event) -> None:
-        self.log.info(
-            f"ORDER ACCEPTED: {event.client_order_id} venue={event.venue_order_id}"
-        )
+        self.log.info(f"ORDER ACCEPTED: {event.client_order_id} venue={event.venue_order_id}")
 
     def on_order_rejected(self, event) -> None:
-        self.log.error(
-            f"ORDER REJECTED: {event.client_order_id} — {event.reason}"
-        )
+        self.log.error(f"ORDER REJECTED: {event.client_order_id} — {event.reason}")
         if event.client_order_id in self._entry_order_ids:
             self._entry_order_ids.discard(event.client_order_id)
             self._entry_pending = False

@@ -346,8 +346,27 @@ class PortfolioRiskManager:
 
 # ── Module-level singleton ─────────────────────────────────────────────────────
 
-portfolio_risk_manager: PortfolioRiskManager = PortfolioRiskManager()
+
+def _load_portfolio_config() -> dict:
+    """Load [portfolio] section from config/risk.toml if it exists."""
+    import tomllib
+    from pathlib import Path
+
+    risk_toml = Path(__file__).resolve().parents[2] / "config" / "risk.toml"
+    if not risk_toml.exists():
+        return {}
+    try:
+        with open(risk_toml, "rb") as f:
+            cfg = tomllib.load(f)
+        return cfg.get("portfolio", {})
+    except Exception:
+        return {}
+
+
+portfolio_risk_manager: PortfolioRiskManager = PortfolioRiskManager(config=_load_portfolio_config())
 """Module-level singleton imported by all live strategies.
+
+Auto-loads config from config/risk.toml [portfolio] section on import.
 
 Usage:
     from titan.risk.portfolio_risk_manager import portfolio_risk_manager

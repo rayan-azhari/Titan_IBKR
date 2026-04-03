@@ -3,7 +3,7 @@
 Sends formatted notifications to a Slack webhook URL when errors
 are detected in the live trading system logs.
 
-Directive: Live Deployment and Monitoring.md
+Directive: Deployment & Operations.md
 """
 
 import json

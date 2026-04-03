@@ -1,25 +1,21 @@
-import numpy as np
-from pathlib import Path
-from typing import Optional
 from enum import Enum
-import datetime
+from typing import Optional
 
 from nautilus_trader.config import StrategyConfig
-from nautilus_trader.core.datetime import unix_nanos_to_dt
+from nautilus_trader.indicators.average_true_range import AverageTrueRange
+from nautilus_trader.indicators.donchian_channel import DonchianChannel
 from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import OrderSide, PriceType, TimeInForce
+from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Currency, Quantity
-from nautilus_trader.model.events import OrderFilled
+from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
-from nautilus_trader.indicators.donchian_channel import DonchianChannel
-from nautilus_trader.indicators.average_true_range import AverageTrueRange
 
 class DirectionFlag(Enum):
     LONG_ONLY = "long_only"
     SHORT_ONLY = "short_only"
     BOTH = "both"
+
 
 class TurtleConfig(StrategyConfig):
     instrument_id: str
@@ -29,17 +25,18 @@ class TurtleConfig(StrategyConfig):
     atr_period: int = 20
     risk_pct: float = 0.01
     stop_atr_mult: float = 2.0
-    
+
     # Gap/Earnings Risk Mitigations
-    max_leverage: float = 1.5           # Reduced per audit to avoid overnight gaps
+    max_leverage: float = 1.5  # Reduced per audit to avoid overnight gaps
     flat_before_earnings: bool = False  # Stub for earnings-avoidance logic
-    use_moc_fill: bool = True           # Submit orders on bar close vs open
+    use_moc_fill: bool = True  # Submit orders on bar close vs open
     direction: str = "long_only"
-    
+
     # Pyramiding & Trailing
-    max_units: int = 4                  # Max units allowed (Classic = 4, S2 conservative = 1)
-    pyramid_atr_mult: float = 0.5       # Scale in every 0.5 ATR
-    use_trailing_stop: bool = True      # Classic Turtle trails Hard Stop up upon pyramiding
+    max_units: int = 4  # Max units allowed (Classic = 4, S2 conservative = 1)
+    pyramid_atr_mult: float = 0.5  # Scale in every 0.5 ATR
+    use_trailing_stop: bool = True  # Classic Turtle trails Hard Stop up upon pyramiding
+
 
 class TurtleStrategy(Strategy):
     def __init__(self, config: TurtleConfig) -> None:
@@ -47,12 +44,12 @@ class TurtleStrategy(Strategy):
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
         self.direction = DirectionFlag(config.direction)
-        
+
         # Indicators
         self.donch_entry = DonchianChannel(period=config.entry_period)
         self.donch_exit = DonchianChannel(period=config.exit_period)
         self.atr = AverageTrueRange(period=config.atr_period)
-        
+
         # Pyramiding state
         self._units_held = 0
         self._current_pos_dir = 0  # 1 for long, -1 for short
@@ -71,7 +68,7 @@ class TurtleStrategy(Strategy):
 
     def on_start(self) -> None:
         self.subscribe_bars(self.bar_type)
-        
+
         # Indicators update manually to control t-1 access vs current close
         self.log.info(
             f"Turtle Started | {self.instrument_id} | Dir={self.direction.value} "
@@ -88,8 +85,10 @@ class TurtleStrategy(Strategy):
             self._halt_indicators_update(bar)
             return
 
-        is_ready = self.donch_entry.initialized and self.donch_exit.initialized and self.atr.initialized
-        
+        is_ready = (
+            self.donch_entry.initialized and self.donch_exit.initialized and self.atr.initialized
+        )
+
         if is_ready:
             self._evaluate_bar(bar)
 
@@ -120,7 +119,9 @@ class TurtleStrategy(Strategy):
                     return
                 # Check Pyramiding
                 elif self._units_held < self.config.max_units:
-                    pyramid_threshold = self._last_entry_price + (self.config.pyramid_atr_mult * self._entry_atr)
+                    pyramid_threshold = self._last_entry_price + (
+                        self.config.pyramid_atr_mult * self._entry_atr
+                    )
                     if close > pyramid_threshold:
                         self._add_unit(1, close)
 
@@ -131,10 +132,12 @@ class TurtleStrategy(Strategy):
                     return
                 # Check Pyramiding
                 elif self._units_held < self.config.max_units:
-                    pyramid_threshold = self._last_entry_price - (self.config.pyramid_atr_mult * self._entry_atr)
+                    pyramid_threshold = self._last_entry_price - (
+                        self.config.pyramid_atr_mult * self._entry_atr
+                    )
                     if close < pyramid_threshold:
                         self._add_unit(-1, close)
-        
+
         # 2. Look for Initial Entry
         else:
             if self.direction in [DirectionFlag.LONG_ONLY, DirectionFlag.BOTH]:
@@ -142,7 +145,7 @@ class TurtleStrategy(Strategy):
                     self._current_pos_dir = 1
                     self._add_unit(1, close)
                     return
-            
+
             if self.direction in [DirectionFlag.SHORT_ONLY, DirectionFlag.BOTH]:
                 if close < self._prev_entry_lower:
                     self._current_pos_dir = -1
@@ -154,21 +157,23 @@ class TurtleStrategy(Strategy):
         accounts = self.cache.accounts()
         if not accounts:
             return
-            
-        equity = float(accounts[0].balance_total(list(accounts[0].balances().keys())[0]).as_double())
-        
+
+        equity = float(
+            accounts[0].balance_total(list(accounts[0].balances().keys())[0]).as_double()
+        )
+
         # 1 unit risk
         stop_dist = self._prev_atr * self.config.stop_atr_mult
         raw_units = (equity * self.config.risk_pct) / stop_dist
-        
+
         # Cap leverage
         max_notional = equity * self.config.max_leverage
         max_units_by_lev = max_notional / price
-        
+
         # We only allocate a fraction of our max leverage per unit step
-        # Technically max_leverage applies to the PORTFOLIO not just this unit, 
+        # Technically max_leverage applies to the PORTFOLIO not just this unit,
         # so we ensure (existing_units + new_unit) * price <= max_notional
-        
+
         current_notional = 0
         positions = self.cache.positions(instrument_id=self.instrument_id)
         if positions and positions[0].is_open:
@@ -176,28 +181,30 @@ class TurtleStrategy(Strategy):
 
         remaining_notional = max(0, max_notional - current_notional)
         units = min(raw_units, remaining_notional / price)
-        
+
         if int(units) <= 0:
-            self.log.warning(f"Unit size 0 calculated. Notional cap reached? {current_notional}/{max_notional}")
+            self.log.warning(
+                f"Unit size 0 calculated. Notional cap reached? {current_notional}/{max_notional}"
+            )
             return
-            
+
         qty = Quantity.from_int(int(units))
         side = OrderSide.BUY if direction == 1 else OrderSide.SELL
-        
+
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=side,
             quantity=qty,
-            time_in_force=TimeInForce.GTC
+            time_in_force=TimeInForce.GTC,
         )
         self.submit_order(order)
-        
+
         # Update State
         self._units_held += 1
         self._last_entry_price = price
         if self._units_held == 1:
             self._entry_atr = self._prev_atr
-            
+
         # Update Hard Stop (Trailing up slightly on pyramids)
         if self.config.use_trailing_stop:
             if direction == 1:
@@ -205,7 +212,9 @@ class TurtleStrategy(Strategy):
             else:
                 self._hard_stop_price = price + (self.config.stop_atr_mult * self._entry_atr)
 
-        self.log.info(f"Scaled IN [{self._units_held}/{self.config.max_units}] | {side.value} {qty} @ ~{price:.2f} | Stop={self._hard_stop_price:.2f}")
+        self.log.info(
+            f"Scaled IN [{self._units_held}/{self.config.max_units}] | {side.value} {qty} @ ~{price:.2f} | Stop={self._hard_stop_price:.2f}"
+        )
 
     def _close_all(self, reason: str) -> None:
         positions = self.cache.positions(instrument_id=self.instrument_id)
@@ -217,11 +226,11 @@ class TurtleStrategy(Strategy):
                 instrument_id=self.instrument_id,
                 order_side=side,
                 quantity=qty,
-                time_in_force=TimeInForce.GTC
+                time_in_force=TimeInForce.GTC,
             )
             self.submit_order(order)
             self.log.info(f"Closed ALL units ({self._units_held}) | Reason: {reason}")
-            
+
         self._units_held = 0
         self._current_pos_dir = 0
         self._last_entry_price = None

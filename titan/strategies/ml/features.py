@@ -63,14 +63,14 @@ def load_feature_config(
         with open(cfg_path, "rb") as f:
             cfg = tomllib.load(f)
         gen = cfg.get("selection", {}).get("generated_at", "unknown")
-        msg = f"  📋 Loaded tuned features from features.toml ({gen})"
+        msg = f"  Loaded tuned features from features.toml ({gen})"
         if logger:
             logger.info(msg)
         else:
             print(msg)
         return cfg
 
-    msg = "  ⚠ config/features.toml not found — using defaults."
+    msg = "  [WARN] config/features.toml not found -- using defaults."
     if logger:
         logger.warning(msg)
     else:
@@ -164,12 +164,12 @@ def load_mtf_config(logger=None) -> dict:
         with open(cfg_path, "rb") as f:
             cfg = tomllib.load(f)
         if logger:
-            logger.info("  📋 Loaded MTF config from mtf.toml")
+            logger.info("  Loaded MTF config from mtf.toml")
         else:
-            print("  📋 Loaded MTF config from mtf.toml")
+            print("  Loaded MTF config from mtf.toml")
         return cfg
 
-    msg = "  ⚠ config/mtf.toml not found — using defaults."
+    msg = "  [WARN] config/mtf.toml not found -- using defaults."
     if logger:
         logger.warning(msg)
     else:

@@ -1,80 +1,41 @@
 # Titan-IBKR-Algo
 
-> A quantitative **swing trading** system for Interactive Brokers (IBKR) — ML-driven strategy discovery, VectorBT optimisation, NautilusTrader execution, and GCE deployment.
+> A quantitative trading system for Interactive Brokers -- NautilusTrader execution, VectorBT research, ML signal discovery, and portfolio-level risk management.
 
-📘 **[Read the User Guide](USER_GUIDE.md)** for complete setup and usage instructions.
+---
+
+## Live Strategies (5 deployed)
+
+| Strategy | Instruments | Timeframe | OOS Sharpe | Runner |
+|---|---|---|---|---|
+| **IC Equity Daily** | HWM, CB, SYK, NOC, WMT, ABNB, GL | D | +2.65 to +4.28 | `scripts/run_live_ic_mtf.py` |
+| **MTF Confluence** | EUR/USD | H1/H4/D/W | +1.94 | `scripts/run_live_mtf.py` |
+| **ORB** | UNH, AMAT, TXN, INTC, CAT, WMT, TMO | 5M | Validated | `scripts/run_live_orb.py` |
+| **ETF Trend** | SPY, QQQ, IWB, TQQQ, EFA, GLD, DBC | D | +0.89 to +1.37 | `scripts/run_live_etf_trend.py` |
+| **MR FX** | EUR/USD | M5 | Research validated | -- |
+
+All strategies are wired to a shared `PortfolioRiskManager` (drawdown scaling + kill switch).
+
+**ML Signal Discovery** (beta): 28 instruments scanned. Tier A: EUR/USD D (+1.58 Sharpe), QQQ D (+1.11). PSKY D (+0.55, 13 folds) next for deployment.
 
 ---
 
 ## Architecture
 
-This project follows a **3-layer architecture** that separates *Probabilistic Intent* (AI) from *Deterministic Execution* (Code).
-
-| Layer | Location | Purpose |
-|---|---|---|
-| **Directive** | `directives/` | Standard Operating Procedures — step-by-step instructions |
-| **Orchestration** | Agent context | Intelligent routing — read directives, choose tools, handle errors |
-| **Scripts** | `scripts/` | Entry points for trading, backtesting, and utilities |
-| **Titan** | `titan/` | Core package (strategies, adapters, utils) |
-| **Research** | `research/` | Experimental code (VectorBT, ML training) |
-
-## Trading Style
-
-**Daily swing trading** on higher timeframes:
-
-| Timeframe | Role |
-|---|---|
-| H1 | Entry/exit timing |
-| H4 | Primary analysis |
-| D | Trend confirmation |
-| W | Regime filter |
-
-## Directory Structure
-
 ```
-├── AGENTS.MD                      ← Agent system prompt
-├── Titan Workspace Rules.md       ← Technical & ML constraints
-├── directives/                    ← SOPs
-│   ├── Titan Library Reference.md      ← [API DOCS] Detailed Package Guide
-│   ├── Workspace Structure.md          ← File Layout Docs
-│   ├── Alpha Research Loop (VectorBT).md
-│   ├── ... (and other directives)
-├── titan/                         ← [CORE] Package (Library Code)
-│   ├── adapters/                  ← NautilusTrader Adapters (IBKR/Core)
-│   ├── config/                    ← Config Loading
-│   ├── data/                      ← Data Fetching & ValidationLogic
-│   ├── indicators/                ← Shared Indicators (Numba/VBT)
-│   ├── models/                    ← Quant Models (Spread, Slippage)
-│   ├── strategies/                ← Production Strategies (MTF, ML)
-│   └── utils/                     ← Logging, Ops, Notifications
-├── research/                      ← [RESEARCH] Experimental Code
-│   ├── alpha_loop/                ← VectorBT Optimization
-│   ├── gaussian/                  ← Gaussian Channel Research
-│   ├── ml/                        ← ML Pipeline & Feature Selection
-│   └── mtf/                       ← MTF Strategy Optimization
-│       └── legacy/                ← Archived 5m stage variants
-├── scripts/                       ← [ENTRY POINTS] Executable Scripts
-│   ├── download_data.py           ← Unified Data Downloader
-│   ├── download_sp100.py          ← S&P 100 Symbol Downloader
-│   ├── check_env.py               ← Environment Verifier
-│   ├── run_backtest_mtf.py        ← MTF Switch Backtest
-│   ├── run_live_mtf.py            ← Live MTF Strategy
-│   ├── run_live_ml.py             ← Live ML Strategy
-│   ├── build_docker.py            ← Docker Builder
-│   ├── inspect_factory.py         ← Order Factory Inspector
-│   └── ...
-├── config/                        ← [CONFIG] TOML Configuration
-│   ├── instruments.toml           ← Currency pairs
-│   ├── risk.toml                  ← Risk limits
-│   ├── legacy/                    ← Archived historical configs
-│   └── ...
-├── data/                          ← [DATA] Historical Parquet Files
-├── models/                        ← [MODELS] Trained .joblib models
-├── tests/                         ← [TESTS] Unit Tests
-├── .tmp/                          ← [TEMP] Logs, Reports, Intermediate Data
-├── pyproject.toml                 ← Dependencies (uv)
-└── .env.example                   ← Credential Template
+directives/    <- 18 SOPs (source of truth for all strategy/deployment rules)
+titan/         <- Core library: 9 strategies, risk management, indicators, adapters
+research/      <- Experiments: VectorBT sweeps, ML pipeline, IC analysis, mean reversion
+scripts/       <- CLI entry points: runners, watchdog, kill switch, data download
+config/        <- TOML parameters (written by research, read by titan/)
+data/          <- Historical Parquet files (OHLCV, ~50 instruments)
+models/        <- Trained ML artifacts (.joblib)
+.tmp/          <- Logs and transient reports
 ```
+
+Code flows one direction: `research/` discovers -> `config/` captures -> `titan/` implements -> `scripts/` executes.
+
+---
 
 ## Quick Start
 
@@ -85,141 +46,112 @@ uv sync
 
 ### 2. Configure credentials
 ```bash
-uv run python scripts/setup_env.py
+cp .env.example .env   # then edit with your IBKR account details
 ```
-Or manually: `cp .env.example .env` and edit.
+
+Key `.env` variables:
+```ini
+IBKR_HOST=127.0.0.1
+IBKR_PORT=4002          # 4002=paper gateway, 4001=live gateway
+IBKR_CLIENT_ID=1
+IBKR_ACCOUNT_ID=DUxxxxxxx
+```
 
 ### 3. Verify connection
 ```bash
 uv run python scripts/verify_connection.py
 ```
 
-### 4. Alpha Research Loop
+### 4. Download data
 ```bash
-uv run python scripts/download_data.py                 # Download raw OHLCV
-uv run python research/alpha_loop/run_vbt_optimisation.py        # Run VBT parameter sweep
-uv run python research/gaussian/run_optimisation.py    # Gaussian Channel sweep
-uv run python research/alpha_loop/run_feature_selection.py       # Run Feature Selection Bridge
-uv run python scripts/run_backtest_mtf.py              # Test MTF Confluence Strategy
+uv run python scripts/download_data.py
 ```
 
-### 5. ML Strategy Discovery
+### 5. Run a strategy (paper)
+
+Use the **watchdog** for production (handles IB nightly restarts):
 ```bash
-# Runs full pipeline: Feature Engineering -> Target Eng -> Training -> OOS Backtest
-uv run python research/ml/run_pipeline.py
+uv run python scripts/watchdog_mtf.py
 ```
 
-### 6. Ensemble Signal Aggregation
+Or run strategies directly:
 ```bash
-uv run python research/ml/run_ensemble.py
+uv run python scripts/run_live_mtf.py          # MTF EUR/USD
+uv run python scripts/run_live_orb.py           # ORB equities
+uv run python scripts/run_live_etf_trend.py     # ETF Trend
+uv run python scripts/run_live_ml.py            # ML Classifier
 ```
 
-### 7. Deployment (Docker)
+See `directives/Deployment & Operations.md` for full deployment guide (VPS, Docker, systemd).
+
+---
+
+## Emergency Stop
+
 ```bash
-uv run python scripts/build_docker.py
-docker run --env-file .env titan-ibkr-algo
+uv run python scripts/kill_switch.py
 ```
 
-### 8. NautilusTrader Live
+Cancels all orders and closes all positions immediately via IBKR API. Does not require the strategy process to be running.
 
-#### Start the MTF Confluence Strategy
+---
+
+## Research Workflow
+
 ```bash
-# Multi-Timeframe Confluence Strategy (H1 + H4 + D + W)
-uv run python scripts/run_live_mtf.py
+# VectorBT parameter sweep
+uv run python research/alpha_loop/run_vbt_optimisation.py
 
-# OR for the ML Strategy:
-uv run python scripts/run_live_ml.py
-```
-The engine will:
-1. **Checks for and automatically downloads latest data** (runs `scripts/download_data.py`).
-2. Load instruments from IBKR.
-3. Warm up indicators from local Parquet data (`data/EUR_USD_H1.parquet`, etc.).
-4. Reconcile open positions with IBKR (if any exist).
-5. Subscribe to the live price stream and start processing bars.
+# ML signal discovery (28 instruments)
+uv run python research/ml/run_52signal_classifier.py
 
-A **status dashboard** prints to the Nautilus log on every bar close showing per-timeframe SMA direction, RSI, confluence score, and position state.
+# Full ML evaluation
+uv run python research/ml/run_ml_full_eval.py --instrument QQQ
 
-#### Stop the Strategy
-```powershell
-# Option 1: Press Ctrl+C in the terminal running the strategy
-
-# Option 2: Kill from another terminal
-Get-Process -Name "python" | Stop-Process -Force
+# MTF confluence optimisation
+uv run python research/mtf/run_optimisation.py
 ```
 
-#### Monitor
-```powershell
-# Tail the log file in real time
-Get-Content ".tmp/logs/mtf_live_*.log" -Tail 50 -Wait
+---
 
-# Check which python processes are running
-Get-Process -Name "python" -ErrorAction SilentlyContinue
-```
-Logs are stored in `.tmp/logs/` with timestamps (e.g. `mtf_live_20260216_161315.log`).
+## Pre-Push Checklist
 
-## Research Tools
-
-| Tool | Role | Cost |
-|---|---|---|
-| **VectorBT** (free) | Broad parameter sweeps, heatmaps | Free |
-| **Backtesting.py** | Visual trade inspection | Free |
-| **NautilusTrader** | Final validation with real spread/slippage | Free |
-| **VectorBT Pro** | Optional upgrade for large-scale optimisation | ~$25/mo |
-
-## Testing & CI/CD
-
-This project uses **GitHub Actions** for Continuous Integration (`.github/workflows/ci.yml`). Three checks run on every push to `main`:
-
-| Step | Command | Purpose |
-|---|---|---|
-| **Lint** | `uv run ruff check .` | Style, imports, unused vars |
-| **Format** | `uv run ruff format --check .` | Consistent code formatting |
-| **Test** | `uv run pytest tests/ -v --tb=short -x` | Unit tests |
-
-### Pre-Push Checklist
-Run all three locally before pushing:
 ```bash
-# 1. Install dev tools (once)
-uv sync --extra dev
-
-# 2. Lint + auto-fix
 uv run ruff check . --fix
-
-# 3. Auto-format
 uv run ruff format .
-
-# 4. Run tests
 uv run pytest tests/ -v
 ```
-If all pass locally with zero errors, CI will also pass.
 
-> **📖 Full CI/CD troubleshooting guide:** See [USER_GUIDE.md § CI/CD Pipeline & Code Quality](USER_GUIDE.md#-cicd-pipeline--code-quality).
+All three must pass before pushing.
 
-## Roadmap
+---
 
-- [x] Ensemble / multi-strategy framework
-- [x] Time-varying spread model
-- [x] Multi-timeframe confluence signals (H1 + H4 + D + W)
-- [x] ML Strategy Discovery (XGBoost + Walk-Forward Validation)
-- [x] Dockerization for cloud deployment
-- [x] VBT → ML Feature Selection Bridge (auto-tune indicators, feed into ML)
-- [x] Model → Live Engine Bridge (deploy .joblib models to NautilusTrader)
-- [x] Gaussian Channel Strategy (Ehlers filter + Numba + VBT optimisation)
-- [x] Adapter Reconciliation (position sync on engine restart)
-- [x] Live Trading Execution (Verified Entry/Exit/Reconciliation)
-- [x] Data Client Streaming Fix (4 bugs in subscribe/parse/publish pipeline)
-- [ ] Configure Slack Alerts for live trading monitoring
-- [ ] VectorBT Pro upgrade for production-scale mining
-- [ ] **Strategy Tests:** Add integration tests for `mtf_confluence.py` with fixed data inputs
-- [x] **Refactor:** Move `run_*.py` scripts to `scripts/` directory
-- [ ] **CI/CD:** Add end-to-end "dry run" test for key scripts
+## Key Rules
 
-## Rules of Engagement
+- **`uv` only** -- no bare `pip` installs
+- **`decimal.Decimal`** for all financial types (or NautilusTrader `Price`/`Quantity`)
+- **`random_state=42`** on every ML training call
+- **No look-ahead bias** -- features lagged, targets future-derived
+- **Factory methods** for NautilusTrader objects (`Price.from_str()`, not constructors)
+- **Portfolio risk** -- all strategies must register with `PortfolioRiskManager`
 
-See [Titan Workspace Rules.md](Titan%20Workspace%20Rules.md) for the full constraints. Key rules:
+Full rules: `directives/Titan Library Reference.md`
 
-- **`uv` only** — no bare `pip` installs
-- **`decimal.Decimal`** for all financial types
-- **`random_state=42`** — always
-- **No look-ahead bias** — features lagged, targets future-derived
-- **Google Style Guide** for all code
+---
+
+## Documentation
+
+All operational knowledge lives in `directives/` (18 SOPs). Key files:
+
+| Topic | Directive |
+|---|---|
+| System overview | `System Status and Roadmap.md` |
+| Deployment | `Deployment & Operations.md` |
+| ORB strategy | `ORB Trading Strategy.md` + `ORB Strategy User Guide.md` |
+| MTF strategy | `Multi-Timeframe Confluence.md` + `MTF Strategy User Guide.md` |
+| ETF Trend | `ETF Trend Strategy.md` |
+| ML pipeline | `Machine Learning Strategy Discovery.md` |
+| IC signals | `IC Signal Analysis.md` |
+| Backtesting | `Backtesting & Validation.md` |
+| API reference | `Titan Library Reference.md` + `IBKR & NautilusTrader API Reference.md` |
+| Adapter guide | `Titan-IBKR Adapter Guide.md` |

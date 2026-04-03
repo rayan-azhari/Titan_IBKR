@@ -3,7 +3,7 @@
 Creates a production Docker image based on python:3.11-slim,
 including the nautilus_trader wheel and the models/ directory.
 
-Directive: Live Deployment and Monitoring.md
+Directive: Deployment & Operations.md
 """
 
 import subprocess

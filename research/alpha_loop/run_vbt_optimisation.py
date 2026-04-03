@@ -6,7 +6,7 @@ to config/strategy_config.toml.
 
 Includes in-sample / out-of-sample split to detect overfitting.
 
-Directive: Alpha Research Loop (VectorBT).md
+Directive: Backtesting & Validation.md
 """
 
 import sys

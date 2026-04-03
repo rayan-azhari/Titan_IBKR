@@ -77,48 +77,83 @@ TRAIL_MAX_HOLD_H1: int = 120  # 120 H1 bars = 5 days (ride the trend)
 TRAIL_MAX_HOLD_D: int = 30  # 30 daily bars = ~6 weeks
 TRAIL_MAX_HOLD_M5: int = 1440  # 1440 M5 bars = 5 days FX (288 bars/day x 5)
 
-# Regression -> signal conversion: predict R-multiple, trade if |pred| > threshold
-SIGNAL_THRESHOLD: float = 0.5  # minimum predicted R-multiple to take a trade
+# Classifier -> position conversion: trade only when model is confident.
+# P(long) > 0.6 = go long, P(long) < 0.4 = go short, 0.4-0.6 = hold.
+SIGNAL_THRESHOLD: float = 0.6
 
 # WFO configuration (bars)
 IS_RATIO_BARS = {
     "H1": 2 * 252 * 24,  # ~12,096 bars (2 years)
+    "H4": 2 * 252 * 6,  # ~3,024 bars (2 years, 6 bars/day)
     "D": 2 * 252,  # ~504 bars (2 years)
-    "M5": 252 * 288,  # ~72,576 bars (1 year FX — shorter IS for more folds)
+    "M5": 252 * 288,  # ~72,576 bars (1 year FX)
 }
 OOS_RATIO_BARS = {
     "H1": 252 * 24 // 2,  # ~3,024 bars (6 months)
+    "H4": 252 * 6 // 2,  # ~756 bars (6 months)
     "D": 126,  # ~126 bars (6 months)
-    "M5": 252 * 288 // 4,  # ~18,144 bars (3 months FX)
+    "M5": 252 * 288 // 4,  # ~18,144 bars (3 months)
 }
 
 # MA period scaling: daily-equivalent periods by timeframe
-# 1 day = 24 H1 bars = 288 M5 bars (FX 24h)
+# 1 day = 24 H1 bars = 6 H4 bars = 288 M5 bars (FX 24h)
 MA_SCALE = {
     "H1": {"fast": 20, "slow": 50, "trend": 1200, "longterm": 4800},
+    "H4": {"fast": 5, "slow": 12, "trend": 300, "longterm": 1200},
     "M5": {"fast": 240, "slow": 600, "trend": 14400, "longterm": 57600},
     "D": {"fast": 2, "slow": 5, "trend": 50, "longterm": 200},
 }
 
-# Cost profiles (bps per fill, from phase3_backtest.py)
+# Cost profiles (bps per fill)
 COST_BPS = {
-    "fx": 1.0,  # 0.5 spread + 0.5 slippage
-    "fx_cross": 1.5,
-    "gold": 3.0,
-    "index": 2.0,
+    "fx": 1.0,  # major FX: 0.5 spread + 0.5 slippage
+    "fx_cross": 1.5,  # cross pairs: wider spreads
+    "gold": 2.0,  # gold ETFs (GLD, IAU)
+    "gold_future": 3.0,  # gold futures (GC=F)
+    "silver": 2.0,  # silver ETFs (SLV, SIVR)
+    "silver_future": 3.0,  # silver futures (SI=F)
+    "miner": 3.0,  # miners (GDX, GDXJ, SIL, PSKY)
+    "index": 2.0,  # index ETFs (SPY, QQQ, IWB)
+    "index_lev": 3.0,  # leveraged ETFs (TQQQ)
+    "index_cash": 2.0,  # cash indices (FTSE, DAX)
+    "dollar": 1.0,  # dollar index
+    "future": 1.0,  # futures (ES)
 }
 
-# Target instruments
+# Target instruments (default timeframe per instrument; override with --tf)
 TARGET_INSTRUMENTS = {
+    # FX majors
     "EUR_USD": ("H1", "fx"),
     "GBP_USD": ("H1", "fx"),
     "USD_JPY": ("H1", "fx"),
+    "USD_CHF": ("H1", "fx"),
+    # FX crosses
     "AUD_JPY": ("H1", "fx_cross"),
     "AUD_USD": ("H1", "fx_cross"),
-    "USD_CHF": ("H1", "fx"),
-    "GLD": ("H1", "gold"),
-    "SPY": ("H1", "index"),
-    "QQQ": ("H1", "index"),
+    # Gold
+    "GLD": ("D", "gold"),
+    "IAU": ("D", "gold"),
+    "GC=F": ("D", "gold_future"),
+    # Silver
+    "SLV": ("D", "silver"),
+    "SIVR": ("D", "silver"),
+    "PSLV": ("D", "silver"),
+    "SI=F": ("D", "silver_future"),
+    # Miners
+    "GDX": ("D", "miner"),
+    "GDXJ": ("D", "miner"),
+    "SIL": ("D", "miner"),
+    "PSKY": ("D", "miner"),
+    # Indices
+    "SPY": ("D", "index"),
+    "QQQ": ("D", "index"),
+    "IWB": ("D", "index"),
+    "TQQQ": ("D", "index_lev"),
+    "ES": ("D", "future"),
+    "^FTSE": ("D", "index_cash"),
+    "^GDAXI": ("D", "index_cash"),
+    # Dollar
+    "DXY": ("D", "dollar"),
 }
 
 # Validation gates
@@ -134,12 +169,18 @@ MAX_CONSEC_NEG: int = 2
 # ---------------------------------------------------------------------------
 
 
-def _compute_regime_features(df: pd.DataFrame) -> pd.DataFrame:
+def _compute_regime_features(df: pd.DataFrame, hmm_train_bars: int | None = None) -> pd.DataFrame:
     """Compute ADX regime, HMM state, and ATR percentile features.
 
-    These are rolling/causal features — no lookahead. The HMM is fit on the
-    first 70% of bars (IS) and predicted on all bars, matching phase0_regime.py.
-    ADX regime and ATR percentile are purely rolling — always causal.
+    These are rolling/causal features — no lookahead. The HMM is fit on
+    the first `hmm_train_bars` bars (matching one IS window from WFO) and
+    predicted on all bars. ADX regime and ATR percentile are purely rolling.
+
+    Args:
+        df: OHLCV DataFrame.
+        hmm_train_bars: Number of bars to fit HMM on. Defaults to the
+            first IS window size from WFO config, preventing the HMM
+            from seeing data beyond the first IS boundary.
 
     Returns DataFrame with 5 columns:
       - adx_regime_ranging (1 if ADX<20, else 0)
@@ -159,11 +200,12 @@ def _compute_regime_features(df: pd.DataFrame) -> pd.DataFrame:
     regime["adx_regime_trending"] = (adx_val > 25).astype(float)
 
     # 2. HMM state (2-state Gaussian on [log_ret, realized_vol_20])
-    # Fit on IS (first 70%) to prevent lookahead; predict on all bars.
+    # Fit on first IS window only to prevent lookahead in later WFO folds.
     log_ret = np.log(close).diff().fillna(0.0)
     rvol20 = log_ret.rolling(20).std().bfill()
 
-    is_n = max(100, int(len(df) * 0.70))
+    is_n = hmm_train_bars if hmm_train_bars else max(100, int(len(df) * 0.50))
+    is_n = min(is_n, len(df) - 1)
     # Normalise using IS statistics only
     ret_mu, ret_std = float(log_ret.iloc[:is_n].mean()), float(log_ret.iloc[:is_n].std())
     vol_mu, vol_std = float(rvol20.iloc[:is_n].mean()), float(rvol20.iloc[:is_n].std())
@@ -274,7 +316,9 @@ def build_features(df: pd.DataFrame, tf: str) -> pd.DataFrame:
     )
 
     # 3. Regime features (5 -- all proven useful)
-    regime_features = _compute_regime_features(df)
+    # Pass IS window size so HMM only trains on first IS window (no lookahead).
+    is_bars = IS_RATIO_BARS.get(tf, 504)
+    regime_features = _compute_regime_features(df, hmm_train_bars=is_bars)
 
     # 4. VIX features (3 -- pruned to top performers only)
     vix_features = pd.DataFrame(index=df.index)
@@ -282,6 +326,9 @@ def build_features(df: pd.DataFrame, tf: str) -> pd.DataFrame:
 
     if "^VIX" in cross_data:
         vix = cross_data["^VIX"]
+        # Shift VIX by 1 day before aligning to prevent look-ahead.
+        # Without this, intraday H1 bars could see same-day VIX close.
+        vix = vix.shift(1)
         idx_norm = df.index.normalize()
         vix_aligned = pd.Series(vix.reindex(idx_norm).ffill().values, index=df.index)
         vix_features["vix_sma20"] = vix_aligned.rolling(20).mean()
@@ -300,9 +347,37 @@ def build_features(df: pd.DataFrame, tf: str) -> pd.DataFrame:
     mom_features["mom_accel_21_252"] = close.pct_change(21) - close.pct_change(252)
     mom_features["mom_accel_5_63"] = close.pct_change(5) - close.pct_change(63)
 
+    # 8. Stochastic oscillator features (Bill Williams style confirmation)
+    stoch_features = pd.DataFrame(index=df.index)
+    low_min_14 = df["low"].rolling(14).min()
+    high_max_14 = df["high"].rolling(14).max()
+    denom_14 = high_max_14 - low_min_14
+    pct_k = 100.0 * (close - low_min_14) / denom_14.where(denom_14 > 1e-10, np.nan)
+    pct_d = pct_k.rolling(3).mean()
+    stoch_features["stoch_k_raw"] = pct_k
+    stoch_features["stoch_d_raw"] = pct_d
+    stoch_features["stoch_k_minus_d"] = pct_k - pct_d  # momentum: K above D = bullish
+    stoch_features["stoch_overbought"] = (pct_k > 80).astype(float)
+    stoch_features["stoch_oversold"] = (pct_k < 20).astype(float)
+    # Slow stochastic (21-period)
+    low_min_21 = df["low"].rolling(21).min()
+    high_max_21 = df["high"].rolling(21).max()
+    denom_21 = high_max_21 - low_min_21
+    pct_k_slow = 100.0 * (close - low_min_21) / denom_21.where(denom_21 > 1e-10, np.nan)
+    stoch_features["stoch_k_slow"] = pct_k_slow
+    stoch_features["stoch_k_slow_minus_fast"] = pct_k_slow - pct_k  # divergence
+
     # Combine and shift 1 bar
     all_features = pd.concat(
-        [signals_52, ma_features, regime_features, vix_features, cal_features, mom_features],
+        [
+            signals_52,
+            ma_features,
+            regime_features,
+            vix_features,
+            cal_features,
+            mom_features,
+            stoch_features,
+        ],
         axis=1,
     )
     all_features = all_features.shift(1)
@@ -434,58 +509,35 @@ def compute_trailing_labels(
 
 
 # ---------------------------------------------------------------------------
-# Regime + Pullback Labeler (v3)
+# Regime + Pullback Labeler (v3 restored)
 # ---------------------------------------------------------------------------
-#
-# Step 1 — Trend regime (causal, no lookahead):
-#   BULL: SMA(50) > SMA(200) AND MACD histogram > 0
-#   BEAR: SMA(50) < SMA(200) AND MACD histogram < 0
-#   NEUTRAL: otherwise
-#
-# Step 2 — Within regime, find pullback entries (forward-looking, labels only):
-#   In BULL: label +1 when RSI(14) dipped below rsi_oversold AND
-#            forward N-bar return > min_confirm_pct
-#   In BEAR: label -1 when RSI(14) spiked above rsi_overbought AND
-#            forward N-bar return < -min_confirm_pct
-#   All other bars: label 0 (hold current position or flat)
-
-# Default parameters
-REGIME_SMA_FAST: int = 50
-REGIME_SMA_SLOW: int = 200
-REGIME_RSI_PERIOD: int = 14
-REGIME_RSI_OVERSOLD: float = 45.0  # pullback in uptrend (wider to get more labels)
-REGIME_RSI_OVERBOUGHT: float = 55.0  # rally in downtrend
-REGIME_CONFIRM_BARS: int = 10  # forward bars to check confirmation
-REGIME_CONFIRM_PCT: float = 0.005  # 0.5% min forward return (single horizon only)
 
 
 def compute_regime_pullback_labels(
     df: pd.DataFrame,
-    sma_fast: int = REGIME_SMA_FAST,
-    sma_slow: int = REGIME_SMA_SLOW,
-    rsi_period: int = REGIME_RSI_PERIOD,
-    rsi_oversold: float = REGIME_RSI_OVERSOLD,
-    rsi_overbought: float = REGIME_RSI_OVERBOUGHT,
-    confirm_bars: int = REGIME_CONFIRM_BARS,
-    confirm_pct: float = REGIME_CONFIRM_PCT,
+    sma_fast: int = 50,
+    sma_slow: int = 200,
+    rsi_period: int = 14,
+    rsi_oversold: float = 45.0,
+    rsi_overbought: float = 55.0,
+    confirm_bars: int = 10,
+    confirm_pct: float = 0.005,
 ) -> tuple[pd.Series, pd.Series]:
-    """Compute Regime + Pullback labels for training.
+    """Regime + Pullback labels. Best labeler from v3 experiments.
 
-    Returns:
-        (labels, regime): two Series.
-        labels: int8 -- +1 (confirmed long pullback), -1 (confirmed short rally), 0 (hold)
-        regime: int8 -- +1 (bull), -1 (bear), 0 (neutral)
+    Step 1 (causal): SMA(50/200) + MACD(12/26/9) trend regime.
+    Step 2 (causal): RSI pullback detection within regime.
+    Step 3 (forward, labels only): Forward return confirmation.
+
+    Returns (labels, regime).
     """
     from titan.strategies.ml.features import rsi as compute_rsi
 
     close = df["close"]
-    n = len(close)
 
-    # Step 1: Trend regime (all causal / no lookahead)
     sma_f = sma(close, sma_fast)
     sma_s = sma(close, sma_slow)
 
-    # MACD histogram (12/26/9 standard)
     ema12 = close.ewm(span=12, adjust=False).mean()
     ema26 = close.ewm(span=26, adjust=False).mean()
     macd_line = ema12 - ema26
@@ -496,15 +548,11 @@ def compute_regime_pullback_labels(
     bear = (sma_f < sma_s) & (macd_hist < 0)
     regime = pd.Series(np.where(bull, 1, np.where(bear, -1, 0)), index=df.index, dtype=np.int8)
 
-    # Step 2: RSI pullback detection (causal)
     rsi_val = compute_rsi(close, rsi_period)
-
     bull_pullback = bull & (rsi_val < rsi_oversold)
     bear_rally = bear & (rsi_val > rsi_overbought)
 
-    # Step 3: Forward return confirmation (for LABELS ONLY — single horizon)
     fwd_ret = close.pct_change(confirm_bars).shift(-confirm_bars)
-
     long_confirmed = bull_pullback & (fwd_ret > confirm_pct)
     short_confirmed = bear_rally & (fwd_ret < -confirm_pct)
 
@@ -512,22 +560,14 @@ def compute_regime_pullback_labels(
         np.where(long_confirmed, 1, np.where(short_confirmed, -1, 0)),
         index=df.index,
         dtype=np.int8,
-        name="regime_pullback_label",
     )
 
-    # Stats
     n_long = int((labels == 1).sum())
     n_short = int((labels == -1).sum())
-    n_total = n_long + n_short
-    n_bull = int(bull.sum())
-    n_bear = int(bear.sum())
-    n_neutral = n - n_bull - n_bear
-    print(f"  Regime: bull={n_bull:,} bear={n_bear:,} neutral={n_neutral:,} bars")
     print(
-        f"  Labels: {n_total} entries ({n_long} long pullbacks, {n_short} short rallies) "
-        f"in {n:,} bars ({n_total / n * 100:.1f}%)"
+        f"    labels: {n_long + n_short} ({n_long}L/{n_short}S) "
+        f"regime: {int(bull.sum())}bull/{int(bear.sum())}bear"
     )
-
     return labels, regime
 
 
@@ -646,7 +686,7 @@ def run_instrument(
     df.attrs["instrument"] = instrument
     features = build_features(df, tf)
 
-    # 2. Pre-compute labels for multiple parameter sets (sweep on IS per fold)
+    # 2. Pre-compute labels: regime+pullback (v3), sweep RSI/confirm params
     LABEL_SWEEP = [
         {"rsi_oversold": 45, "rsi_overbought": 55, "confirm_bars": 10, "confirm_pct": 0.005},
         {"rsi_oversold": 45, "rsi_overbought": 55, "confirm_bars": 20, "confirm_pct": 0.005},
@@ -658,16 +698,10 @@ def run_instrument(
         {"rsi_oversold": 48, "rsi_overbought": 52, "confirm_bars": 10, "confirm_pct": 0.005},
     ]
 
-    print(f"  Pre-computing labels for {len(LABEL_SWEEP)} parameter sets ...")
+    print(f"  Pre-computing labels for {len(LABEL_SWEEP)} param sets ...")
     label_cache: list[tuple[dict, pd.Series]] = []
     for lp in LABEL_SWEEP:
-        labels, _ = compute_regime_pullback_labels(
-            df,
-            rsi_oversold=lp["rsi_oversold"],
-            rsi_overbought=lp["rsi_overbought"],
-            confirm_bars=lp["confirm_bars"],
-            confirm_pct=lp["confirm_pct"],
-        )
+        labels, _ = compute_regime_pullback_labels(df, **lp)
         label_cache.append((lp, labels))
 
     # 3. Bar returns for Sharpe computation
@@ -703,12 +737,15 @@ def run_instrument(
         best_entry_positions = None
         best_entry_y = None
 
+        # Pre-compute IS membership mask once per fold (numpy boolean, not set lookup)
+        is_mask = np.zeros(len(all_idx_set), dtype=bool)
+        is_mask[is_idx] = True
+
         for lp, labels in label_cache:
             lab_aligned = labels.reindex(all_idx_set).fillna(0).values
             entry_positions = np.where(lab_aligned != 0)[0]
-            # Filter to IS window
-            is_set = set(is_idx)
-            is_entries = np.array([p for p in entry_positions if p in is_set])
+            # Filter to IS window using fast boolean mask
+            is_entries = entry_positions[is_mask[entry_positions]]
             if len(is_entries) < 20:
                 continue
             # Check class balance (at least 30% minority class)
@@ -727,10 +764,9 @@ def run_instrument(
             print(f"    Fold {i + 1}: no label params produced >= 20 entries, skipping.")
             continue
 
-        # Train on IS entries with best label params
-        is_set = set(is_idx)
-        is_entries = np.array([p for p in best_entry_positions if p in is_set])
-        X_is_entry = np.nan_to_num(X_all[is_entries], nan=0.0, posinf=0.0, neginf=0.0)
+        # Train on IS entries with best label params (reuse is_mask from above)
+        is_entries = best_entry_positions[is_mask[best_entry_positions]]
+        X_is_entry = np.where(np.isinf(X_all[is_entries]), 0.0, X_all[is_entries])
         y_train = best_entry_y[is_entries]
         pos_count = y_train.sum()
         neg_count = len(y_train) - pos_count
@@ -741,7 +777,7 @@ def run_instrument(
         model.fit(X_is_entry, y_train)
 
         # Predict on ALL OOS bars
-        X_oos_all = np.nan_to_num(X_all[oos_idx], nan=0.0, posinf=0.0, neginf=0.0)
+        X_oos_all = np.where(np.isinf(X_all[oos_idx]), 0.0, X_all[oos_idx])
         pred_proba = model.predict_proba(X_oos_all)[:, 1]  # P(long pullback)
 
         # Convert to position: hold until prediction flips
@@ -751,7 +787,7 @@ def run_instrument(
         stats = compute_signal_sharpe(position, oos_returns, cost, bars_yr)
 
         # IS evaluation (on all IS bars, not just swings)
-        X_is_all = np.nan_to_num(X_all[is_idx], nan=0.0, posinf=0.0, neginf=0.0)
+        X_is_all = np.where(np.isinf(X_all[is_idx]), 0.0, X_all[is_idx])
         pred_proba_is = model.predict_proba(X_is_all)[:, 1]
         position_is = _pred_to_position(pred_proba_is, threshold=SIGNAL_THRESHOLD)
         is_returns = returns_all.iloc[is_idx]
@@ -771,7 +807,7 @@ def run_instrument(
 
         lp_str = (
             f"RSI({best_label_params['rsi_oversold']:.0f}/{best_label_params['rsi_overbought']:.0f}) "
-            f"cfm={best_label_params['confirm_bars']}bar/{best_label_params['confirm_pct']:.1%}"
+            f"cfm={best_label_params['confirm_bars']}b/{best_label_params['confirm_pct']:.1%}"
         )
 
         oos_period = features_all.index[oos_idx]
@@ -935,22 +971,21 @@ def main() -> None:
             default_tf, default_asset = "H1", "fx"
         tf_override = args.tf if args.tf else default_tf
         instruments = {args.instrument: (tf_override, default_asset)}
+    elif args.tf:
+        # --tf without --instrument: override timeframe for ALL instruments
+        instruments = {inst: (args.tf, asset) for inst, (_tf, asset) in TARGET_INSTRUMENTS.items()}
     else:
         instruments = TARGET_INSTRUMENTS
 
     W = 80
     print()
     print("=" * W)
-    print("  ML SIGNAL DISCOVERY v3 -- Regime+Pullback Labels + XGBClassifier")
+    print("  ML SIGNAL DISCOVERY v3 -- Regime+Pullback + Stochastic Features")
     print(f"  Instruments : {list(instruments.keys())}")
-    print(f"  Regime      : SMA({REGIME_SMA_FAST}/{REGIME_SMA_SLOW}) + MACD(12/26/9)")
-    print(
-        f"  Pullback    : RSI({REGIME_RSI_PERIOD}) < {REGIME_RSI_OVERSOLD} (bull) / > {REGIME_RSI_OVERBOUGHT} (bear)"
-    )
-    print(f"  Confirm     : fwd {REGIME_CONFIRM_BARS}bar > {REGIME_CONFIRM_PCT:.1%}")
+    print("  Labels      : SMA(50/200) + MACD regime, RSI pullback, fwd confirm")
+    print("  Features    : 52 IC + 7 MA + 5 regime + 3 VIX + 1 cal + 4 mom + 7 stoch = ~79")
     print(f"  Flip thresh : P > {SIGNAL_THRESHOLD} = long, P < {1 - SIGNAL_THRESHOLD:.1f} = short")
     print("  Model       : XGBClassifier (depth=4, lr=0.03, 300 trees)")
-    print("  Training    : confirmed pullback bars only (~3-8% of data)")
     print("  Validation  : Walk-Forward (rolling IS=2yr, OOS=6mo)")
     print("=" * W)
 

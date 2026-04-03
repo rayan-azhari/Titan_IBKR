@@ -4,7 +4,7 @@ Sweeps 7 indicator families across parameter ranges using VectorBT,
 scores each by IS/OOS Sharpe stability, tunes MTF confluence filters,
 and writes optimal parameters to config/features.toml for the ML pipeline.
 
-Directive: Alpha Research Loop (VectorBT).md
+Directive: Backtesting & Validation.md
 """
 
 import argparse

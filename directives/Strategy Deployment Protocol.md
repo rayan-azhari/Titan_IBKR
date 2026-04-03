@@ -139,7 +139,7 @@ IBKR_PORT=4001   # Gateway Live
 
 ## 6. Server Persistence
 
-For long-term deployment, use one of these methods (see `directives/Deployment Options.md` for full details):
+For long-term deployment, use one of these methods (see `directives/Deployment & Operations.md` for full details):
 
 ### Option A: tmux (testing / first week)
 

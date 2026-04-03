@@ -1,0 +1,61 @@
+# SPY H1 Intraday Mean Reversion — research pipeline configuration
+# Data: SPY_H1.parquet (26k bars, May 2018 - Mar 2026)
+#
+# SPY rationale:
+#   - Intraday VWAP reversion is well-documented in US equities
+#   - Transaction costs are tiny relative to bar range (~$1.30 avg H-L)
+#   - Clear session structure (NYSE open/close) anchors the VWAP cleanly
+#   - ATR regimes are more distinct: low-vol sideways vs trending
+
+[base]
+instrument = "SPY"
+timeframe  = "H1"
+
+[vwap]
+# Anchor VWAP at NYSE open (14:00 UTC = 09:00 ET pre-open bar on H1).
+anchor_sessions = ["us"]
+
+# ---------------------------------------------------------------------------
+# Signal
+# ---------------------------------------------------------------------------
+[signal]
+method = "percentile"
+
+# 250 H1 bars ≈ 50 trading days (1 quarter).
+percentile_window = 250
+
+tiers_pct  = [0.90, 0.95, 0.98, 0.99, 0.999]
+tier_sizes = [1, 2, 4, 8, 8]
+
+# $0.50 basket TP — typical SPY reversion move is $0.50-2.00 per H1 bar.
+profit_margin = 0.50
+
+# Exit at 50% reversion toward daily VWAP.
+reversion_target_pct = 0.5
+
+# First 3 hours of US session: highest VWAP mean-reversion tendency.
+# 14:00-17:00 UTC = 10:00-13:00 ET (after opening volatility settles).
+session_filter = "us_regular"
+
+invalidation_pct = 0.9999
+
+# ---------------------------------------------------------------------------
+# Regime gate — ATR percentile only (Hurst unreliable on H1 short windows)
+# ---------------------------------------------------------------------------
+[regime]
+atr_period  = 14
+gate_window = 250    # rolling reference window (~50 trading days)
+gate_pct    = 0.35   # slightly more permissive than FX — SPY has cleaner regimes
+
+# ---------------------------------------------------------------------------
+# Risk
+# ---------------------------------------------------------------------------
+[risk]
+# Force-close at 20:00 UTC = 16:00 ET (NYSE close).
+ny_close_utc = 20
+risk_pct     = 0.01
+leverage_cap = 5.0    # equities: lower leverage cap
+
+[atr]
+period = 14
+mults  = [1.0, 1.5, 2.0, 2.5, 3.0]

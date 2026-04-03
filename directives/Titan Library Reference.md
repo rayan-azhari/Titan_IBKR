@@ -1,6 +1,6 @@
 # Titan Library Reference
 
-> Last updated: 2026-03-14
+> Last updated: 2026-04-03
 
 **Package Name:** `titan-ibkr-algo`
 **Import Name:** `titan`
@@ -101,18 +101,39 @@ Quantitative models for market physics and trading costs.
 
 ---
 
-### 5. `titan.strategies`
+### 5. `titan.risk`
 
-Production-grade strategy logic, separated from the execution harness.
+Portfolio-level risk management shared by all live strategies.
 
-- **`titan.strategies.orb`**: Opening Range Breakout — 7 US equities, bracket orders, EOD flatten.
-- **`titan.strategies.mtf`**: Multi-Timeframe Confluence — EUR/USD, H1/H4/D/W, 2-layer exit.
-- **`titan.strategies.ml`**: Machine Learning signal generation + feature engineering.
-  - `titan.strategies.ml.features` must match training code exactly to avoid feature drift.
+- **`titan.risk.portfolio_risk_manager`**: Module-level singleton, auto-loads from `config/risk.toml [portfolio]`.
+  - `register_strategy(id, equity)` -- call in on_start()
+  - `update(id, equity)` -- call on every bar
+  - `halt_all` -- True when portfolio DD exceeds 15% (kill switch)
+  - `scale_factor` -- [0.25, 1.0] multiplier for position sizes (scales down from 10% DD)
+  - `check_correlation_regime()` -- pairwise correlation alerts (r > 0.85)
 
 ---
 
-### 6. `titan.utils`
+### 6. `titan.strategies`
+
+Production-grade strategy logic, separated from the execution harness.
+
+- **`titan.strategies.ic_equity_daily`**: IC mean-reversion -- 7 US equities, daily RSI(21) deviation.
+- **`titan.strategies.ic_generic`**: Asset-agnostic IC strategy framework.
+- **`titan.strategies.ic_mtf`**: IC multi-timeframe FX signals.
+- **`titan.strategies.mtf`**: MTF Confluence -- EUR/USD, H1/H4/D/W, continuous forecasts, conviction sizing.
+- **`titan.strategies.orb`**: Opening Range Breakout -- 7 US equities, bracket orders, EOD flatten.
+- **`titan.strategies.etf_trend`**: ETF Trend -- 7 ETFs (SPY/QQQ/IWB/TQQQ/EFA/GLD/DBC), MOC orders.
+- **`titan.strategies.mr_fx`**: Mean Reversion FX -- EUR/USD M5, VWAP deviation grid, regime-gated.
+- **`titan.strategies.ml`**: ML signal classifier + shared feature engineering.
+  - `titan.strategies.ml.features` must match training code exactly to avoid feature drift.
+- **`titan.strategies.turtle`**: Turtle Trading -- Donchian breakout + ATR sizing.
+
+All strategies are integrated with `PortfolioRiskManager` (register, update, halt check, scale_factor).
+
+---
+
+### 7. `titan.utils`
 
 Operational utilities for production handling.
 

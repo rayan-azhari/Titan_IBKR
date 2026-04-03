@@ -5,7 +5,7 @@ weighting scheme from config/mtf.toml.  Generates weighted confluence
 scores that drive both long and short entries, then runs a vectorised
 backtest via VectorBT with IS/OOS validation.
 
-Directive: Alpha Research Loop (VectorBT).md
+Directive: Backtesting & Validation.md
 """
 
 import sys

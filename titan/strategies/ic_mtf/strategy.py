@@ -79,7 +79,7 @@ class ICMTFConfig(StrategyConfig):
 
     instrument_id: str
     bar_types: dict[str, str]  # {"H1": "EUR/USD.IDEALPRO-1-HOUR-MID-EXTERNAL", ...}
-    threshold: float = 0.75    # z-score entry threshold (Phase 3 best for EUR/USD)
+    threshold: float = 0.75  # z-score entry threshold (Phase 3 best for EUR/USD)
     risk_pct: float = 0.01
     stop_atr_mult: float = 1.5
     leverage_cap: float = 20.0
@@ -168,11 +168,7 @@ class ICMTFStrategy(Strategy):
                 self.log.warning(f"Warmup file not found: {path}")
                 continue
             try:
-                df = (
-                    pd.read_parquet(path)
-                    .sort_index()
-                    .tail(self.config.warmup_bars)
-                )
+                df = pd.read_parquet(path).sort_index().tail(self.config.warmup_bars)
             except Exception as e:
                 self.log.error(f"Failed to load {path}: {e}")
                 continue
@@ -332,9 +328,7 @@ class ICMTFStrategy(Strategy):
         # Entry / flip
         if new_bias != 0 and new_bias != current_dir:
             if current_dir != 0:
-                self.log.info(
-                    f"Signal flip: {current_dir:+d} -> {new_bias:+d} | z={z:+.3f}"
-                )
+                self.log.info(f"Signal flip: {current_dir:+d} -> {new_bias:+d} | z={z:+.3f}")
                 self.cancel_all_orders(self.instrument_id)
                 self.close_all_positions(self.instrument_id)
             side = OrderSide.BUY if new_bias == 1 else OrderSide.SELL

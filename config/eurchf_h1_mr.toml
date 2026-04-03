@@ -1,0 +1,63 @@
+# EUR/CHF M5 Intraday Mean Reversion — research pipeline configuration
+# Data source: EUR_CHF_M5.parquet (146k bars, 2024-03 to 2026-03)
+# EUR/CHF is a stronger MR candidate than EUR/USD due to SNB intervention
+# dynamics creating sharp spikes that revert quickly.
+
+[base]
+instrument = "EUR_CHF"
+timeframe  = "M5"
+
+# ---------------------------------------------------------------------------
+# VWAP anchor sessions
+# ---------------------------------------------------------------------------
+[vwap]
+anchor_sessions = ["london", "ny"]
+
+# ---------------------------------------------------------------------------
+# Signal configuration — same M5 cadence as EUR/USD
+# ---------------------------------------------------------------------------
+[signal]
+method = "percentile"
+
+# 1000 M5 bars ≈ 3.5 trading days.
+percentile_window = 1000
+
+tiers_pct  = [0.90, 0.95, 0.98, 0.99, 0.999]
+tier_sizes = [1, 2, 4, 8, 8]
+
+# EUR/CHF spreads are tighter (~0.3-0.5 pip) — 3 pip TP target.
+profit_margin = 0.0003
+
+# 50% reversion TP (half-way back to VWAP).
+reversion_target_pct = 0.5
+
+# London open — SNB intervention impact is largest during EU hours.
+session_filter = "london_core"
+
+invalidation_pct = 0.9999
+
+# ---------------------------------------------------------------------------
+# Regime filter
+# ---------------------------------------------------------------------------
+[regime]
+hmm_states   = 3
+hmm_min_bars = 200
+
+# Start with a lenient gate — EUR/CHF regimes are more distinct than EUR/USD.
+p_ranging_thresh = 0.40
+hurst_window     = 500
+hurst_thresh     = 0.52
+sg_window        = 11
+sg_poly          = 3
+
+# ---------------------------------------------------------------------------
+# Risk management
+# ---------------------------------------------------------------------------
+[risk]
+ny_close_utc = 21
+risk_pct     = 0.01
+leverage_cap = 20.0
+
+[atr]
+period = 14
+mults  = [1.0, 1.5, 2.0, 2.5, 3.0]

@@ -1,24 +1,30 @@
 # Directive: Ensemble Strategy Framework
 
-> Last updated: 2026-03-14
+> Last updated: 2026-04-03
 
 ## Goal
 
-Run **multiple uncorrelated strategies** simultaneously, combining their signals into a weighted
-ensemble to reduce single-strategy risk and improve capital efficiency.
+Run **multiple uncorrelated strategies** simultaneously under a shared portfolio risk layer
+(`PortfolioRiskManager`) to reduce single-strategy risk and improve capital efficiency.
 
 ## Current Strategy Status
 
-| Strategy | Status | Ensemble-Ready? |
-|---|---|---|
-| ORB (7 US equities) | Live (deployed Mar 2026) | Yes — after ≥ 1 month live track record |
-| MTF (EUR/USD H1/H4/D/W) | Deployment-ready (OOS Sharpe 2.936) | After ≥ 1 week clean paper session |
-| ML (XGBoost, EUR/USD) | Experimental (OOS Sharpe 1.142) | No — below 1.5 threshold |
+| Strategy | Status | Instruments | PortfolioRM |
+|---|---|---|---|
+| IC Equity Daily (mean-reversion) | Live | 7 US equities | Wired |
+| MTF Confluence (FX trend) | Live | EUR/USD | Wired |
+| ORB (intraday breakout) | Live | 7 US equities | Wired |
+| ETF Trend (daily trend) | Live | SPY, QQQ, IWB, TQQQ, EFA, GLD, DBC | Wired |
+| MR FX (intraday mean-reversion) | Live | EUR/USD M5 | Wired |
+| ML Classifier (PSKY, QQQ, EUR_USD) | Validation | Daily | Tier 2 deployment |
+
+All 5 live strategies are connected to the shared `PortfolioRiskManager` singleton
+(April 2026). Portfolio-level drawdown kill switch (15%) and proportional scaling (10%)
+are active across all strategies.
 
 > [!IMPORTANT]
-> MTF must complete at least one full week of clean paper trading before ensemble registration.
-> ORB and MTF trade different instruments (equities vs forex) — naturally low correlation,
-> making them strong ensemble candidates.
+> See `directives/System Status and Roadmap.md` for the full system status, target
+> portfolio composition (8 buckets), and implementation roadmap (Tier 1-3).
 
 ---
 

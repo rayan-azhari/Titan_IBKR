@@ -4,7 +4,7 @@ Sweeps confirmation_threshold and ma_type (SMA / EMA / WMA) across all
 timeframes in the MTF Confluence strategy.  Uses IS/OOS validation to
 avoid overfitting.
 
-Directive: Alpha Research Loop (VectorBT).md  —  Step 6 (MTF Confluence)
+Directive: Backtesting & Validation.md  —  VectorBT sweep (MTF Confluence)
 
 Usage:
     uv run python research/mtf/run_optimisation.py                  # EUR/USD

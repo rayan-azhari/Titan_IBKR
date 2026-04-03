@@ -82,12 +82,11 @@ def _tbm_kernel(
             hit_lower = low[idx] <= sl
 
             if hit_upper and hit_lower:
-                # Both barriers touched in the same bar.
-                # Award to whichever is closer to entry in price terms.
-                if (pt - close[t]) <= (close[t] - sl):
-                    labels[t] = 1
-                else:
-                    labels[t] = -1
+                # Both barriers touched in the same bar — intra-bar
+                # order is unknown. Label as 0 (inconclusive) to avoid
+                # systematic bias toward the closer barrier (which is
+                # always the SL when PT_MULT > SL_MULT).
+                labels[t] = 0
                 break
             elif hit_upper:
                 labels[t] = 1

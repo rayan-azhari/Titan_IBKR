@@ -1,0 +1,65 @@
+# EUR/USD H1 Intraday Mean Reversion — research pipeline configuration
+# Data source: EUR_USD_H1.parquet (134k bars, 2005-2026)
+
+[base]
+instrument = "EUR_USD"
+timeframe  = "H1"
+
+[vwap]
+anchor_sessions = ["london", "ny"]
+
+# ---------------------------------------------------------------------------
+# Signal — H1-tuned
+# ---------------------------------------------------------------------------
+[signal]
+method = "percentile"
+
+# 500 H1 bars ≈ 3 weeks of trading.
+percentile_window = 500
+
+tiers_pct  = [0.90, 0.95, 0.98, 0.99, 0.999]
+tier_sizes = [1, 2, 4, 8, 8]
+
+# H1 typical bar range ~18 pip; 10 pip TP target.
+profit_margin = 0.0010
+
+# Exit at 50% reversion toward VWAP.
+reversion_target_pct = 0.5
+
+# London core: bars at hours 7-11 UTC (5 bars/day).
+session_filter = "london_core"
+
+invalidation_pct = 0.9999
+
+# ---------------------------------------------------------------------------
+# Regime filter — ATR percentile gate (replaces HMM)
+# ---------------------------------------------------------------------------
+[regime]
+# ATR gate: enter only when ATR(14) < 30th percentile of its rolling 500-bar
+# distribution.  Selects quiet, ranging periods without any model training.
+atr_period   = 14
+gate_window  = 500           # rolling reference window (~3 weeks on H1)
+gate_pct     = 0.30          # bottom 30% of volatility = allowed to trade
+
+# Hurst as secondary gate.
+hurst_window = 200
+hurst_thresh = 0.52
+
+# Legacy HMM fields (unused — kept so shared code doesn't KeyError)
+hmm_states   = 3
+hmm_min_bars = 100
+p_ranging_thresh = 0.40
+sg_window        = 7
+sg_poly          = 3
+
+# ---------------------------------------------------------------------------
+# Risk
+# ---------------------------------------------------------------------------
+[risk]
+ny_close_utc = 21
+risk_pct     = 0.01
+leverage_cap = 20.0
+
+[atr]
+period = 14
+mults  = [1.0, 1.5, 2.0, 2.5, 3.0]

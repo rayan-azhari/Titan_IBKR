@@ -12,6 +12,7 @@ ma_type = "WMA"
 confirmation_threshold = 0.10
 exit_buffer = 0.10           # Hold through neutral zone; exit long only when score < -0.10
 atr_stop_mult = 4.0
+position_inertia_pct = 0.10  # Only rebalance when score changes by > 10% (reduces turnover)
 
 [weights]
 H1 = 0.10

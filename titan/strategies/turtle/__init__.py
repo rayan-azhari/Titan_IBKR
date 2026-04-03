@@ -1,4 +1,4 @@
-from .strategy import TurtleStrategy, TurtleConfig
+from .strategy import TurtleConfig, TurtleStrategy
 
 __all__ = [
     "TurtleStrategy",

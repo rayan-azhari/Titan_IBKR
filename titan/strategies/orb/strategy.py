@@ -28,6 +28,7 @@ from nautilus_trader.trading.strategy import Strategy
 
 # Reuse indicators from the ML features module (which has SMA, RSI, ATR)
 from titan.indicators.gaussian_filter import _gaussian_channel_kernel
+from titan.risk.portfolio_risk_manager import portfolio_risk_manager
 from titan.strategies.ml.features import atr, rsi, sma
 
 ET = ZoneInfo("America/New_York")
@@ -141,6 +142,10 @@ class ORBStrategy(Strategy):
         # Warmup
         self._warmup_all()
 
+        # Register with portfolio risk manager
+        self._prm_id = f"orb_{self.ticker}"
+        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+
     def _warmup_all(self):
         """Load history to pre-calculate daily indicators."""
         project_root = Path(__file__).resolve().parents[3]
@@ -197,6 +202,20 @@ class ORBStrategy(Strategy):
 
     def on_bar(self, bar: Bar):
         """Lifecycle: New Bar Closed."""
+        # Portfolio risk manager: update equity on daily bars + check halt
+        if bar.bar_type == self.bt_1d:
+            accounts = self.cache.accounts()
+            if accounts:
+                acct = accounts[0]
+                ccys = list(acct.balances().keys())
+                if ccys:
+                    equity = float(acct.balance_total(ccys[0]).as_double())
+                    portfolio_risk_manager.update(self._prm_id, equity)
+        if portfolio_risk_manager.halt_all:
+            self.log.warning("Portfolio kill switch active -- flattening.")
+            self.close_all_positions(self.instrument_id)
+            return
+
         dt = unix_nanos_to_dt(bar.ts_event)
 
         if bar.bar_type == self.bt_1d:
@@ -453,7 +472,10 @@ class ORBStrategy(Strategy):
         raw_units = risk_amount / risk_per_share
 
         max_units = (equity * self.config.leverage_cap) / float(fill_price)
-        units = int(min(raw_units, max_units))
+        units = min(raw_units, max_units)
+
+        # Apply portfolio-level scale factor (drawdown heat reduction)
+        units = int(units * portfolio_risk_manager.scale_factor)
 
         if units == 0:
             self.log.warning(f"[{self.ticker}] Sizing calculated 0 units. Trade skipped.")

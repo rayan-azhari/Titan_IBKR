@@ -503,6 +503,7 @@ def run_instrument_sweep(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Parameter-optimized 52-signal ML sweep.")
     parser.add_argument("--instrument", default=None, help="Single instrument (default: all).")
+    parser.add_argument("--tf", default=None, help="Override timeframe for all instruments.")
     parser.add_argument("--fast", action="store_true", help="Reduced grid (~4x faster).")
     args = parser.parse_args()
 
@@ -511,6 +512,10 @@ def main() -> None:
             instruments = {args.instrument: TARGET_INSTRUMENTS[args.instrument]}
         else:
             instruments = {args.instrument: ("H1", "fx")}
+        if args.tf:
+            instruments = {k: (args.tf, v[1]) for k, v in instruments.items()}
+    elif args.tf:
+        instruments = {k: (args.tf, v[1]) for k, v in TARGET_INSTRUMENTS.items()}
     else:
         instruments = TARGET_INSTRUMENTS
 

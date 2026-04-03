@@ -55,6 +55,7 @@ from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 from scipy.stats import spearmanr
 
+from titan.risk.portfolio_risk_manager import portfolio_risk_manager
 from titan.strategies.ml.features import atr, rsi
 
 # ---------------------------------------------------------------------------
@@ -97,13 +98,13 @@ class ICEquityDailyConfig(StrategyConfig):
     """Configuration for the IC Equity Daily Strategy."""
 
     instrument_id: str
-    bar_type_d: str          # e.g. "UNH.NYSE-1-DAY-LAST-EXTERNAL"
-    ticker: str              # e.g. "UNH" (used to locate parquet file)
+    bar_type_d: str  # e.g. "UNH.NYSE-1-DAY-LAST-EXTERNAL"
+    ticker: str  # e.g. "UNH" (used to locate parquet file)
     threshold: float = 0.75  # z-score entry threshold
     risk_pct: float = 0.005  # 0.5% equity risk per trade (reduced — Phase 5)
     stop_atr_mult: float = 1.5
     leverage_cap: float = 5.0
-    warmup_bars: int = 504   # 2 years of daily bars
+    warmup_bars: int = 504  # 2 years of daily bars
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +134,7 @@ class ICEquityDailyStrategy(Strategy):
         self.history: list[dict] = []
 
         # IS calibration (frozen after warmup)
-        self._ic_sign_val: float = -1.0   # default: mean-reversion
+        self._ic_sign_val: float = -1.0  # default: mean-reversion
         self._comp_mu: float = 0.0
         self._comp_sigma: float = 1.0
         self._calibrated: bool = False
@@ -154,11 +155,17 @@ class ICEquityDailyStrategy(Strategy):
 
     def on_start(self) -> None:
         self.log.info(
-            f"IC Equity Daily starting — {self.config.ticker}"
-            f" | threshold=±{self.config.threshold}z"
+            f"IC Equity Daily starting -- {self.config.ticker}"
+            f" | threshold=+/-{self.config.threshold}z"
         )
         self.subscribe_bars(self.bar_type_d)
         self._warmup_and_calibrate()
+
+        # Register with portfolio risk manager
+        strategy_id = f"ic_equity_{self.config.ticker}"
+        portfolio_risk_manager.register_strategy(strategy_id, 10_000.0)
+        self._prm_id = strategy_id
+
         self.log.info(
             f"Ready | calibrated={self._calibrated}"
             f" | ic_sign={self._ic_sign_val:+.0f}"
@@ -177,11 +184,7 @@ class ICEquityDailyStrategy(Strategy):
             return
 
         try:
-            df = (
-                pd.read_parquet(path)
-                .sort_index()
-                .tail(self.config.warmup_bars)
-            )
+            df = pd.read_parquet(path).sort_index().tail(self.config.warmup_bars)
         except Exception as e:
             self.log.error(f"Failed to load {path}: {e}")
             return
@@ -192,13 +195,15 @@ class ICEquityDailyStrategy(Strategy):
 
         # Seed live history buffer
         for t, row in df.iterrows():
-            self.history.append({
-                "time": t,
-                "open": float(row.get("open", row["close"])),
-                "high": float(row.get("high", row["close"])),
-                "low": float(row.get("low", row["close"])),
-                "close": float(row["close"]),
-            })
+            self.history.append(
+                {
+                    "time": t,
+                    "open": float(row.get("open", row["close"])),
+                    "high": float(row.get("high", row["close"])),
+                    "low": float(row.get("low", row["close"])),
+                    "close": float(row["close"]),
+                }
+            )
 
         close = df["close"].astype(float)
         signal = _rsi_21_dev(close)
@@ -240,18 +245,33 @@ class ICEquityDailyStrategy(Strategy):
         if bar.bar_type != self.bar_type_d:
             return
 
-        self.history.append({
-            "time": unix_nanos_to_dt(bar.ts_event),
-            "open": float(bar.open),
-            "high": float(bar.high),
-            "low": float(bar.low),
-            "close": float(bar.close),
-        })
+        self.history.append(
+            {
+                "time": unix_nanos_to_dt(bar.ts_event),
+                "open": float(bar.open),
+                "high": float(bar.high),
+                "low": float(bar.low),
+                "close": float(bar.close),
+            }
+        )
         # Keep rolling window
         if len(self.history) > self.config.warmup_bars + 50:
-            self.history = self.history[-self.config.warmup_bars:]
+            self.history = self.history[-self.config.warmup_bars :]
 
         if not self._calibrated:
+            return
+
+        # Portfolio risk manager: update equity + check halt
+        accounts = self.cache.accounts()
+        if accounts:
+            acct = accounts[0]
+            ccys = list(acct.balances().keys())
+            if ccys:
+                equity = float(acct.balance_total(ccys[0]).as_double())
+                portfolio_risk_manager.update(self._prm_id, equity)
+        if portfolio_risk_manager.halt_all:
+            self.log.warning("Portfolio kill switch active -- flattening.")
+            self.close_all_positions(self.instrument_id)
             return
 
         self._update_atr()
@@ -304,9 +324,7 @@ class ICEquityDailyStrategy(Strategy):
         # Entry or flip
         if new_bias != 0 and new_bias != current_dir:
             if current_dir != 0:
-                self.log.info(
-                    f"Signal flip {current_dir:+d} -> {new_bias:+d} | z={z:+.3f}"
-                )
+                self.log.info(f"Signal flip {current_dir:+d} -> {new_bias:+d} | z={z:+.3f}")
                 self.cancel_all_orders(self.instrument_id)
                 self.close_all_positions(self.instrument_id)
             side = OrderSide.BUY if new_bias == 1 else OrderSide.SELL
@@ -361,6 +379,9 @@ class ICEquityDailyStrategy(Strategy):
         else:
             units = 0
 
+        # Apply portfolio-level scale factor (drawdown heat reduction)
+        units *= portfolio_risk_manager.scale_factor
+
         if int(units) < 1:
             self.log.warning(f"Calculated size < 1 share (units={units:.2f}) — skipping.")
             return
@@ -403,14 +424,10 @@ class ICEquityDailyStrategy(Strategy):
         self.log.info(f"ORDER SUBMITTED: {event.client_order_id}")
 
     def on_order_accepted(self, event) -> None:
-        self.log.info(
-            f"ORDER ACCEPTED: {event.client_order_id} venue={event.venue_order_id}"
-        )
+        self.log.info(f"ORDER ACCEPTED: {event.client_order_id} venue={event.venue_order_id}")
 
     def on_order_rejected(self, event) -> None:
-        self.log.error(
-            f"ORDER REJECTED: {event.client_order_id} — {event.reason}"
-        )
+        self.log.error(f"ORDER REJECTED: {event.client_order_id} — {event.reason}")
         if event.client_order_id in self._entry_order_ids:
             self._entry_order_ids.discard(event.client_order_id)
             self._entry_pending = False

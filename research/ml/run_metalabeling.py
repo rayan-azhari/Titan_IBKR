@@ -64,9 +64,10 @@ def _load_parquet(pair: str, gran: str) -> pd.DataFrame:
 
 
 def _rsi(close: pd.Series, period: int) -> pd.Series:
+    """RSI using Wilder's smoothing (EMA with alpha=1/period)."""
     delta = close.diff()
-    gain = delta.where(delta > 0, 0.0).rolling(period).mean()
-    loss = (-delta.where(delta < 0, 0.0)).rolling(period).mean()
+    gain = delta.where(delta > 0, 0.0).ewm(alpha=1.0 / period, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0.0)).ewm(alpha=1.0 / period, adjust=False).mean()
     rs = gain / loss
     return 100.0 - (100.0 / (1.0 + rs))
 
@@ -198,32 +199,35 @@ def build_meta_features(
 def purged_kfold_splits(
     n: int, k: int = 5, embargo: int = 24
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Time-series Purged K-Fold with embargo.
+    """Walk-forward expanding splits with embargo.
 
-    For each fold:
+    Unlike combinatorial purged K-Fold, this NEVER trains on future data.
+    Each fold trains on all data BEFORE the test window (minus embargo),
+    preventing look-ahead bias that occurs when future folds leak into training.
+
+    For each fold i (starting from 1):
+      - train = rows [0 : fold_start - embargo]
       - test  = rows [fold_start : fold_end]
-      - train = rows NOT in [fold_start - embargo : fold_end + embargo]
 
     Args:
         n: Total number of observations.
         k: Number of folds.
-        embargo: Bars to exclude on each side of test set.
+        embargo: Bars to exclude between train and test sets.
 
     Returns:
         List of (train_idx, test_idx) tuples.
     """
     fold_size = n // k
     splits = []
-    for i in range(k):
+    all_idx = np.arange(n)
+    # Start from fold 1 — fold 0 has no prior training data
+    for i in range(1, k):
         test_start = i * fold_size
         test_end = min(test_start + fold_size, n)
+        train_end = max(0, test_start - embargo)
 
-        purge_start = max(0, test_start - embargo)
-        purge_end = min(n, test_end + embargo)
-
-        all_idx = np.arange(n)
+        train_idx = all_idx[:train_end]
         test_idx = all_idx[test_start:test_end]
-        train_idx = np.concatenate([all_idx[:purge_start], all_idx[purge_end:]])
 
         if len(train_idx) > 0 and len(test_idx) > 0:
             splits.append((train_idx, test_idx))
@@ -340,7 +344,11 @@ def main() -> None:
 
     X = feats_active.values
     y = labels_active.values
-    fwd_ret = h1_close_active.pct_change(1).shift(-1).fillna(0).values
+    # Compute forward returns on the FULL (consecutive) H1 series FIRST,
+    # then filter to active bars. This avoids inflated returns when
+    # pct_change() spans non-consecutive bars after filtering.
+    h1_fwd_ret_full = h1_df["close"].pct_change(1).shift(-1)
+    fwd_ret = h1_fwd_ret_full.reindex(feats_active.index).fillna(0).values
 
     splits = purged_kfold_splits(len(X), k=K_FOLDS, embargo=EMBARGO_BARS)
 

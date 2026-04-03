@@ -1,0 +1,109 @@
+# EUR/USD Intraday Mean Reversion — research pipeline configuration
+# Written by: research/mean_reversion/
+# Updated by: run_stage3_full.py (overwrites [signal] and [regime] after gate pass)
+#
+# DO NOT hand-edit the [signal] and [regime] sections after Stage 3 has run.
+# Those values are the output of the optimisation pipeline.
+
+[base]
+instrument = "EUR_USD"
+timeframe  = "M5"
+
+# ---------------------------------------------------------------------------
+# VWAP anchor sessions
+# ---------------------------------------------------------------------------
+[vwap]
+# Sessions at which the cumulative VWAP resets.
+# "london" = 07:00 UTC anchor, "ny" = 13:00 UTC anchor.
+anchor_sessions = ["london", "ny"]
+
+# ---------------------------------------------------------------------------
+# Signal configuration
+# ---------------------------------------------------------------------------
+[signal]
+# Entry level method: "percentile" uses empirical distribution quantiles;
+# "atr" uses ATR multiples from VWAP.  Sweep both in Stage 1.
+method = "percentile"
+
+# Rolling lookback for percentile distribution (bars at M5 granularity).
+# 2000 bars ≈ 7 trading days.
+percentile_window = 2000
+
+# Short-side entry tier thresholds (positive tail).
+# Long-side uses the symmetric negative thresholds.
+# Tier 1 (90th pct) = most frequent entries; Tier 5 (99.9th pct) = rarest.
+tiers_pct = [0.90, 0.95, 0.98, 0.99, 0.999]
+
+# Lot sizes per tier — exponential schedule compresses break-even price.
+# Total units = sum(tier_sizes) = 24.
+tier_sizes = [1, 2, 4, 8, 8]
+
+# Global take-profit: close basket when price clears basket_vwap_entry by
+# this many price units (0.0005 = 5 pips on EUR/USD).
+profit_margin = 0.0005
+
+# Partial reversion TP: exit when deviation returns to this fraction of the
+# tier-1 entry level.  0.5 = exit at 50% reversion (halfway back to VWAP).
+# Replaces waiting for full VWAP reversion, which over-holds positions.
+reversion_target_pct = 0.5
+
+# Session filter for entry signals.  Options:
+#   "none"         — all hours
+#   "london"       — 07:00–16:00 UTC (London + overlap)
+#   "london_core"  — 07:00–12:00 UTC (first 5 hours of London only)
+#   "london+ny"    — 07:00–21:00 UTC
+session_filter = "london_core"
+
+# Hard invalidation: close ALL positions immediately when |deviation|
+# exceeds the 99.99th percentile of the rolling distribution.
+invalidation_pct = 0.9999
+
+# ---------------------------------------------------------------------------
+# Regime filter
+# ---------------------------------------------------------------------------
+[regime]
+# Number of HMM hidden states.  3 = Ranging / Trending / High-Vol.
+hmm_states = 3
+
+# Minimum bars of history before HMM produces a valid posterior.
+hmm_min_bars = 200
+
+# Minimum P(ranging) required for the gate to allow entries.
+p_ranging_thresh = 0.65
+
+# Rolling Hurst exponent lookback (bars at M5).
+# 500 bars ≈ 41 hours of trading.
+hurst_window = 500
+
+# Maximum Hurst value for the series to be classified as mean-reverting.
+# H < 0.5 → mean-reverting; H = 0.5 → random walk; H > 0.5 → trending.
+hurst_thresh = 0.50
+
+# Savitzky-Golay smoothing window for HMM observation vector.
+# Must be odd.  Larger values = smoother, less HMM whipsawing.
+sg_window = 11
+
+# Savitzky-Golay polynomial order (must be < sg_window).
+sg_poly = 3
+
+# ---------------------------------------------------------------------------
+# Risk management
+# ---------------------------------------------------------------------------
+[risk]
+# Force-close all positions at this UTC hour (NY session close).
+# Avoids overnight gap risk, wide rollover spreads, and swap fees.
+ny_close_utc = 21
+
+# Capital at risk as fraction of equity per full ladder deployment.
+risk_pct = 0.01
+
+# Maximum leverage cap.
+leverage_cap = 20.0
+
+# ---------------------------------------------------------------------------
+# ATR entry levels (alternative to percentile — set signal.method = "atr")
+# ---------------------------------------------------------------------------
+[atr]
+period = 14
+# Multipliers for each tier (analogous to tiers_pct above).
+mults = [1.0, 1.5, 2.0, 2.5, 3.0]

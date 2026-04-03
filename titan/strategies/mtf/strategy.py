@@ -21,6 +21,7 @@ import tomllib
 from decimal import Decimal
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.core.datetime import unix_nanos_to_dt
@@ -31,6 +32,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency, Quantity
 from nautilus_trader.trading.strategy import Strategy
 
+from titan.risk.portfolio_risk_manager import portfolio_risk_manager
 from titan.strategies.ml.features import atr, ema, rsi, sma, wma
 
 
@@ -85,6 +87,11 @@ class MTFConfluenceStrategy(Strategy):
         # Guard against multiple bars firing entries before position cache updates
         self._entry_pending: bool = False
 
+        # Position inertia: only rebalance when score changes direction or
+        # target size differs from current by > inertia threshold (reduces turnover).
+        self._prev_score: float = 0.0
+        self._position_inertia_pct: float = float(self.toml_cfg.get("position_inertia_pct", 0.10))
+
     def _load_toml(self, path: str) -> dict:
         p = Path(path)
         if not p.exists():
@@ -101,6 +108,11 @@ class MTFConfluenceStrategy(Strategy):
         for bt in self.bar_type_map.keys():
             self.subscribe_bars(bt)
         self._warmup_all()
+
+        # Register with portfolio risk manager
+        self._prm_id = "mtf_confluence"
+        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+
         self.log.info(
             f"Warmup complete. ATR size mult: {self._atr_stop_mult}x. Exit: signal reversal only."
         )
@@ -201,6 +213,20 @@ class MTFConfluenceStrategy(Strategy):
         if len(self.history[tf]) > self.config.warmup_bars + 100:
             self.history[tf] = self.history[tf][-self.config.warmup_bars :]
 
+        # Portfolio risk manager: update equity + check halt
+        accounts = self.cache.accounts()
+        if accounts:
+            acct = accounts[0]
+            ccys = list(acct.balances().keys())
+            if ccys:
+                equity = float(acct.balance_total(ccys[0]).as_double())
+                portfolio_risk_manager.update(self._prm_id, equity)
+        if portfolio_risk_manager.halt_all:
+            self.log.warning("Portfolio kill switch active -- flattening.")
+            for instrument_id in self.bar_type_map.values():
+                self.close_all_positions(self.instrument_id)
+            return
+
         self._update_signal(tf)
         self._evaluate_confluence(price=bar.close)
 
@@ -250,9 +276,25 @@ class MTFConfluenceStrategy(Strategy):
             "slow_ma": last_slow,
             "rsi": last_rsi,
         }
-        self.signals[tf] = (0.5 if last_fast > last_slow else -0.5) + (
-            0.5 if last_rsi > 50 else -0.5
-        )
+
+        # Continuous forecast: scale with conviction instead of binary +/-0.5.
+        # MA component: normalized spread, tanh-capped to [-0.5, +0.5].
+        # RSI component: linear (rsi-50)/50, range [-0.5, +0.5].
+        # Total per-TF signal: [-1.0, +1.0].
+        if last_slow != 0:
+            ma_spread = (last_fast - last_slow) / abs(last_slow)
+            # Compute rolling std of spread for normalization (use 20-bar window)
+            if len(close) >= 20:
+                spread_series = (s_fast - s_slow) / s_slow.abs().clip(lower=1e-10)
+                spread_std = float(spread_series.tail(20).std())
+                if spread_std > 1e-10:
+                    ma_spread = ma_spread / spread_std
+            ma_signal = float(np.tanh(ma_spread)) * 0.5
+        else:
+            ma_signal = 0.0
+        rsi_signal = (last_rsi - 50.0) / 100.0  # range [-0.5, +0.5]
+
+        self.signals[tf] = ma_signal + rsi_signal
 
     # ---------------------------------------------------------------------------
     # Confluence evaluation & execution
@@ -292,6 +334,19 @@ class MTFConfluenceStrategy(Strategy):
         if position and position.is_open:
             current_dir = 1 if str(position.side) == "LONG" else -1
 
+        # Position inertia: skip if score hasn't changed direction and the
+        # magnitude shift is < inertia threshold (reduces whipsaw turnover).
+        score_delta = abs(score - self._prev_score)
+        same_direction = (bias == current_dir) and (current_dir != 0)
+        if same_direction and score_delta < self._position_inertia_pct:
+            return  # position already aligned, change too small to rebalance
+
+        # Conviction scalar: |score| / max_possible (1.0) for position sizing.
+        # Higher conviction = larger position. Minimum 0.3 to avoid dust orders.
+        conviction = max(0.3, min(1.0, abs(score)))
+
+        self._prev_score = score
+
         if bias == 1:
             if current_dir == 1:
                 return
@@ -299,10 +354,10 @@ class MTFConfluenceStrategy(Strategy):
                 self.log.info("Signal Flip: Short -> Long.")
                 self.cancel_all_orders(instrument_id)
                 self.close_all_positions(instrument_id)
-                self._open_position(OrderSide.BUY, price)
+                self._open_position(OrderSide.BUY, price, conviction)
             else:
                 self.log.info("Signal Entry: Long.")
-                self._open_position(OrderSide.BUY, price)
+                self._open_position(OrderSide.BUY, price, conviction)
 
         elif bias == -1:
             if current_dir == -1:
@@ -311,10 +366,10 @@ class MTFConfluenceStrategy(Strategy):
                 self.log.info("Signal Flip: Long -> Short.")
                 self.cancel_all_orders(instrument_id)
                 self.close_all_positions(instrument_id)
-                self._open_position(OrderSide.SELL, price)
+                self._open_position(OrderSide.SELL, price, conviction)
             else:
                 self.log.info("Signal Entry: Short.")
-                self._open_position(OrderSide.SELL, price)
+                self._open_position(OrderSide.SELL, price, conviction)
 
         elif bias == 0:
             # With exit_buffer: hold through the neutral zone.
@@ -333,7 +388,7 @@ class MTFConfluenceStrategy(Strategy):
     # Order management
     # ---------------------------------------------------------------------------
 
-    def _open_position(self, side: OrderSide, price: Decimal) -> None:
+    def _open_position(self, side: OrderSide, price: Decimal, conviction: float = 1.0) -> None:
         """Size and submit market entry. Stop is placed in on_order_filled."""
         if self._entry_pending:
             self.log.debug("Entry already pending — skipping duplicate bar signal.")
@@ -368,7 +423,8 @@ class MTFConfluenceStrategy(Strategy):
             except Exception:
                 self.log.warning(f"No {acct_ccy}/USD FX rate cached; using raw balance for sizing.")
 
-        risk_amount = equity * self.config.risk_pct
+        # Conviction-scaled risk: stronger signal = larger position.
+        risk_amount = equity * self.config.risk_pct * conviction
         # Size against actual stop distance so risk% is accurate
         stop_dist = self.latest_atr * self._atr_stop_mult
         if stop_dist == 0:
@@ -380,6 +436,9 @@ class MTFConfluenceStrategy(Strategy):
             units = min(raw_units, max_units)
         else:
             units = 0
+
+        # Apply portfolio-level scale factor (drawdown heat reduction)
+        units *= portfolio_risk_manager.scale_factor
 
         if int(units) <= 0:
             self.log.warning("Calculated size is 0. Skipping trade.")

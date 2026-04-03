@@ -41,6 +41,8 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.trading.strategy import Strategy
 
+from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+
 ET = ZoneInfo("America/New_York")
 
 # 15:30 ET = 30-min buffer before IBKR's 15:40 MOC cutoff for ARCA
@@ -142,6 +144,11 @@ class ETFTrendStrategy(Strategy):
         self.subscribe_bars(self.bt_1d)
         self._warmup()
 
+        # Register with portfolio risk manager
+        symbol = self.instrument_id.symbol.value
+        self._prm_id = f"etf_trend_{symbol}"
+        portfolio_risk_manager.register_strategy(self._prm_id, self._account_equity() or 10_000.0)
+
     def _warmup(self) -> None:
         """Pre-populate history from the daily parquet file."""
         root = Path(__file__).resolve().parents[3]
@@ -174,6 +181,15 @@ class ETFTrendStrategy(Strategy):
         the .shift(1) anti-look-ahead applied in the backtest).
         """
         if bar.bar_type != self.bt_1d:
+            return
+
+        # Portfolio risk manager: update equity + check halt
+        equity = self._account_equity()
+        if equity > 0:
+            portfolio_risk_manager.update(self._prm_id, equity)
+        if portfolio_risk_manager.halt_all:
+            self.log.warning("Portfolio kill switch active -- flattening.")
+            self.close_all_positions(self.instrument_id)
             return
 
         # Append bar to history
@@ -389,6 +405,9 @@ class ETFTrendStrategy(Strategy):
             target_fraction = float(np.clip((self.cached_decel + 1) / 2, 0.0, 1.0))
         else:
             target_fraction = 1.0
+
+        # Apply portfolio-level scale factor (drawdown heat reduction)
+        target_fraction *= portfolio_risk_manager.scale_factor
 
         units = int((equity * target_fraction) / current_price)
         return Quantity.from_int(units) if units > 0 else None

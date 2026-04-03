@@ -1,0 +1,46 @@
+# EUR/USD Intraday Mean Reversion — Live Strategy Configuration
+# Derived from: research/mean_reversion/ pipeline (Stages 1-3)
+# Config for: titan/strategies/mr_fx/strategy.py
+
+[vwap]
+# Sessions at which the cumulative VWAP resets.
+anchor_sessions = ["london", "ny"]
+
+[signal]
+method = "percentile"
+
+# Rolling lookback for percentile distribution (M5 bars).
+# 2000 bars = ~7 trading days.
+percentile_window = 2000
+
+# Entry tier thresholds (percentiles of deviation distribution).
+# Short enters when deviation > threshold; long enters at symmetric negative.
+tiers_pct = [0.90, 0.95, 0.98, 0.99]
+
+# Lot sizes per tier (exponential schedule compresses break-even).
+tier_sizes = [1, 2, 4, 8]
+
+# Partial reversion TP: exit at 50% reversion toward VWAP.
+reversion_target_pct = 0.5
+
+# Session filter: only enter during London core (07:00-12:00 UTC).
+session_filter = "london_core"
+
+# Hard invalidation: close ALL when |deviation| exceeds 99.99th percentile.
+invalidation_pct = 0.9999
+
+[regime]
+# ATR percentile gate: allow entries only when ATR < 30th percentile
+# of its rolling history (low-vol = ranging = favorable for MR).
+atr_gate_window = 500
+atr_gate_pct = 0.30
+
+[risk]
+# Force-close all positions at this UTC hour (NY session close).
+ny_close_utc = 21
+
+# Capital at risk as fraction of equity per full ladder deployment.
+risk_pct = 0.01
+
+# Maximum leverage cap.
+leverage_cap = 20.0
