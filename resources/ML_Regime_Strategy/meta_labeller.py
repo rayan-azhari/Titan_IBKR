@@ -1,5 +1,4 @@
-"""
-meta_labeller.py
+"""meta_labeller.py
 
 Fixes Gemini's threshold problem.
 
@@ -14,12 +13,13 @@ This module also exposes predict_proba() for continuous position sizing
 (the meta-label probability is MORE useful than a binary threshold in production).
 """
 
+from typing import Dict, Literal, Optional
+
+import joblib
 import numpy as np
 import pandas as pd
+from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 from xgboost import XGBClassifier
-from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score
-from typing import Optional, Dict, Literal
-import joblib
 
 from .cross_validation import PurgedKFold, compute_sample_uniqueness
 
@@ -52,8 +52,7 @@ class MetaLabeller:
         exit_times: pd.Series,
         bar_times: Optional[pd.DatetimeIndex] = None,
     ) -> "MetaLabeller":
-        """
-        Fit meta-labeller with purged/embargoed CV.
+        """Fit meta-labeller with purged/embargoed CV.
 
         Args:
             X:           Features, indexed by entry time.
@@ -188,8 +187,7 @@ class MetaLabeller:
         )
 
     def _tune_threshold(self, y_true: np.ndarray, y_prob: np.ndarray) -> float:
-        """
-        Find threshold maximising target metric on OOF predictions.
+        """Find threshold maximising target metric on OOF predictions.
         Grid search over [0.30, 0.80] at 0.01 increments.
         """
         best_score = -1.0

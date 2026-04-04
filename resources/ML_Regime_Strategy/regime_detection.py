@@ -1,5 +1,4 @@
-"""
-regime_detection.py
+"""regime_detection.py
 
 Fixes two bugs from Gemini's HMM implementation:
 
@@ -15,13 +14,12 @@ Fixes two bugs from Gemini's HMM implementation:
    This ordering is deterministic and physically interpretable.
 """
 
+from typing import Optional, Tuple
+
+import joblib
 import numpy as np
-import pandas as pd
 from hmmlearn import hmm
 from sklearn.preprocessing import StandardScaler
-import joblib
-from typing import Tuple, Optional
-import warnings
 
 
 class RegimeDetector:
@@ -46,8 +44,7 @@ class RegimeDetector:
     # ── Fitting ─────────────────────────────────────────────────────────────
 
     def fit(self, features: np.ndarray) -> "RegimeDetector":
-        """
-        Fit HMM and establish canonical state ordering.
+        """Fit HMM and establish canonical state ordering.
         features: [n_samples x n_features], typically [log_ret, ewm_vol, frac_diff]
         """
         X = self._scaler.fit_transform(features)
@@ -72,8 +69,7 @@ class RegimeDetector:
     # ── Inference ───────────────────────────────────────────────────────────
 
     def predict_sequence(self, features: np.ndarray) -> np.ndarray:
-        """
-        Predict canonical regime labels for a full historical sequence.
+        """Predict canonical regime labels for a full historical sequence.
         Used in research pipeline to label training data.
         """
         self._assert_fitted()
@@ -84,8 +80,7 @@ class RegimeDetector:
     def predict_current_state(
         self, feature_window: np.ndarray
     ) -> Tuple[int, np.ndarray]:
-        """
-        Predict regime for the CURRENT bar given a rolling window of history.
+        """Predict regime for the CURRENT bar given a rolling window of history.
 
         Returns:
             current_state: canonical state label (int)

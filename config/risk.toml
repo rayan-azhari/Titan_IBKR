@@ -20,3 +20,26 @@ correlation_window_days    = 60          # Rolling lookback (days) for live corr
 correlation_halt_threshold = 0.85        # Log WARNING if any strategy pair r > 0.85
 portfolio_max_single_pct   = 60.0        # Max fraction (%) any single strategy holds
 
+# Vol-targeting overlay (Tier 2 #8)
+vol_target_ann_pct         = 12.0        # Target annualized portfolio volatility (%)
+vol_ewma_lambda            = 0.94        # EWMA decay factor (higher = smoother, slower)
+vol_scale_min              = 0.25        # Floor: never shrink below 25% of target size
+vol_scale_max              = 2.0         # Ceiling: never exceed 2x target size
+
+# Regime scaling (Tier 2 #9)
+vix_tier_1                 = 17.8        # Below = full size (calm market)
+vix_tier_2                 = 23.1        # Below = 75% (elevated uncertainty)
+vix_tier_3                 = 30.0        # Below = 50% (stressed); above = 25% (crisis)
+atr_pct_low                = 25.0        # ATR %ile below = size up 1.25x (low-vol regime)
+atr_pct_high               = 75.0        # ATR %ile above = 50% (high vol)
+atr_pct_extreme            = 90.0        # ATR %ile above = 25% (extreme vol)
+
+# Portfolio allocation (Tier 3 #13)
+[allocation]
+rebalance_interval_days    = 21          # Rebalance monthly (~21 trading days)
+ewma_lambda                = 0.94        # EWMA decay for per-strategy vol
+min_weight                 = 0.05        # Floor: every strategy gets at least 5%
+max_weight                 = 0.60        # Ceiling: no strategy exceeds 60%
+min_history_days           = 30          # Min equity observations before allocating
+correlation_penalty_threshold = 0.70     # Penalise pairs with |r| above this
+

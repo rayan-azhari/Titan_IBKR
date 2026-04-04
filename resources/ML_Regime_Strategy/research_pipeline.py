@@ -1,5 +1,4 @@
-"""
-research_pipeline.py
+"""research_pipeline.py
 
 Full end-to-end research pipeline.
 
@@ -13,18 +12,17 @@ The central constraint: every component in this pipeline uses the exact same
 class instances and parameter values as the production Nautilus strategy.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
-from pathlib import Path
-from typing import Optional
 
-from .feature_engine import FeatureEngine
-from .regime_detection import RegimeDetector
-from .labelling import TripleBarrierLabeller
 from .cross_validation import PurgedKFold, compute_sample_uniqueness
+from .feature_engine import FeatureEngine
+from .labelling import TripleBarrierLabeller
 from .meta_labeller import MetaLabeller
-from .position_sizing import FractionalKelly
+from .regime_detection import RegimeDetector
 
 
 def run(
@@ -51,8 +49,7 @@ def run(
     fees: float = 0.001,
     slippage: float = 0.001,
 ) -> dict:
-    """
-    Run the full research pipeline and return trained artefacts + backtest results.
+    """Run the full research pipeline and return trained artefacts + backtest results.
     """
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -89,7 +86,7 @@ def run(
     )
     regime_dist = np.bincount(regimes.values, minlength=n_hmm_states) / len(regimes)
 
-    print(f"  Canonical state descriptions:")
+    print("  Canonical state descriptions:")
     for label, desc in detector.state_descriptions.items():
         print(f"    {desc}  |  frequency: {regime_dist[label]:.1%}")
 
@@ -175,11 +172,11 @@ def run(
     )
     ml.fit(X, meta_y, exit_times, bar_times=prices_aligned.index)
 
-    print(f"  CV results:")
+    print("  CV results:")
     for k, v in ml.cv_results.items():
         print(f"    {k}: {v}")
 
-    print(f"\n  Top features:")
+    print("\n  Top features:")
     print(ml.feature_importance().head(5).to_string())
 
     print("\n" + "=" * 60)
@@ -210,7 +207,7 @@ def run(
     )
 
     stats = portfolio.stats()
-    print(f"\n  Backtest summary:")
+    print("\n  Backtest summary:")
     print(stats.to_string())
 
     print("\n" + "=" * 60)

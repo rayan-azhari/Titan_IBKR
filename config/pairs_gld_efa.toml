@@ -1,0 +1,25 @@
+# ----------------------------------------------------------
+# pairs_gld_efa.toml -- Pairs Trading (GLD / EFA)
+# ----------------------------------------------------------
+# Research validated: OOS Sharpe +1.14, OOS/IS ratio 3.50
+
+[strategy]
+instrument_a = "GLD.ARCA"
+instrument_b = "EFA.ARCA"
+bar_type_a   = "GLD.ARCA-1-DAY-LAST-EXTERNAL"
+bar_type_b   = "EFA.ARCA-1-DAY-LAST-EXTERNAL"
+ticker_a     = "GLD"
+ticker_b     = "EFA"
+
+[signal]
+entry_z      = 2.0               # Enter when |z| > 2.0
+exit_z       = 0.5               # Exit when |z| < 0.5 (reverted)
+max_z        = 4.0               # Force close if |z| > 4.0 (blowout)
+refit_window = 126               # Re-estimate beta every ~6 months
+
+[sizing]
+risk_pct     = 0.005             # 0.5% equity risk per trade
+max_leverage = 2.0               # Max combined notional / equity
+
+[warmup]
+warmup_bars  = 504               # 2 years of daily bars

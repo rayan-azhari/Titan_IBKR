@@ -291,7 +291,7 @@ def main() -> None:
     ax2.axhline(1.0, color="black", linewidth=0.7, linestyle="--")
     ax2.set_title(f"A. Seasonal Pattern (period={period}, amp={seasonal_amplitude:.4f})")
     ax2.set_ylabel("Multiplicative Factor")
-    ax2.set_xlabel(f"Bar within period")
+    ax2.set_xlabel("Bar within period")
     ax2.grid(alpha=0.3)
 
     # Panel 3: ACF of log returns

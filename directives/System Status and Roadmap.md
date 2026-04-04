@@ -497,38 +497,41 @@ Reviewed 12 resource documents + codebase + web research to design:
 
 ---
 
-## 9. What's Next (Tier 2 -- Next 1-2 Months)
+## 9. Tier 2 Implementation (delivered April 2026)
 
-| # | Task | Impact | Effort | Key File |
-|---|------|--------|--------|----------|
-| 5 | IC Equity regime sizing + scale-in | Medium-High | Medium | `titan/strategies/ic_equity_daily/strategy.py` |
-| 6 | Deploy PSKY ML with FractionalKelly + HealthMonitor | High (first ML live) | Medium | `titan/strategies/ml/strategy.py` |
-| 7 | Gold Macro Strategy (cross-asset features) | Medium | High | New: `titan/strategies/gold_macro/` |
-| 8 | Portfolio vol-targeting overlay | Medium | Low | `titan/risk/portfolio_risk_manager.py` |
-| 9 | VIX-based regime scaling | Medium | Low | `titan/risk/portfolio_risk_manager.py` |
+| # | Task | Status | What was done |
+|---|------|--------|---------------|
+| 5 | IC Equity regime sizing + scale-in | **DONE** | 3-tier scale-in (1/3 at threshold, +0.25, +0.75). ATR percentile fed to PortfolioRiskManager. Tiers reset on exit/flip. |
+| 6 | ML FractionalKelly + HealthMonitor | **DONE** | Quarter-Kelly sizer (max 3%), WinLossTracker, ModelHealthMonitor (prob drift + calibration drift). Sizes halved when model degraded. PortfolioRiskManager wired in. |
+| 7 | Gold Macro Strategy | **DEFERRED to Tier 3** | Needs TIP/UUP data + new research pipeline. |
+| 8 | Portfolio vol-targeting overlay | **DONE** | EWMA(lambda=0.94) realized vol tracking. `vol_scale = target_vol(12%) / realized_vol`, clipped [0.25, 2.0]. Config in `risk.toml`. |
+| 9 | VIX-based regime scaling | **DONE** | VIX 4-tier scaling + ATR percentile gate. `regime_scale = min(vix_scale, atr_scale)`. VIX is optional (fallback to ATR-only). Config in `risk.toml`. |
 
-### Tier 2 Details
+### Scale factor composition (new)
 
-**#5 IC Equity regime sizing:** Add VIX-tier scaling (full risk when VIX<17.8, 75% at 17.8-23.1, 50% at >23.1). Add 3-tier scale-in (1/3 at each z-score threshold). Monthly rotation of top-5 symbols by rolling Sharpe.
+```
+scale_factor = min(dd_scale, vol_scale, regime_scale)
+```
 
-**#6 PSKY ML deployment:** Most statistically robust ML signal (13 folds, 69% positive). Use FractionalKelly sizer (quarter-Kelly, max 3%) from `resources/ML_Regime_Strategy/position_sizing.py`. Add ModelHealthMonitor for KL divergence + probability drift alerts.
+- `dd_scale`: Linear [0.25, 1.0] from 10-15% portfolio DD (existing).
+- `vol_scale`: `target_vol / EWMA_vol`, clipped [0.25, 2.0] (Tier 2 #8).
+- `regime_scale`: `min(vix_scale, atr_scale)`, range [0.25, 1.25] (Tier 2 #9).
 
-**#7 Gold Macro Strategy:** 3-component composite: real rate proxy (TIP/TLT), dollar weakness (DXY), momentum confirmation (GLD 50d vs 200d SMA). Vol-targeted sizing capped at 1.5x. Fills the commodity gap that the ML classifier cannot fill.
+## 9.5 Tier 3 Implementation (delivered April 2026)
 
-**#8 Portfolio vol-targeting:** Add EWMA(lambda=0.94) realized vol tracking to PortfolioRiskManager. Scale all positions by `target_vol(12%) / realized_vol`, clipped [0.25, 2.0].
+| # | Task | Status | What was done |
+|---|------|--------|---------------|
+| 10 | FX Carry Trade | **DONE** | `titan/strategies/fx_carry/` — AUD/JPY daily, long when carry+SMA confirm. Vol-targeted sizing (8%), VIX halving. Config: `config/fx_carry_audjpy.toml`. |
+| 11 | Session Gap Fade | **DONE** | `titan/strategies/gap_fade/` — EUR/USD M5, fade overnight gaps > 1.5x ATR at London open. 50% gap fill TP, bracket orders, EOD hard close. AM/PM archetype filter (optional). Config: `config/gap_fade_eurusd.toml`. |
+| 13 | PortfolioAllocator | **DONE** | `titan/risk/portfolio_allocator.py` — inverse-vol weighting, monthly rebalance (21 days), min 5%/max 60% constraints, correlation penalty (|r| > 0.70). Config: `config/risk.toml [allocation]`. |
+| 7 | Gold Macro Strategy | **DONE** | `titan/strategies/gold_macro/` — 3-component cross-asset signal (real rates + dollar + momentum). OOS Sharpe +0.603, OOS/IS ratio 2.06. Vol-targeted sizing (10%), ATR stop. Research: `research/gold_macro/run_backtest.py`. Config: `config/gold_macro_gld.toml`. Data: TIP, TLT, DXY, GLD daily. |
 
-**#9 VIX regime scaling:** Dual filter: VIX tiers (<17.8 full, 17.8-23.1 at 75%, 23.1-30 at 50%, >30 at 25%) + per-instrument ATR percentile. `regime_scale = min(vix_scale, atr_scale)`.
+| 12 | Equity Pairs Trading | **DONE** | `titan/strategies/pairs/` -- generic pairs framework. Scanned 26 instruments, selected GLD/EFA (p=0.01 cointegration). OOS Sharpe +1.14. Walk-forward beta refit every 126 bars. Note: INTC/TXN and QQQ/SPY FAILED cointegration in recent data -- rejected. Config: `config/pairs_gld_efa.toml`. |
 
----
-
-## 10. What's Next (Tier 3 -- 3-6 Months)
+## 9.6 What's Next (remaining)
 
 | # | Task | Impact | Effort |
 |---|------|--------|--------|
-| 10 | FX Carry Trade (AUD/JPY with momentum filter) | Medium | Medium |
-| 11 | Session Gap Fade (EUR/USD intraday) | Medium | Medium |
-| 12 | Equity Pairs Trading (market-neutral) | Medium | High |
-| 13 | Monthly PortfolioAllocator (inverse-vol weighting) | Medium | Medium |
 | 14 | Return stacking (T-bill collateral + futures overlay) | Medium | High |
 
 ---

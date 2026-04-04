@@ -160,9 +160,9 @@ class TestMTFStrategyFix(unittest.TestCase):
 
         strategy.latest_atr = 0.001
 
-        # Run _execute_bias
+        # Run _execute_bias (continuous forecasts: score + exit_buffer required)
         try:
-            strategy._execute_bias(bias=1, price=Decimal("1.1000"))
+            strategy._execute_bias(bias=1, score=0.5, exit_buffer=0.10, price=Decimal("1.1000"))
         except TypeError as e:
             self.fail(f"Strategy raised TypeError in _execute_bias: {e}")
 

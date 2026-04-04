@@ -1,0 +1,20 @@
+# ──────────────────────────────────────────────────────────
+# fx_carry_audjpy.toml — FX Carry Trade (AUD/JPY Daily)
+# ──────────────────────────────────────────────────────────
+
+[strategy]
+instrument_id   = "AUD/JPY.IDEALPRO"
+bar_type_d      = "AUD/JPY.IDEALPRO-1-DAY-MID-EXTERNAL"
+ticker          = "AUD_JPY"
+carry_direction = 1              # Long carry (AUD rates > JPY rates)
+
+[signal]
+sma_period      = 50             # Trend filter: only long above SMA(50)
+
+[sizing]
+vol_target_pct  = 0.08           # 8% annualized vol target
+ewma_span       = 20             # EWMA span for realized vol
+vix_halve_threshold = 25.0       # Halve size when VIX > 25
+
+[warmup]
+warmup_bars     = 60

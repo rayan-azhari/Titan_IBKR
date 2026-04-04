@@ -96,6 +96,10 @@ class TestMLSignalStrategy(unittest.TestCase):
         self.mock_config.bar_type = "TEST/USD-H4"
         self.mock_config.risk_pct = 0.02
         self.mock_config.warmup_bars = 50
+        self.mock_config.kelly_fraction = 0.25
+        self.mock_config.max_position_pct = 0.03
+        self.mock_config.vol_target_pct = 0.01
+        self.mock_config.health_check_interval = 50
 
     def tearDown(self):
         self.modules_patcher.stop()
@@ -109,9 +113,6 @@ class TestMLSignalStrategy(unittest.TestCase):
         strategy = self.MLSignalStrategy(self.mock_config)
 
         # Manually invoke on_start (calls _warmup_history)
-        # Note: on_start calls InstrumentId.from_str which returns a Mock.
-        # But _warmup_history needs specific value.
-        # We manually patch the instrument_id mock on the instance.
         strategy.instrument_id.value = "TEST/USD"
 
         strategy._warmup_history()
@@ -124,13 +125,26 @@ class TestMLSignalStrategy(unittest.TestCase):
             strategy.history.append(
                 {
                     "time": datetime.now(),
-                    "open": 1.0,
-                    "high": 1.1,
-                    "low": 0.9,
-                    "close": 1.0,
+                    "open": 1.0 + i * 0.001,
+                    "high": 1.1 + i * 0.001,
+                    "low": 0.9 + i * 0.001,
+                    "close": 1.0 + i * 0.001,
                     "volume": 100,
                 }
             )
+
+        # Mock model to also support predict_proba (for Kelly sizing)
+        strategy.model.predict.return_value = [1]
+        strategy.model.predict_proba.return_value = [[0.3, 0.7]]
+
+        # Mock account balance (needed by _compute_quantity)
+        mock_balance = MagicMock()
+        mock_balance.as_double.return_value = 100_000.0
+        mock_acct = MagicMock()
+        mock_acct.balances.return_value = {"USD": mock_balance}
+        mock_acct.balance_total.return_value = mock_balance
+        strategy.cache.accounts.return_value = [mock_acct]
+        strategy.cache.positions.return_value = []
 
         # Mock order factory behavior
         strategy.order_factory.market.return_value = "order_obj"
@@ -149,12 +163,12 @@ class TestMLSignalStrategy(unittest.TestCase):
         # Run on_bar
         strategy.on_bar(mock_bar)
 
-        # Check logs for "Analysis: Signal=..."
+        # Check logs for "Signal=1"
         logs = [str(call) for call in strategy.log.info.call_args_list]
         found_signal = any("Signal=1" in log for log in logs)
         self.assertTrue(found_signal, "Signal 1 not logged")
 
-        # Check order submission
+        # Check order submission (Kelly should size > 0 with prob=0.7, wl=1.5)
         self.assertTrue(strategy.submit_order.called, "Order not submitted")
 
 

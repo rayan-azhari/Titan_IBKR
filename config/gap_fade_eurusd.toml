@@ -1,0 +1,20 @@
+# ──────────────────────────────────────────────────────────
+# gap_fade_eurusd.toml — Session Gap Fade (EUR/USD M5)
+# ──────────────────────────────────────────────────────────
+
+[strategy]
+instrument_id = "EUR/USD.IDEALPRO"
+bar_type_m5   = "EUR/USD.IDEALPRO-5-MINUTE-MID-EXTERNAL"
+
+[sizing]
+risk_pct      = 0.005       # 0.5% equity risk per trade
+
+[signal]
+gap_atr_mult  = 1.5         # Min gap size: 1.5x ATR to trigger
+tp_fill_pct   = 0.50        # Take profit at 50% gap fill
+stop_atr_mult = 2.0         # Stop loss: 2x ATR from entry
+atr_period    = 14           # ATR lookback (in H1 equivalent)
+use_am_filter = false        # Set true to require AM/PM archetype confirmation
+
+[warmup]
+warmup_bars   = 300          # ~1 day of M5 bars

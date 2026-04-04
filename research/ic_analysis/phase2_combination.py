@@ -161,7 +161,7 @@ def _sign_orient(
         )
         signals = signals.drop(columns=nan_signals)
         ic_at_horizon = ic_at_horizon.dropna()
-        
+
     signs = np.sign(ic_at_horizon)
     return signals.multiply(signs, axis=1)
 

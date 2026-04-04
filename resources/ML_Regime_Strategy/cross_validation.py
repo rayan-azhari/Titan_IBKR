@@ -1,5 +1,4 @@
-"""
-cross_validation.py
+"""cross_validation.py
 
 Purged and embargoed K-Fold cross-validation for financial time series.
 
@@ -19,20 +18,20 @@ leakage from trailing correlations.
 Reference: de Prado (2018), Advances in Financial Machine Learning, Ch. 7
 """
 
+from typing import Iterator, Tuple
+
 import numpy as np
 import pandas as pd
-from typing import Iterator, Tuple
 
 
 class PurgedKFold:
 
     def __init__(self, n_splits: int = 5, embargo_pct: float = 0.01):
-        """
-        Args:
-            n_splits:     Number of folds (test folds are sequential, not shuffled)
-            embargo_pct:  Fraction of total observations to block after each test fold.
-                          At 0.01 on 1000 bars, that is 10 bars blocked per fold.
-                          Set based on your expected autocorrelation decay horizon.
+        """Args:
+        n_splits:     Number of folds (test folds are sequential, not shuffled)
+        embargo_pct:  Fraction of total observations to block after each test fold.
+                      At 0.01 on 1000 bars, that is 10 bars blocked per fold.
+                      Set based on your expected autocorrelation decay horizon.
         """
         if n_splits < 2:
             raise ValueError("n_splits must be >= 2")
@@ -45,8 +44,7 @@ class PurgedKFold:
         y: pd.Series,
         exit_times: pd.Series,
     ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
-        """
-        Generate train/test index splits with purging and embargoing.
+        """Generate train/test index splits with purging and embargoing.
 
         Args:
             X:           Feature DataFrame. Index must be entry times (DatetimeIndex).
@@ -123,8 +121,7 @@ def compute_sample_uniqueness(
     exit_times: pd.Series,
     bar_times: pd.DatetimeIndex,
 ) -> pd.Series:
-    """
-    Compute average label uniqueness for each observation.
+    """Compute average label uniqueness for each observation.
 
     Uniqueness measures how much of a label's bar-span is shared with
     other concurrent labels. Observations with low uniqueness should

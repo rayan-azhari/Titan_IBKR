@@ -1,5 +1,4 @@
-"""
-position_sizing.py
+"""position_sizing.py
 
 Replaces Gemini's hardcoded 0.6 threshold with continuous position sizing.
 
@@ -19,15 +18,15 @@ Notes on Kelly in practice:
   - Kelly can be negative (bet = 0, never short your own signal confidence).
 """
 
-import numpy as np
 from dataclasses import dataclass, field
 from typing import List
+
+import numpy as np
 
 
 @dataclass
 class WinLossTracker:
-    """
-    Running tracker of trade returns for dynamic Kelly W/L ratio estimation.
+    """Running tracker of trade returns for dynamic Kelly W/L ratio estimation.
     Uses a capped window to prevent stale data from dominating.
     """
 
@@ -61,8 +60,7 @@ class WinLossTracker:
 
 
 class FractionalKelly:
-    """
-    Position sizer using fractional Kelly with volatility targeting.
+    """Position sizer using fractional Kelly with volatility targeting.
 
     f* = fraction * (p * b - q) / b
     where:
@@ -81,15 +79,14 @@ class FractionalKelly:
         min_edge: float = 0.02,
         vol_target_pct: float = 0.01,
     ):
-        """
-        Args:
-            fraction:         Kelly fraction. 0.25 = quarter-Kelly.
-            max_position_pct: Hard cap as fraction of portfolio.
-            min_edge:         Minimum probability edge above 0.5 to trade.
-                              Prevents entering trades near the break-even point
-                              where Kelly allocations are noise-driven.
-            vol_target_pct:   Target daily vol contribution per trade as fraction
-                              of portfolio. 0.01 = 1% of portfolio per trade.
+        """Args:
+        fraction:         Kelly fraction. 0.25 = quarter-Kelly.
+        max_position_pct: Hard cap as fraction of portfolio.
+        min_edge:         Minimum probability edge above 0.5 to trade.
+                          Prevents entering trades near the break-even point
+                          where Kelly allocations are noise-driven.
+        vol_target_pct:   Target daily vol contribution per trade as fraction
+                          of portfolio. 0.01 = 1% of portfolio per trade.
         """
         self.fraction = fraction
         self.max_position_pct = max_position_pct
@@ -103,8 +100,7 @@ class FractionalKelly:
         portfolio_value: float,
         instrument_daily_vol: float,
     ) -> float:
-        """
-        Compute dollar position size.
+        """Compute dollar position size.
 
         Args:
             prob_success:        Meta-labeller P(upper barrier hit).

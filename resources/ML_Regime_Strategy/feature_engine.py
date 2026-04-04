@@ -1,5 +1,4 @@
-"""
-feature_engine.py
+"""feature_engine.py
 
 The central fix to the research/production parity problem.
 A single class whose step() method is called tick-by-tick in Nautilus
@@ -11,15 +10,15 @@ This is not a convenience wrapper — it is the architectural guarantee that
 live features are byte-for-byte identical to training features.
 """
 
-import numpy as np
-import pandas as pd
 from collections import deque
 from typing import Optional
 
+import numpy as np
+import pandas as pd
+
 
 class FeatureEngine:
-    """
-    Computes three stationary features incrementally:
+    """Computes three stationary features incrementally:
       - log_return:  log(p_t / p_{t-1})
       - ewm_vol:     exponentially weighted std of log returns over `vol_span` periods
       - frac_diff:   fractionally differenced price, window truncated at `frac_tau`
@@ -51,8 +50,7 @@ class FeatureEngine:
     # ── Public API ──────────────────────────────────────────────────────────
 
     def step(self, price: float) -> Optional[np.ndarray]:
-        """
-        Process one new price. Returns [log_return, ewm_vol, frac_diff]
+        """Process one new price. Returns [log_return, ewm_vol, frac_diff]
         or None during warm-up.
         Called by Nautilus on_bar(), and internally by batch().
         """
@@ -74,8 +72,7 @@ class FeatureEngine:
         return np.array([log_ret, vol, fd], dtype=np.float64)
 
     def batch(self, prices: pd.Series) -> pd.DataFrame:
-        """
-        Research entrypoint. Resets state and calls step() sequentially.
+        """Research entrypoint. Resets state and calls step() sequentially.
         Output is guaranteed identical to on_bar() sequence for the same prices.
         """
         self._reset()
@@ -114,8 +111,7 @@ class FeatureEngine:
 
     @staticmethod
     def _compute_frac_weights(d: float, tau: float) -> np.ndarray:
-        """
-        Compute fractional differencing weights w_k = prod_{i=0}^{k-1} (d - i) / (i + 1)
+        """Compute fractional differencing weights w_k = prod_{i=0}^{k-1} (d - i) / (i + 1)
         Truncate when |w_k| < tau. Returns array oldest-first for dot product.
         """
         weights = [1.0]

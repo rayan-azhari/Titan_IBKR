@@ -168,7 +168,6 @@ class TurtleStrategy(Strategy):
 
         # Cap leverage
         max_notional = equity * self.config.max_leverage
-        max_units_by_lev = max_notional / price
 
         # We only allocate a fraction of our max leverage per unit step
         # Technically max_leverage applies to the PORTFOLIO not just this unit,
@@ -213,7 +212,9 @@ class TurtleStrategy(Strategy):
                 self._hard_stop_price = price + (self.config.stop_atr_mult * self._entry_atr)
 
         self.log.info(
-            f"Scaled IN [{self._units_held}/{self.config.max_units}] | {side.value} {qty} @ ~{price:.2f} | Stop={self._hard_stop_price:.2f}"
+            f"Scaled IN [{self._units_held}/{self.config.max_units}]"
+            f" | {side.value} {qty} @ ~{price:.2f}"
+            f" | Stop={self._hard_stop_price:.2f}"
         )
 
     def _close_all(self, reason: str) -> None:

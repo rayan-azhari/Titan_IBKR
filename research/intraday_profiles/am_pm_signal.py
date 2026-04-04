@@ -22,7 +22,6 @@ from research.intraday_profiles.day_constructor import (
 )
 from research.intraday_profiles.pca_archetypes import PCAArchetypes, describe_archetypes
 
-
 # ---------------------------------------------------------------------------
 # Transition matrix
 # ---------------------------------------------------------------------------

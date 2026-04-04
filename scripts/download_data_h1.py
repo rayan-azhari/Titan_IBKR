@@ -101,7 +101,7 @@ def download_symbol(
     df = data.to_df()
 
     if df.empty:
-        print(f"    WARNING: no data returned.")
+        print("    WARNING: no data returned.")
         return df
 
     # Normalise timestamp index
@@ -220,7 +220,7 @@ def main() -> None:
                 df = download_symbol(client, sym, fallback, args.start, args.end)
 
             if df.empty:
-                print(f"    FAILED: no data from either exchange.")
+                print("    FAILED: no data from either exchange.")
                 failed.append(sym)
                 continue
 

@@ -21,6 +21,16 @@ Each live strategy:
 State resets on process restart (high-water mark starts at combined equity
 at first call to ``update()`` after all strategies are registered).
 
+Scale factor composition (Tier 2, April 2026)
+----------------------------------------------
+The final ``scale_factor`` is the minimum of three independent multipliers:
+
+    scale_factor = min(dd_scale, vol_scale, regime_scale)
+
+    dd_scale     : Drawdown heat — linear scale-down [0.25, 1.0] from 10% to 15% DD.
+    vol_scale    : Vol-targeting — target_vol / EWMA(realized_vol), clipped [0.25, 2.0].
+    regime_scale : Regime gate — min(vix_scale, atr_scale) from VIX tiers + ATR percentile.
+
 Configuration (config/risk.toml [portfolio] section)
 -----------------------------------------------------
     portfolio_max_dd_pct       float  Halt ALL at this portfolio DD % (default 15.0)
@@ -28,6 +38,16 @@ Configuration (config/risk.toml [portfolio] section)
     correlation_window_days    int    Rolling lookback for live correlation (default 60)
     correlation_halt_threshold float  Log WARNING if strategy pair r > this (default 0.85)
     portfolio_max_single_pct   float  Max fraction any single strategy holds (default 60.0)
+    vol_target_ann_pct         float  Annualized portfolio vol target (default 12.0)
+    vol_ewma_lambda            float  EWMA decay for realized vol (default 0.94)
+    vol_scale_min              float  Floor for vol-targeting scale (default 0.25)
+    vol_scale_max              float  Ceiling for vol-targeting scale (default 2.0)
+    vix_tier_1                 float  VIX threshold: below = full size (default 17.8)
+    vix_tier_2                 float  VIX threshold: below = 75% (default 23.1)
+    vix_tier_3                 float  VIX threshold: below = 50% (default 30.0)
+    atr_pct_low                float  ATR percentile below = size up 1.25x (default 25.0)
+    atr_pct_high               float  ATR percentile above = size down 0.50x (default 75.0)
+    atr_pct_extreme            float  ATR percentile above = size down 0.25x (default 90.0)
 
 Integration example (in each strategy's on_bar):
 -------------------------------------------------
@@ -38,6 +58,9 @@ Integration example (in each strategy's on_bar):
     if portfolio_risk_manager.halt_all:
         self._flatten_all_and_stop()
 
+    # Optionally feed VIX (any strategy that has it):
+    portfolio_risk_manager.update_vix(current_vix_level)
+
     # Before sizing a new order:
     adjusted_size = computed_size * portfolio_risk_manager.scale_factor
 """
@@ -45,6 +68,7 @@ Integration example (in each strategy's on_bar):
 from __future__ import annotations
 
 import logging
+import math
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -60,6 +84,18 @@ _DEFAULT_CONFIG: dict = {
     "correlation_window_days": 60,
     "correlation_halt_threshold": 0.85,
     "portfolio_max_single_pct": 60.0,
+    # Vol-targeting (Tier 2 #8)
+    "vol_target_ann_pct": 12.0,
+    "vol_ewma_lambda": 0.94,
+    "vol_scale_min": 0.25,
+    "vol_scale_max": 2.0,
+    # Regime scaling (Tier 2 #9)
+    "vix_tier_1": 17.8,
+    "vix_tier_2": 23.1,
+    "vix_tier_3": 30.0,
+    "atr_pct_low": 25.0,
+    "atr_pct_high": 75.0,
+    "atr_pct_extreme": 90.0,
 }
 
 
@@ -101,6 +137,19 @@ class PortfolioRiskManager:
         self._halt_all: bool = False
         self._scale_factor: float = 1.0
         self._corr_check_counter: int = 0
+
+        # ── Vol-targeting state (Tier 2 #8) ──────────────────────────────
+        self._ewma_var: float | None = None  # EWMA variance (squared vol)
+        self._prev_total_equity: float | None = None
+
+        # ── Regime scaling state (Tier 2 #9) ─────────────────────────────
+        self._vix_level: float | None = None  # Latest VIX reading
+        self._atr_percentiles: dict[str, float] = {}  # strategy_id -> ATR %ile
+
+        # ── Component scales (for logging / monitoring) ──────────────────
+        self._dd_scale: float = 1.0
+        self._vol_scale: float = 1.0
+        self._regime_scale: float = 1.0
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -172,6 +221,32 @@ class PortfolioRiskManager:
             self._corr_check_counter = 0
             self.check_correlation_regime()
 
+    def update_vix(self, vix_level: float) -> None:
+        """Feed the latest VIX level for regime-based scaling.
+
+        Call this from any strategy that has access to VIX data (e.g. via
+        a daily bar subscription to ^VIX or a VIX futures proxy). Only one
+        strategy needs to call this -- the value is shared across all.
+
+        Args:
+            vix_level: Current VIX index level (e.g. 18.5).
+        """
+        self._vix_level = vix_level
+
+    def update_atr_percentile(self, strategy_id: str, atr_pct: float) -> None:
+        """Feed the ATR percentile rank for one strategy's instrument.
+
+        Each strategy can compute its own ATR percentile (e.g. current ATR14
+        as a percentile over the last 500 bars) and feed it here. The regime
+        gate uses the *maximum* across all instruments (most stressed = most
+        conservative).
+
+        Args:
+            strategy_id: Matches the id used in register_strategy().
+            atr_pct:     ATR percentile [0-100] for this instrument.
+        """
+        self._atr_percentiles[strategy_id] = atr_pct
+
     @property
     def halt_all(self) -> bool:
         """True when the portfolio kill switch has been triggered.
@@ -183,27 +258,39 @@ class PortfolioRiskManager:
 
     @property
     def scale_factor(self) -> float:
-        """Position size multiplier in [0.25, 1.0].
+        """Composite position size multiplier.
+
+        Computed as min(dd_scale, vol_scale, regime_scale).
+
+        - dd_scale:     [0.25, 1.0] — drawdown heat.
+        - vol_scale:    [0.25, 2.0] — vol-targeting overlay.
+        - regime_scale: [0.25, 1.25] — VIX + ATR regime gate.
 
         Multiply computed position size by this before order submission.
-        1.0 = full size (normal); 0.25–0.99 = reduced size (portfolio heat).
         """
         return self._scale_factor
 
     def get_summary(self) -> dict:
         """Snapshot of current portfolio state for monitoring / logging."""
         total = self._total_equity()
+        realized_vol = self._annualized_vol()
         return {
             "total_equity": round(total, 2),
             "portfolio_drawdown_pct": round(self._portfolio_drawdown() * 100, 3),
             "halt_all": self._halt_all,
             "scale_factor": round(self._scale_factor, 3),
+            "dd_scale": round(self._dd_scale, 3),
+            "vol_scale": round(self._vol_scale, 3),
+            "regime_scale": round(self._regime_scale, 3),
+            "realized_vol_ann_pct": round(realized_vol * 100, 2) if realized_vol else None,
+            "vix_level": self._vix_level,
             "strategy_count": len(self._strategies),
             "strategies": {
                 sid: {
                     "equity": round(s.current_equity, 2),
                     "drawdown_pct": round(s.drawdown_pct * 100, 3),
                     "weight_pct": round(s.current_equity / total * 100 if total > 0 else 0.0, 2),
+                    "atr_pct": round(self._atr_percentiles.get(sid, 50.0), 1),
                 }
                 for sid, s in self._strategies.items()
             },
@@ -266,12 +353,17 @@ class PortfolioRiskManager:
 
         Only call after diagnosing the cause of the halt and confirming it
         is safe to resume trading. Resets portfolio high-water mark to the
-        current combined equity.
+        current combined equity and all scale components.
         """
         old_equity = self._portfolio_hwm
         self._halt_all = False
         self._scale_factor = 1.0
+        self._dd_scale = 1.0
+        self._vol_scale = 1.0
+        self._regime_scale = 1.0
         self._portfolio_hwm = self._total_equity()
+        self._ewma_var = None
+        self._prev_total_equity = None
         logger.warning(
             "[PortfolioRM] HALT RESET by operator. Old HWM=%.2f  New HWM=%.2f",
             old_equity or 0.0,
@@ -295,8 +387,96 @@ class PortfolioRiskManager:
             return 0.0
         return (total - self._portfolio_hwm) / self._portfolio_hwm
 
+    # ── Vol-targeting helpers (Tier 2 #8) ─────────────────────────────────
+
+    def _update_ewma_vol(self, total_equity: float) -> None:
+        """Update EWMA variance from portfolio equity return."""
+        if self._prev_total_equity is None or self._prev_total_equity <= 0:
+            self._prev_total_equity = total_equity
+            return
+
+        ret = (total_equity - self._prev_total_equity) / self._prev_total_equity
+        self._prev_total_equity = total_equity
+
+        lam = float(self._config["vol_ewma_lambda"])
+        if self._ewma_var is None:
+            # Seed with squared return (first observation)
+            self._ewma_var = ret * ret
+        else:
+            self._ewma_var = lam * self._ewma_var + (1.0 - lam) * ret * ret
+
+    def _annualized_vol(self) -> float | None:
+        """Annualized portfolio vol from EWMA variance. Returns None if not ready."""
+        if self._ewma_var is None or self._ewma_var <= 0:
+            return None
+        # Assume ~252 trading days per year for daily strategies.
+        # For intraday, the EWMA adapts via update frequency automatically.
+        return math.sqrt(self._ewma_var * 252)
+
+    def _compute_vol_scale(self) -> float:
+        """Vol-targeting scale: target_vol / realized_vol, clipped."""
+        ann_vol = self._annualized_vol()
+        if ann_vol is None or ann_vol <= 0:
+            return 1.0  # Not enough data yet — no adjustment
+
+        target = float(self._config["vol_target_ann_pct"]) / 100.0
+        scale_min = float(self._config["vol_scale_min"])
+        scale_max = float(self._config["vol_scale_max"])
+
+        raw_scale = target / ann_vol
+        return max(scale_min, min(scale_max, raw_scale))
+
+    # ── Regime scaling helpers (Tier 2 #9) ────────────────────────────────
+
+    def _compute_vix_scale(self) -> float:
+        """VIX tier scaling. Returns 1.0 if VIX is not available."""
+        if self._vix_level is None:
+            return 1.0
+
+        tier_1 = float(self._config["vix_tier_1"])
+        tier_2 = float(self._config["vix_tier_2"])
+        tier_3 = float(self._config["vix_tier_3"])
+
+        if self._vix_level < tier_1:
+            return 1.0
+        elif self._vix_level < tier_2:
+            return 0.75
+        elif self._vix_level < tier_3:
+            return 0.50
+        else:
+            return 0.25
+
+    def _compute_atr_scale(self) -> float:
+        """ATR percentile scaling. Uses max ATR %ile across all instruments."""
+        if not self._atr_percentiles:
+            return 1.0
+
+        max_atr_pct = max(self._atr_percentiles.values())
+        low = float(self._config["atr_pct_low"])
+        high = float(self._config["atr_pct_high"])
+        extreme = float(self._config["atr_pct_extreme"])
+
+        if max_atr_pct < low:
+            return 1.25  # Low-vol regime — can size up slightly
+        elif max_atr_pct < high:
+            return 1.0  # Normal
+        elif max_atr_pct < extreme:
+            return 0.50  # High vol — halve sizes
+        else:
+            return 0.25  # Extreme — quarter sizes
+
+    def _compute_regime_scale(self) -> float:
+        """Composite regime scale = min(vix_scale, atr_scale)."""
+        return min(self._compute_vix_scale(), self._compute_atr_scale())
+
+    # ── Core health check ─────────────────────────────────────────────────
+
     def _check_portfolio_health(self) -> None:
-        """Core risk check — called on every update()."""
+        """Core risk check — called on every update().
+
+        Computes three independent scale factors and composes the final
+        scale_factor as their minimum.
+        """
         max_dd_threshold = float(self._config["portfolio_max_dd_pct"]) / 100.0
         heat_threshold = float(self._config["portfolio_heat_scale_pct"]) / 100.0
         max_single_pct = float(self._config["portfolio_max_single_pct"]) / 100.0
@@ -308,6 +488,7 @@ class PortfolioRiskManager:
         if port_dd < -max_dd_threshold:
             self._halt_all = True
             self._scale_factor = 0.0
+            self._dd_scale = 0.0
             logger.critical(
                 "[PortfolioRM] KILL SWITCH TRIGGERED — portfolio DD %.2f%% "
                 "exceeds %.1f%% limit. ALL strategies must flatten and halt.",
@@ -316,21 +497,38 @@ class PortfolioRiskManager:
             )
             return
 
-        # ── Gate 2: Proportional scale-down as DD grows ───────────────────
-        # Between heat_threshold and max_dd_threshold, scale linearly
-        # from 1.0 down to 0.25 (floor at 25%).
+        # ── Gate 2: DD heat scale (linear from 1.0 to 0.25) ──────────────
         if port_dd < -heat_threshold:
             heat_fraction = abs(port_dd) / max_dd_threshold
-            self._scale_factor = max(0.25, 1.0 - heat_fraction)
-            logger.warning(
-                "[PortfolioRM] Portfolio heat: DD=%.2f%%  position sizes scaled to %.0f%%.",
-                port_dd * 100,
-                self._scale_factor * 100,
-            )
+            self._dd_scale = max(0.25, 1.0 - heat_fraction)
         else:
-            self._scale_factor = 1.0
+            self._dd_scale = 1.0
 
-        # ── Gate 3: Single-strategy concentration warning ─────────────────
+        # ── Gate 3: Vol-targeting scale ───────────────────────────────────
+        self._update_ewma_vol(total)
+        self._vol_scale = self._compute_vol_scale()
+
+        # ── Gate 4: Regime scale (VIX + ATR) ──────────────────────────────
+        self._regime_scale = self._compute_regime_scale()
+
+        # ── Compose final scale factor ────────────────────────────────────
+        self._scale_factor = min(self._dd_scale, self._vol_scale, self._regime_scale)
+
+        # Log when any component is actively scaling down
+        if self._scale_factor < 0.99:
+            logger.warning(
+                "[PortfolioRM] Scale %.0f%% (DD=%.0f%% Vol=%.0f%% Regime=%.0f%%) "
+                "| port_DD=%.2f%% ann_vol=%s vix=%s",
+                self._scale_factor * 100,
+                self._dd_scale * 100,
+                self._vol_scale * 100,
+                self._regime_scale * 100,
+                port_dd * 100,
+                f"{self._annualized_vol() * 100:.1f}%" if self._annualized_vol() else "n/a",
+                f"{self._vix_level:.1f}" if self._vix_level else "n/a",
+            )
+
+        # ── Gate 5: Single-strategy concentration warning ─────────────────
         if total > 0:
             for sid, state in self._strategies.items():
                 weight = state.current_equity / total

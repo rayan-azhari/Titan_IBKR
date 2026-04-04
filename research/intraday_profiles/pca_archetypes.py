@@ -15,7 +15,6 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 
-
 # ---------------------------------------------------------------------------
 # Pass 1: PCA + K-means (Euclidean)
 # ---------------------------------------------------------------------------

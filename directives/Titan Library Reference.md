@@ -108,9 +108,16 @@ Portfolio-level risk management shared by all live strategies.
 - **`titan.risk.portfolio_risk_manager`**: Module-level singleton, auto-loads from `config/risk.toml [portfolio]`.
   - `register_strategy(id, equity)` -- call in on_start()
   - `update(id, equity)` -- call on every bar
+  - `update_vix(level)` -- feed VIX for regime scaling (optional)
+  - `update_atr_percentile(id, pct)` -- feed ATR percentile for regime scaling
   - `halt_all` -- True when portfolio DD exceeds 15% (kill switch)
-  - `scale_factor` -- [0.25, 1.0] multiplier for position sizes (scales down from 10% DD)
+  - `scale_factor` -- min(dd_scale, vol_scale, regime_scale) multiplier
   - `check_correlation_regime()` -- pairwise correlation alerts (r > 0.85)
+
+- **`titan.risk.portfolio_allocator`**: Module-level singleton, auto-loads from `config/risk.toml [allocation]`.
+  - `tick()` -- call once per bar; triggers monthly rebalance when due
+  - `get_weight(id)` -- returns inverse-vol allocation weight for sizing
+  - `force_rebalance()` -- trigger immediate rebalance
 
 ---
 
@@ -128,8 +135,13 @@ Production-grade strategy logic, separated from the execution harness.
 - **`titan.strategies.ml`**: ML signal classifier + shared feature engineering.
   - `titan.strategies.ml.features` must match training code exactly to avoid feature drift.
 - **`titan.strategies.turtle`**: Turtle Trading -- Donchian breakout + ATR sizing.
+- **`titan.strategies.gap_fade`**: Session Gap Fade -- EUR/USD M5, fade overnight gaps at London open, bracket orders, EOD hard close.
+- **`titan.strategies.fx_carry`**: FX Carry Trade -- AUD/JPY daily, collect carry premium with SMA trend filter, vol-targeted sizing.
+- **`titan.strategies.gold_macro`**: Gold Macro -- GLD daily, 3-component cross-asset signal (real rates + dollar + momentum), vol-targeted sizing.
+- **`titan.strategies.pairs`**: Pairs Trading -- market-neutral spread mean reversion with walk-forward beta refit. Validated: GLD/EFA.
 
-All strategies are integrated with `PortfolioRiskManager` (register, update, halt check, scale_factor).
+All strategies are integrated with `PortfolioRiskManager` (register, update, halt check, scale_factor)
+and `PortfolioAllocator` (inverse-vol allocation weights).
 
 ---
 

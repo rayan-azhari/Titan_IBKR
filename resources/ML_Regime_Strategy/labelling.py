@@ -1,5 +1,4 @@
-"""
-labelling.py
+"""labelling.py
 
 Fixes Gemini's critical omission: the exit logic gap.
 
@@ -15,10 +14,11 @@ The live strategy must call (2) and then manage the position against those exact
 barrier levels on every subsequent bar, replicating the labelling logic faithfully.
 """
 
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 from numba import njit
-from typing import Optional
 
 
 @njit(cache=True)
@@ -29,8 +29,7 @@ def _triple_barrier_core(
     lower_barriers: np.ndarray,   # fractional, e.g. 0.02 = 2%
     max_holding: int,
 ) -> np.ndarray:
-    """
-    Numba-compiled inner loop.
+    """Numba-compiled inner loop.
     Returns [n_entries x 2]: col 0 = label {1, -1, 0}, col 1 = exit bar index.
     """
     n = len(entry_indices)
@@ -64,8 +63,7 @@ def _triple_barrier_core(
 
 
 class TripleBarrierLabeller:
-    """
-    Dynamic triple barrier labelling.
+    """Dynamic triple barrier labelling.
 
     Barrier widths are:
       upper = vol_multiplier_upper * daily_vol
@@ -100,8 +98,7 @@ class TripleBarrierLabeller:
         entry_signals: pd.Series,
         regimes: Optional[pd.Series] = None,
     ) -> pd.DataFrame:
-        """
-        Generate triple barrier labels for all entry signals.
+        """Generate triple barrier labels for all entry signals.
 
         Returns DataFrame indexed by entry time with columns:
           label:          1 (upper hit), -1 (lower hit), 0 (time barrier)
@@ -157,8 +154,7 @@ class TripleBarrierLabeller:
         current_vol: float,
         current_regime: int,
     ) -> dict:
-        """
-        Compute live take-profit and stop-loss price levels.
+        """Compute live take-profit and stop-loss price levels.
 
         MUST use identical multiplier logic to label() — this is what closes
         the training/production label alignment gap.

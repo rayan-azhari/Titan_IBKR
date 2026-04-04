@@ -24,7 +24,8 @@ from joblib import Parallel, delayed
 from numba import njit
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.seasonal import seasonal_decompose
-from statsmodels.tsa.stattools import adfuller, acf as _acf
+from statsmodels.tsa.stattools import acf as _acf
+from statsmodels.tsa.stattools import adfuller
 
 warnings.filterwarnings("ignore")
 
@@ -231,11 +232,11 @@ def main() -> None:
     print(f"\n{'='*70}")
     print(f"BATCH RESULTS  ({total} symbols, min {args.min_bars} bars)")
     print(f"{'='*70}")
-    print(f"\nLag-1 ACF character:")
+    print("\nLag-1 ACF character:")
     print(f"  Mean-reverting : {mean_rev_acf:4d}  ({100*mean_rev_acf/total:.1f}%)")
     print(f"  Trending       : {trending_acf:4d}  ({100*trending_acf/total:.1f}%)")
     print(f"  Random walk    : {rw_acf:4d}  ({100*rw_acf/total:.1f}%)")
-    print(f"\nHurst exponent character:")
+    print("\nHurst exponent character:")
     print(f"  Trending (H>0.55)   : {trending_h:4d}  ({100*trending_h/total:.1f}%)")
     print(f"  Random walk         : {rw_h:4d}  ({100*rw_h/total:.1f}%)")
     print(f"  Mean-rev (H<0.45)   : {mean_rev_h:4d}  ({100*mean_rev_h/total:.1f}%)")
@@ -247,17 +248,17 @@ def main() -> None:
           f"std={df['lag1_acf'].std():.4f}")
 
     # Top 20 most trending by Hurst
-    print(f"\n--- Top 20 most TRENDING (Hurst H) ---")
+    print("\n--- Top 20 most TRENDING (Hurst H) ---")
     top_h = df.nlargest(20, "hurst_h")[["symbol", "n_bars", "hurst_h", "lag1_acf", "seasonal_amp"]]
     print(top_h.to_string(index=False))
 
     # Top 20 strongest mean-reversion (most negative lag-1 ACF)
-    print(f"\n--- Top 20 strongest MEAN-REVERSION (lag-1 ACF) ---")
+    print("\n--- Top 20 strongest MEAN-REVERSION (lag-1 ACF) ---")
     top_mr = df.nsmallest(20, "lag1_acf")[["symbol", "n_bars", "lag1_acf", "lb_p10", "hurst_h"]]
     print(top_mr.to_string(index=False))
 
     # Strongest seasonal amplitude
-    print(f"\n--- Top 20 strongest SEASONAL signal ---")
+    print("\n--- Top 20 strongest SEASONAL signal ---")
     top_s = df.nlargest(20, "seasonal_amp")[["symbol", "n_bars", "seasonal_amp", "residual_std", "hurst_h"]]
     print(top_s.to_string(index=False))
 

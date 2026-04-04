@@ -100,11 +100,15 @@ class ICEquityDailyConfig(StrategyConfig):
     instrument_id: str
     bar_type_d: str  # e.g. "UNH.NYSE-1-DAY-LAST-EXTERNAL"
     ticker: str  # e.g. "UNH" (used to locate parquet file)
-    threshold: float = 0.75  # z-score entry threshold
+    threshold: float = 0.75  # z-score entry threshold (tier 1)
     risk_pct: float = 0.005  # 0.5% equity risk per trade (reduced — Phase 5)
     stop_atr_mult: float = 1.5
     leverage_cap: float = 5.0
     warmup_bars: int = 504  # 2 years of daily bars
+    # 3-tier scale-in (Tier 2 #5): z-score offsets above threshold for tiers 2 & 3
+    tier2_offset: float = 0.25  # Tier 2 entry at threshold + 0.25
+    tier3_offset: float = 0.75  # Tier 3 entry at threshold + 0.75
+    atr_pct_window: int = 500  # Rolling window for ATR percentile rank
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +148,15 @@ class ICEquityDailyStrategy(Strategy):
 
         # Latest ATR (daily)
         self.latest_atr: float | None = None
+
+        # ATR history for percentile rank (Tier 2 #5)
+        self._atr_history: list[float] = []
+
+        # 3-tier scale-in state (Tier 2 #5)
+        # Tracks which tiers have been filled for current direction.
+        # Reset on signal flip or exit.
+        self._tiers_filled: set[int] = set()  # {1}, {1, 2}, {1, 2, 3}
+        self._current_bias: int = 0  # +1 long, -1 short, 0 flat
 
         # Entry guard
         self._entry_pending: bool = False
@@ -278,6 +291,9 @@ class ICEquityDailyStrategy(Strategy):
         if self.latest_atr is None:
             return
 
+        # Feed ATR percentile to portfolio risk manager (Tier 2 #5)
+        self._update_atr_percentile()
+
         z = self._get_z()
         self._evaluate(z, bar.close)
         self._prev_z = z
@@ -292,6 +308,18 @@ class ICEquityDailyStrategy(Strategy):
         last = atr_s.iloc[-1]
         if not np.isnan(last):
             self.latest_atr = float(last)
+            self._atr_history.append(float(last))
+            max_len = self.config.atr_pct_window
+            if len(self._atr_history) > max_len:
+                self._atr_history = self._atr_history[-max_len:]
+
+    def _update_atr_percentile(self) -> None:
+        """Compute ATR percentile rank and feed to PortfolioRiskManager."""
+        if self.latest_atr is None or len(self._atr_history) < 20:
+            return
+        count_below = sum(1 for v in self._atr_history if v <= self.latest_atr)
+        pct = (count_below / len(self._atr_history)) * 100.0
+        portfolio_risk_manager.update_atr_percentile(self._prm_id, pct)
 
     def _get_z(self) -> float:
         df = pd.DataFrame(self.history)
@@ -307,7 +335,18 @@ class ICEquityDailyStrategy(Strategy):
     # ---------------------------------------------------------------------------
 
     def _evaluate(self, z: float, price) -> None:
+        """3-tier scale-in entry logic (Tier 2 #5).
+
+        Tier thresholds (for z > 0, long side):
+          Tier 1: z > threshold           -> 1/3 of full risk
+          Tier 2: z > threshold + offset2 -> 1/3 of full risk
+          Tier 3: z > threshold + offset3 -> 1/3 of full risk
+
+        Each tier fires once per signal direction. Tiers reset on exit or flip.
+        """
         threshold = self.config.threshold
+        tier2_z = threshold + self.config.tier2_offset
+        tier3_z = threshold + self.config.tier3_offset
         positions = self.cache.positions(instrument_id=self.instrument_id)
         position = positions[-1] if positions else None
 
@@ -315,31 +354,63 @@ class ICEquityDailyStrategy(Strategy):
         if position and position.is_open:
             current_dir = 1 if str(position.side) == "LONG" else -1
 
+        # Determine directional bias from z-score
         new_bias = 0
         if z > threshold:
             new_bias = 1
         elif z < -threshold:
             new_bias = -1
 
-        # Entry or flip
-        if new_bias != 0 and new_bias != current_dir:
-            if current_dir != 0:
-                self.log.info(f"Signal flip {current_dir:+d} -> {new_bias:+d} | z={z:+.3f}")
-                self.cancel_all_orders(self.instrument_id)
-                self.close_all_positions(self.instrument_id)
-            side = OrderSide.BUY if new_bias == 1 else OrderSide.SELL
-            self._open_position(side, price)
-            return
+        # ── Signal flip: close existing, reset tiers, enter tier 1 ────────
+        if new_bias != 0 and new_bias != self._current_bias and self._current_bias != 0:
+            self.log.info(f"Signal flip {self._current_bias:+d} -> {new_bias:+d} | z={z:+.3f}")
+            self.cancel_all_orders(self.instrument_id)
+            self.close_all_positions(self.instrument_id)
+            self._tiers_filled.clear()
+            self._current_bias = 0
+            current_dir = 0
+            # Fall through to tier entry below
 
-        # Exit on zero-cross
+        # ── Exit on zero-cross ────────────────────────────────────────────
         if current_dir == 1 and z < 0 and self._prev_z >= 0:
             self.log.info(f"Exit long z={self._prev_z:+.3f} -> {z:+.3f}")
             self.cancel_all_orders(self.instrument_id)
             self.close_all_positions(self.instrument_id)
+            self._tiers_filled.clear()
+            self._current_bias = 0
+            self._log_status(z, threshold, 0, price)
+            return
         elif current_dir == -1 and z > 0 and self._prev_z <= 0:
             self.log.info(f"Exit short z={self._prev_z:+.3f} -> {z:+.3f}")
             self.cancel_all_orders(self.instrument_id)
             self.close_all_positions(self.instrument_id)
+            self._tiers_filled.clear()
+            self._current_bias = 0
+            self._log_status(z, threshold, 0, price)
+            return
+
+        # ── 3-tier scale-in entries ───────────────────────────────────────
+        if new_bias != 0:
+            abs_z = abs(z)
+            side = OrderSide.BUY if new_bias == 1 else OrderSide.SELL
+
+            entered_tier = False
+            if 1 not in self._tiers_filled and abs_z > threshold:
+                self._tiers_filled.add(1)
+                self._current_bias = new_bias
+                self._open_position(side, price, tier=1)
+                entered_tier = True
+            if 2 not in self._tiers_filled and abs_z > tier2_z:
+                self._tiers_filled.add(2)
+                self._open_position(side, price, tier=2)
+                entered_tier = True
+            if 3 not in self._tiers_filled and abs_z > tier3_z:
+                self._tiers_filled.add(3)
+                self._open_position(side, price, tier=3)
+                entered_tier = True
+
+            if entered_tier:
+                return
 
         self._log_status(z, threshold, current_dir, price)
 
@@ -347,7 +418,12 @@ class ICEquityDailyStrategy(Strategy):
     # Order management
     # ---------------------------------------------------------------------------
 
-    def _open_position(self, side: OrderSide, price) -> None:
+    def _open_position(self, side: OrderSide, price, tier: int = 1) -> None:
+        """Open a position for one tier of the 3-tier scale-in.
+
+        Each tier gets 1/3 of the full risk allocation. The portfolio-level
+        scale_factor from PortfolioRiskManager is applied on top.
+        """
         if self._entry_pending:
             self.log.debug("Entry already pending — skipping duplicate.")
             return
@@ -371,19 +447,21 @@ class ICEquityDailyStrategy(Strategy):
             return
 
         # ATR-based sizing: risk_pct of equity / stop distance (in shares)
-        raw_units = (equity * self.config.risk_pct) / stop_dist
+        # Each tier gets 1/3 of the full risk budget
+        tier_fraction = 1.0 / 3.0
+        raw_units = (equity * self.config.risk_pct * tier_fraction) / stop_dist
         px = float(price)
         if px > 0:
-            max_units = (equity * self.config.leverage_cap) / px
+            max_units = (equity * self.config.leverage_cap * tier_fraction) / px
             units = min(raw_units, max_units)
         else:
             units = 0
 
-        # Apply portfolio-level scale factor (drawdown heat reduction)
+        # Apply portfolio-level scale factor (DD heat + vol-target + regime)
         units *= portfolio_risk_manager.scale_factor
 
         if int(units) < 1:
-            self.log.warning(f"Calculated size < 1 share (units={units:.2f}) — skipping.")
+            self.log.warning(f"Tier {tier} size < 1 share (units={units:.2f}) — skipping.")
             return
 
         qty = Quantity.from_int(int(units))
@@ -397,10 +475,11 @@ class ICEquityDailyStrategy(Strategy):
         self._entry_pending = True
         self.submit_order(order)
         self.log.info(
-            f"{'BUY' if side == OrderSide.BUY else 'SELL'} {qty} {self.config.ticker}"
-            f" @ ~{px:.2f}"
+            f"TIER {tier} {'BUY' if side == OrderSide.BUY else 'SELL'}"
+            f" {qty} {self.config.ticker} @ ~{px:.2f}"
             f" | ATR={self.latest_atr:.2f} stop_dist={stop_dist:.2f}"
-            f" | risk=${equity * self.config.risk_pct:.0f}"
+            f" | risk=${equity * self.config.risk_pct * tier_fraction:.0f}"
+            f" | tiers={sorted(self._tiers_filled)}"
         )
 
     def on_order_filled(self, event: OrderFilled) -> None:

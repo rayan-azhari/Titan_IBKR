@@ -1,5 +1,4 @@
-"""
-nautilus_strategy.py
+"""nautilus_strategy.py
 
 Production Nautilus Trader strategy using the full pipeline.
 
@@ -18,23 +17,22 @@ This class assumes you have:
   - Nautilus Trader installed with IBKR adapter configured
 """
 
+import logging
 from collections import deque
+
 import numpy as np
 import pandas as pd
-import logging
-from typing import Optional
-
+from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.trading.strategy import Strategy
-from nautilus_trader.config import StrategyConfig
 
 from .feature_engine import FeatureEngine
-from .regime_detection import RegimeDetector
-from .meta_labeller import MetaLabeller
 from .labelling import TripleBarrierLabeller
-from .position_sizing import FractionalKelly, WinLossTracker
+from .meta_labeller import MetaLabeller
 from .model_lifecycle import ModelHealthMonitor, RetrainingScheduler
+from .position_sizing import FractionalKelly, WinLossTracker
+from .regime_detection import RegimeDetector
 
 logger = logging.getLogger(__name__)
 
@@ -223,8 +221,7 @@ class MLRegimeStrategy(Strategy):
         )
 
     def _manage_position(self, close: float, current_vol: float):
-        """
-        Check triple barrier conditions bar by bar.
+        """Check triple barrier conditions bar by bar.
         Mirrors the labelling logic exactly — same parameters, same regime-conditional
         multipliers — so that what the model was trained to predict is what we execute.
         """
@@ -270,8 +267,7 @@ class MLRegimeStrategy(Strategy):
     def _build_meta_features(
         self, latest_features: np.ndarray, regime_posteriors: np.ndarray
     ) -> pd.DataFrame:
-        """
-        Concatenate base features and regime posteriors.
+        """Concatenate base features and regime posteriors.
         MUST produce the same feature vector shape as MetaLabeller training.
         """
         vec = np.concatenate([latest_features, regime_posteriors])

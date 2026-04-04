@@ -1,5 +1,4 @@
-"""
-model_lifecycle.py
+"""model_lifecycle.py
 
 Addresses the model degradation problem Gemini omitted entirely.
 
@@ -15,12 +14,12 @@ as that environment changes. This module provides:
 The philosophy: instrument everything, alert loudly, never retrain silently.
 """
 
-import numpy as np
-import pandas as pd
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Optional, Callable, List, Dict
 import logging
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Callable, Dict, List, Optional
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +34,7 @@ class Alert:
 
 
 class ModelHealthMonitor:
-    """
-    Monitors a deployed model for three forms of degradation:
+    """Monitors a deployed model for three forms of degradation:
 
     1. Regime distribution drift: if the live regime frequency diverges from
        training, the HMM is encountering states it wasn't calibrated for.
@@ -87,8 +85,7 @@ class ModelHealthMonitor:
             self._run_checks()
 
     def record_trade(self, prob_success: float, outcome: int):
-        """
-        Record completed trade for calibration tracking.
+        """Record completed trade for calibration tracking.
         outcome: 1 if upper barrier hit, 0 if lower or time barrier.
         """
         self._trade_outcomes.append((prob_success, outcome))
@@ -186,8 +183,7 @@ class ModelHealthMonitor:
 
 
 class RetrainingScheduler:
-    """
-    Defines when retraining should occur and manages the model warm-up period.
+    """Defines when retraining should occur and manages the model warm-up period.
 
     Retraining triggers:
       1. Scheduled: every N bars (time-based)

@@ -16,8 +16,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy import stats
 from numba import njit
+from scipy import stats
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -358,32 +358,32 @@ def _rolling_spearman_numba(sig_vals: np.ndarray, fwd_vals: np.ndarray, window: 
     for i in range(window, n + 1):
         ws = sig_vals[i - window : i]
         wf = fwd_vals[i - window : i]
-        
+
         mean_ws, mean_wf = 0.0, 0.0
         for k in range(window):
             mean_ws += ws[k]
             mean_wf += wf[k]
         mean_ws /= window
         mean_wf /= window
-        
+
         var_s, var_f = 0.0, 0.0
         for k in range(window):
             var_s += (ws[k] - mean_ws)**2
             var_f += (wf[k] - mean_wf)**2
-            
+
         if var_s < 1e-14 or var_f < 1e-14:
             continue
-            
+
         rank_s = _tied_rank(ws)
         rank_f = _tied_rank(wf)
-        
+
         mean_rs, mean_rf = 0.0, 0.0
         for k in range(window):
             mean_rs += rank_s[k]
             mean_rf += rank_f[k]
         mean_rs /= window
         mean_rf /= window
-        
+
         cov, var_rs, var_rf = 0.0, 0.0, 0.0
         for k in range(window):
             diff_s = rank_s[k] - mean_rs
@@ -391,12 +391,12 @@ def _rolling_spearman_numba(sig_vals: np.ndarray, fwd_vals: np.ndarray, window: 
             cov += diff_s * diff_f
             var_rs += diff_s * diff_s
             var_rf += diff_f * diff_f
-            
+
         if var_rs < 1e-14 or var_rf < 1e-14:
             continue
-            
+
         out[i-1] = cov / np.sqrt(var_rs * var_rf)
-        
+
     return out
 
 def _rolling_ic_series(
