@@ -67,7 +67,7 @@ class FeatureEngine:
             return None
 
         vol = self._ewm_vol(np.array(self._ret_buf), self.vol_span)
-        fd = float(np.dot(self._weights, np.array(self._price_buf)[-self._frac_window:]))
+        fd = float(np.dot(self._weights, np.array(self._price_buf)[-self._frac_window :]))
 
         return np.array([log_ret, vol, fd], dtype=np.float64)
 

@@ -86,10 +86,15 @@ def _hurst_rs_core(ts: np.ndarray, lags: np.ndarray) -> float:
     xl = log_lags[:count]
     yl = log_rs[:count]
     n_pts = float(count)
-    sx = 0.0; sy = 0.0; sxx = 0.0; sxy = 0.0
+    sx = 0.0
+    sy = 0.0
+    sxx = 0.0
+    sxy = 0.0
     for i in range(count):
-        sx += xl[i]; sy += yl[i]
-        sxx += xl[i] * xl[i]; sxy += xl[i] * yl[i]
+        sx += xl[i]
+        sy += yl[i]
+        sxx += xl[i] * xl[i]
+        sxy += xl[i] * yl[i]
     denom = n_pts * sxx - sx * sx
     if denom == 0.0:
         return np.nan
@@ -229,23 +234,27 @@ def main() -> None:
     mean_rev_h = (df["hurst_char"] == "mean-rev").sum()
     rw_h = (df["hurst_char"] == "rand-walk").sum()
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"BATCH RESULTS  ({total} symbols, min {args.min_bars} bars)")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print("\nLag-1 ACF character:")
-    print(f"  Mean-reverting : {mean_rev_acf:4d}  ({100*mean_rev_acf/total:.1f}%)")
-    print(f"  Trending       : {trending_acf:4d}  ({100*trending_acf/total:.1f}%)")
-    print(f"  Random walk    : {rw_acf:4d}  ({100*rw_acf/total:.1f}%)")
+    print(f"  Mean-reverting : {mean_rev_acf:4d}  ({100 * mean_rev_acf / total:.1f}%)")
+    print(f"  Trending       : {trending_acf:4d}  ({100 * trending_acf / total:.1f}%)")
+    print(f"  Random walk    : {rw_acf:4d}  ({100 * rw_acf / total:.1f}%)")
     print("\nHurst exponent character:")
-    print(f"  Trending (H>0.55)   : {trending_h:4d}  ({100*trending_h/total:.1f}%)")
-    print(f"  Random walk         : {rw_h:4d}  ({100*rw_h/total:.1f}%)")
-    print(f"  Mean-rev (H<0.45)   : {mean_rev_h:4d}  ({100*mean_rev_h/total:.1f}%)")
-    print(f"\nHurst H stats:  mean={df['hurst_h'].mean():.3f}  "
-          f"median={df['hurst_h'].median():.3f}  "
-          f"std={df['hurst_h'].std():.3f}")
-    print(f"Lag-1 ACF stats: mean={df['lag1_acf'].mean():.4f}  "
-          f"median={df['lag1_acf'].median():.4f}  "
-          f"std={df['lag1_acf'].std():.4f}")
+    print(f"  Trending (H>0.55)   : {trending_h:4d}  ({100 * trending_h / total:.1f}%)")
+    print(f"  Random walk         : {rw_h:4d}  ({100 * rw_h / total:.1f}%)")
+    print(f"  Mean-rev (H<0.45)   : {mean_rev_h:4d}  ({100 * mean_rev_h / total:.1f}%)")
+    print(
+        f"\nHurst H stats:  mean={df['hurst_h'].mean():.3f}  "
+        f"median={df['hurst_h'].median():.3f}  "
+        f"std={df['hurst_h'].std():.3f}"
+    )
+    print(
+        f"Lag-1 ACF stats: mean={df['lag1_acf'].mean():.4f}  "
+        f"median={df['lag1_acf'].median():.4f}  "
+        f"std={df['lag1_acf'].std():.4f}"
+    )
 
     # Top 20 most trending by Hurst
     print("\n--- Top 20 most TRENDING (Hurst H) ---")
@@ -259,7 +268,9 @@ def main() -> None:
 
     # Strongest seasonal amplitude
     print("\n--- Top 20 strongest SEASONAL signal ---")
-    top_s = df.nlargest(20, "seasonal_amp")[["symbol", "n_bars", "seasonal_amp", "residual_std", "hurst_h"]]
+    top_s = df.nlargest(20, "seasonal_amp")[
+        ["symbol", "n_bars", "seasonal_amp", "residual_std", "hurst_h"]
+    ]
     print(top_s.to_string(index=False))
 
     print(f"\nFull results -> {out_csv}")

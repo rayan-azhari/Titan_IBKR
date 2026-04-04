@@ -119,8 +119,15 @@ def bah_stats(close: pd.Series) -> dict:
 
 
 REGIME_COLORS = [
-    "#2196F3", "#4CAF50", "#FF5722", "#9C27B0",
-    "#F44336", "#00BCD4", "#FF9800", "#607D8B", "#E91E63",
+    "#2196F3",
+    "#4CAF50",
+    "#FF5722",
+    "#9C27B0",
+    "#F44336",
+    "#00BCD4",
+    "#FF9800",
+    "#607D8B",
+    "#E91E63",
 ]
 
 
@@ -133,7 +140,8 @@ def build_chart(
     """Build multi-panel HTML chart: equity per window + position maps."""
     n = len(windows)
     fig = make_subplots(
-        rows=2, cols=1,
+        rows=2,
+        cols=1,
         shared_xaxes=True,
         row_heights=[0.65, 0.35],
         vertical_spacing=0.05,
@@ -144,16 +152,21 @@ def build_chart(
     )
 
     # Panel 1: price (faint background)
-    fig.add_trace(go.Scatter(
-        x=close.index, y=close.values,
-        name=f"{instrument} Close",
-        line=dict(color="rgba(150,150,150,0.4)", width=1),
-        yaxis="y1",
-    ), row=1, col=1)
+    fig.add_trace(
+        go.Scatter(
+            x=close.index,
+            y=close.values,
+            name=f"{instrument} Close",
+            line=dict(color="rgba(150,150,150,0.4)", width=1),
+            yaxis="y1",
+        ),
+        row=1,
+        col=1,
+    )
 
     for i, w in enumerate(windows):
         color = REGIME_COLORS[i % len(REGIME_COLORS)]
-        win_close = close.loc[w["start"]:w["end"]]
+        win_close = close.loc[w["start"] : w["end"]]
         eq = INIT_CASH * (1 + w["strat_ret"]).cumprod()
         eq_norm = eq / eq.iloc[0]
         bah_norm = win_close / win_close.iloc[0]
@@ -163,53 +176,80 @@ def build_chart(
             f"sh={w['stats']['sharpe']:.2f}  dd={w['stats']['max_drawdown']:.0%}"
         )
 
-        fig.add_trace(go.Scatter(
-            x=win_close.index, y=eq_norm.values,
-            name=label,
-            line=dict(color=color, width=2),
-            yaxis="y1",
-        ), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(
+                x=win_close.index,
+                y=eq_norm.values,
+                name=label,
+                line=dict(color=color, width=2),
+                yaxis="y1",
+            ),
+            row=1,
+            col=1,
+        )
 
         # faint B&H for this window
-        fig.add_trace(go.Scatter(
-            x=win_close.index, y=bah_norm.values,
-            name=f"B&H {w['label']}",
-            line=dict(color=color, width=0.8, dash="dot"),
-            yaxis="y1",
-            showlegend=False,
-        ), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(
+                x=win_close.index,
+                y=bah_norm.values,
+                name=f"B&H {w['label']}",
+                line=dict(color=color, width=0.8, dash="dot"),
+                yaxis="y1",
+                showlegend=False,
+            ),
+            row=1,
+            col=1,
+        )
 
         # Panel 2: position  (offset each window by i*0.1 for readability)
         pos_offset = (n - 1 - i) * 1.3
         pos_vals = w["in_pos"].astype(float) + pos_offset
-        fig.add_trace(go.Scatter(
-            x=win_close.index, y=pos_vals.values,
-            name=w["label"],
-            line=dict(color=color, width=1.5, shape="hv"),
-            showlegend=False,
-        ), row=2, col=1)
+        fig.add_trace(
+            go.Scatter(
+                x=win_close.index,
+                y=pos_vals.values,
+                name=w["label"],
+                line=dict(color=color, width=1.5, shape="hv"),
+                showlegend=False,
+            ),
+            row=2,
+            col=1,
+        )
         fig.add_annotation(
-            x=win_close.index[0], y=pos_offset + 0.5,
+            x=win_close.index[0],
+            y=pos_offset + 0.5,
             text=w["label"],
             showarrow=False,
             font=dict(size=9, color=color),
             xanchor="left",
-            row=2, col=1,
+            row=2,
+            col=1,
         )
 
     # IS/OOS split line
     for row in (1, 2):
         fig.add_shape(
             type="line",
-            x0=oos_split_date, x1=oos_split_date, y0=0, y1=1,
-            xref="x", yref="y domain" if row == 1 else "y2 domain",
+            x0=oos_split_date,
+            x1=oos_split_date,
+            y0=0,
+            y1=1,
+            xref="x",
+            yref="y domain" if row == 1 else "y2 domain",
             line=dict(dash="dash", color="navy", width=1.5),
-            row=row, col=1,
+            row=row,
+            col=1,
         )
     fig.add_annotation(
-        x=oos_split_date, y=1.03, xref="x", yref="paper",
-        text="◄ IS    OOS ►", showarrow=False,
-        font=dict(size=10, color="navy"), xanchor="center",
+        x=oos_split_date,
+        y=1.03,
+        xref="x",
+        yref="paper",
+        text="◄ IS    OOS ►",
+        showarrow=False,
+        font=dict(size=10, color="navy"),
+        xanchor="center",
     )
 
     fig.update_layout(
@@ -224,7 +264,11 @@ def build_chart(
         height=800,
         hovermode="x unified",
         legend=dict(
-            orientation="v", yanchor="top", y=1.0, xanchor="left", x=1.01,
+            orientation="v",
+            yanchor="top",
+            y=1.0,
+            xanchor="left",
+            x=1.01,
             font_size=10,
         ),
         margin=dict(t=110, b=40, l=70, r=220),
@@ -267,11 +311,14 @@ def main() -> None:
     split = int(len(close) * 0.70)
     oos_split_date = close.index[split]
 
-    print(f"  Full series: {close.index[0].date()} to {close.index[-1].date()}"
-          f"  ({len(close)} bars)")
+    print(
+        f"  Full series: {close.index[0].date()} to {close.index[-1].date()}  ({len(close)} bars)"
+    )
     print(f"  OOS starts:  {oos_split_date.date()}  (70/30 reference split)")
-    print(f"  Config:      entry={config.get('entry_mode')}  "
-          f"exit={config['exit_mode']}  sizing={config['sizing_mode']}")
+    print(
+        f"  Config:      entry={config.get('entry_mode')}  "
+        f"exit={config['exit_mode']}  sizing={config['sizing_mode']}"
+    )
 
     # ── Build signals on FULL series (fixed params, no re-opt) ──────────────
     entries_full, exits_full, _decel_sh, _sizes = build_signals(close, df, config)
@@ -295,8 +342,8 @@ def main() -> None:
         end_i = min(start_i + window_bars, len(close)) - 1
         win_start = idx[start_i]
         win_end = idx[end_i]
-        win_close = close.iloc[start_i:end_i + 1]
-        win_pos = in_pos_full.iloc[start_i:end_i + 1]
+        win_close = close.iloc[start_i : end_i + 1]
+        win_pos = in_pos_full.iloc[start_i : end_i + 1]
 
         strat = window_stats(win_close, win_pos)
         bah = bah_stats(win_close)
@@ -316,40 +363,46 @@ def main() -> None:
         strat_ret -= entering.astype(float) * (FEES_BASE + SLIPPAGE)
         strat_ret -= exiting.astype(float) * (FEES_BASE + SLIPPAGE)
 
-        windows.append({
-            "label": label,
-            "start": win_start,
-            "end": win_end,
-            "stats": strat,
-            "in_pos": win_pos,
-            "strat_ret": strat_ret,
-        })
-        rows.append({
-            "window": label,
-            "region": region,
-            "start": str(win_start.date()),
-            "end": str(win_end.date()),
-            "n_bars": len(win_close),
-            **{f"strat_{k}": v for k, v in strat.items()},
-            **{f"bah_{k}": v for k, v in bah.items()},
-            "beats_bah_return": strat["total_return"] > bah["total_return"],
-            "beats_bah_sharpe": strat["sharpe"] > bah["sharpe"],
-            "beats_bah_dd": abs(strat["max_drawdown"]) < abs(bah["max_drawdown"]),
-        })
+        windows.append(
+            {
+                "label": label,
+                "start": win_start,
+                "end": win_end,
+                "stats": strat,
+                "in_pos": win_pos,
+                "strat_ret": strat_ret,
+            }
+        )
+        rows.append(
+            {
+                "window": label,
+                "region": region,
+                "start": str(win_start.date()),
+                "end": str(win_end.date()),
+                "n_bars": len(win_close),
+                **{f"strat_{k}": v for k, v in strat.items()},
+                **{f"bah_{k}": v for k, v in bah.items()},
+                "beats_bah_return": strat["total_return"] > bah["total_return"],
+                "beats_bah_sharpe": strat["sharpe"] > bah["sharpe"],
+                "beats_bah_dd": abs(strat["max_drawdown"]) < abs(bah["max_drawdown"]),
+            }
+        )
         start_i += window_bars
 
     df_results = pd.DataFrame(rows)
 
     # ── Print scoreboard ────────────────────────────────────────────────────
-    print(f"\n  {'Window':<12}{'Rgn':<7}{'Return':>8}{'Sharpe':>8}"
-          f"{'MaxDD':>8}{'Calmar':>8}{'Trades':>7}{'%InMkt':>8}"
-          f"  vs B&H (ret/sh/dd)")
+    print(
+        f"\n  {'Window':<12}{'Rgn':<7}{'Return':>8}{'Sharpe':>8}"
+        f"{'MaxDD':>8}{'Calmar':>8}{'Trades':>7}{'%InMkt':>8}"
+        f"  vs B&H (ret/sh/dd)"
+    )
     print("  " + "-" * 80)
     for r in rows:
         beats = (
-            ("R" if r["beats_bah_return"] else ".") +
-            ("S" if r["beats_bah_sharpe"] else ".") +
-            ("D" if r["beats_bah_dd"] else ".")
+            ("R" if r["beats_bah_return"] else ".")
+            + ("S" if r["beats_bah_sharpe"] else ".")
+            + ("D" if r["beats_bah_dd"] else ".")
         )
         print(
             f"  {r['window']:<12}{r['region']:<7}"
@@ -363,15 +416,14 @@ def main() -> None:
         )
 
     n_beats_2of3 = sum(
-        (r["beats_bah_return"] + r["beats_bah_sharpe"] + r["beats_bah_dd"]) >= 2
-        for r in rows
+        (r["beats_bah_return"] + r["beats_bah_sharpe"] + r["beats_bah_dd"]) >= 2 for r in rows
     )
     n_total = len(rows)
-    print(f"\n  Windows beating B&H on 2/3: {n_beats_2of3} / {n_total} "
-          f"({n_beats_2of3 / n_total:.0%})")
+    print(
+        f"\n  Windows beating B&H on 2/3: {n_beats_2of3} / {n_total} ({n_beats_2of3 / n_total:.0%})"
+    )
     pos_count = sum(r["strat_total_return"] > 0 for r in rows)
-    print(f"  Windows profitable:         {pos_count} / {n_total} "
-          f"({pos_count / n_total:.0%})")
+    print(f"  Windows profitable:         {pos_count} / {n_total} ({pos_count / n_total:.0%})")
 
     # ── Save CSV ────────────────────────────────────────────────────────────
     csv_path = REPORTS_DIR / f"etf_trend_{inst_lower}_window_validation.csv"

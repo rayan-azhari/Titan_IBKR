@@ -79,6 +79,7 @@ CROSSOVER_REF = {"sharpe": 1.164, "total_return": 2.805, "max_drawdown": -0.286}
 # Data
 # ---------------------------------------------------------------------------
 
+
 def load_data(instrument: str) -> pd.DataFrame:
     path = DATA_DIR / f"{instrument}_D.parquet"
     if not path.exists():
@@ -99,6 +100,7 @@ def load_data(instrument: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Signal builders
 # ---------------------------------------------------------------------------
+
 
 def build_decel_composite(
     close: pd.Series,
@@ -130,15 +132,14 @@ def mode_d_exit(
 ) -> pd.Series:
     """Mode D exit: SMA break (confirmed) OR decel collapse (confirmed)."""
     below_slow = apply_sma_confirmation(~(close > slow_ma), exit_confirm_days)
-    decel_exit = apply_sma_confirmation(
-        decel < exit_thresh, DECEL_CONFIRM_DAYS
-    )
+    decel_exit = apply_sma_confirmation(decel < exit_thresh, DECEL_CONFIRM_DAYS)
     return below_slow | decel_exit
 
 
 # ---------------------------------------------------------------------------
 # Backtest
 # ---------------------------------------------------------------------------
+
 
 def run_hybrid_backtest(
     close: pd.Series,
@@ -177,14 +178,20 @@ def run_price_above_sma_backtest(close: pd.Series) -> "vbt.Portfolio":
     entries = above.shift(1).fillna(False)
     exits = (~above).shift(1).fillna(False)
     return vbt.Portfolio.from_signals(
-        close, entries=entries, exits=exits,
-        init_cash=10_000, fees=FEES, slippage=SLIPPAGE, freq="1D",
+        close,
+        entries=entries,
+        exits=exits,
+        init_cash=10_000,
+        fees=FEES,
+        slippage=SLIPPAGE,
+        freq="1D",
     )
 
 
 # ---------------------------------------------------------------------------
 # Stats
 # ---------------------------------------------------------------------------
+
 
 def stats_from_pf(pf: "vbt.Portfolio") -> dict:
     total_ret = float(pf.total_return())
@@ -202,7 +209,7 @@ def stats_from_pf(pf: "vbt.Portfolio") -> dict:
 def bah_stats(close: pd.Series) -> dict:
     rets = close.pct_change().dropna()
     total_ret = float(close.iloc[-1] / close.iloc[0] - 1)
-    sharpe = float(rets.mean() / rets.std() * (252 ** 0.5)) if rets.std() > 0 else 0.0
+    sharpe = float(rets.mean() / rets.std() * (252**0.5)) if rets.std() > 0 else 0.0
     max_dd = float((close / close.cummax() - 1).min())
     calmar = total_ret / abs(max_dd) if abs(max_dd) > 0.001 else 0.0
     return {
@@ -216,6 +223,7 @@ def bah_stats(close: pd.Series) -> dict:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Hybrid MA crossover + Malik decel exit sweep.")
@@ -246,10 +254,14 @@ def main() -> None:
     is_df = df.iloc[:split]
     oos_df = df.iloc[split:]
 
-    print(f"\n  IS  period: {is_close.index[0].date()} -> {is_close.index[-1].date()}"
-          f"  ({len(is_close)} bars)")
-    print(f"  OOS period: {oos_close.index[0].date()} -> {oos_close.index[-1].date()}"
-          f"  ({len(oos_close)} bars)")
+    print(
+        f"\n  IS  period: {is_close.index[0].date()} -> {is_close.index[-1].date()}"
+        f"  ({len(is_close)} bars)"
+    )
+    print(
+        f"  OOS period: {oos_close.index[0].date()} -> {oos_close.index[-1].date()}"
+        f"  ({len(oos_close)} bars)"
+    )
 
     # Benchmarks
     bah = bah_stats(oos_close)
@@ -286,13 +298,8 @@ def main() -> None:
                 oos_pf = run_hybrid_backtest(oos_close, oos_df, fast_p, exit_thresh, ecd)
                 is_s = stats_from_pf(is_pf)
                 oos_s = stats_from_pf(oos_pf)
-                ratio = (
-                    oos_s["sharpe"] / is_s["sharpe"]
-                    if is_s["sharpe"] > 0.01 else 0.0
-                )
-                label = (
-                    f"fast={fast_p:3d}  thresh={exit_thresh:+.1f}  ecd={ecd}"
-                )
+                ratio = oos_s["sharpe"] / is_s["sharpe"] if is_s["sharpe"] > 0.01 else 0.0
+                label = f"fast={fast_p:3d}  thresh={exit_thresh:+.1f}  ecd={ecd}"
                 print(
                     f"  {label}  IS={is_s['sharpe']:6.3f}  "
                     f"OOS={oos_s['sharpe']:6.3f}  "
@@ -300,17 +307,19 @@ def main() -> None:
                     f"DD={oos_s['max_drawdown']:7.1%}  "
                     f"Ratio={ratio:.2f}"
                 )
-                results.append({
-                    "fast_ma": fast_p,
-                    "exit_decel_thresh": exit_thresh,
-                    "exit_confirm_days": ecd,
-                    "is_sharpe": is_s["sharpe"],
-                    "oos_sharpe": oos_s["sharpe"],
-                    "oos_is_ratio": round(ratio, 3),
-                    "oos_total_return": oos_s["total_return"],
-                    "oos_max_drawdown": oos_s["max_drawdown"],
-                    "oos_calmar": oos_s["calmar"],
-                })
+                results.append(
+                    {
+                        "fast_ma": fast_p,
+                        "exit_decel_thresh": exit_thresh,
+                        "exit_confirm_days": ecd,
+                        "is_sharpe": is_s["sharpe"],
+                        "oos_sharpe": oos_s["sharpe"],
+                        "oos_is_ratio": round(ratio, 3),
+                        "oos_total_return": oos_s["total_return"],
+                        "oos_max_drawdown": oos_s["max_drawdown"],
+                        "oos_calmar": oos_s["calmar"],
+                    }
+                )
 
     scoreboard = pd.DataFrame(results).sort_values("oos_sharpe", ascending=False)
     csv_path = REPORTS_DIR / f"ma_crossover_hybrid_{inst_lower}.csv"
@@ -328,8 +337,10 @@ def main() -> None:
     print(f"  Exit confirm days: {int(best['exit_confirm_days'])}")
     print(f"  IS  Sharpe:        {best['is_sharpe']:.3f}")
     print(f"  OOS Sharpe:        {best['oos_sharpe']:.3f}")
-    print(f"  OOS/IS ratio:      {best['oos_is_ratio']:.3f}  "
-          f"{'[OK]' if best['oos_is_ratio'] >= 0.5 else '[WARN: < 0.5]'}")
+    print(
+        f"  OOS/IS ratio:      {best['oos_is_ratio']:.3f}  "
+        f"{'[OK]' if best['oos_is_ratio'] >= 0.5 else '[WARN: < 0.5]'}"
+    )
     print(f"  OOS Return:        {best['oos_total_return']:.1%}")
     print(f"  OOS MaxDD:         {best['oos_max_drawdown']:.1%}")
     print(f"  OOS Calmar:        {best['oos_calmar']:.3f}")

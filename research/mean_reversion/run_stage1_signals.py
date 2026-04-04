@@ -53,20 +53,20 @@ CONFIG_PATH = PROJECT_ROOT / "config" / "eurusd_mr.toml"
 with open(CONFIG_PATH, "rb") as f:
     CFG = tomllib.load(f)
 
-PAIR = CFG["base"]["instrument"]    # "EUR_USD"
-TF   = CFG["base"]["timeframe"]     # "M5"
+PAIR = CFG["base"]["instrument"]  # "EUR_USD"
+TF = CFG["base"]["timeframe"]  # "M5"
 ANCHOR_SESSIONS = CFG["vwap"]["anchor_sessions"]
 TIERS_PCT = CFG["signal"]["tiers_pct"]
 INVALIDATION_PCT = CFG["signal"]["invalidation_pct"]
 
 # Sweep grid
-PCT_WINDOWS = [500, 1000, 2000, 3000, 5000]   # bars for rolling percentile
+PCT_WINDOWS = [500, 1000, 2000, 3000, 5000]  # bars for rolling percentile
 METHODS = ["percentile", "atr"]
 ATR_MULTS = CFG["atr"]["mults"]
 ATR_PERIOD = CFG["atr"]["period"]
 
 # Simplified single-tier backtest: entry at tier1 pct, exit at mean (deviation -> 0)
-TIER1_PCT = TIERS_PCT[0]   # 0.90
+TIER1_PCT = TIERS_PCT[0]  # 0.90
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -83,7 +83,9 @@ def load_m5(pair: str) -> pd.DataFrame:
     df = df.set_index("timestamp").sort_index()
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = df[col].astype(float)
-    print(f"  Loaded {pair}_{TF}: {len(df):,} bars  [{df.index[0].date()} -> {df.index[-1].date()}]")
+    print(
+        f"  Loaded {pair}_{TF}: {len(df):,} bars  [{df.index[0].date()} -> {df.index[-1].date()}]"
+    )
     return df
 
 
@@ -143,35 +145,41 @@ def main() -> None:
     vwap = sig.compute_anchored_vwap(df, anchor_sessions=ANCHOR_SESSIONS)
     deviation = sig.compute_deviation(df, vwap)
     print(f"  Deviation  mean={deviation.mean():.6f}  std={deviation.std():.6f}")
-    print(f"  Deviation  90th pct={deviation.quantile(0.90):.5f}  "
-          f"99th pct={deviation.quantile(0.99):.5f}  "
-          f"99.9th pct={deviation.quantile(0.999):.5f}")
+    print(
+        f"  Deviation  90th pct={deviation.quantile(0.90):.5f}  "
+        f"99th pct={deviation.quantile(0.99):.5f}  "
+        f"99.9th pct={deviation.quantile(0.999):.5f}"
+    )
 
     # ── Percentile stability sweep ────────────────────────────────────────
     print("\n[2/4] Percentile stability sweep across windows...")
     stability_rows = []
     for w in PCT_WINDOWS:
         lvls = sig.percentile_levels(deviation, w, pcts=TIERS_PCT)
-        inv  = sig.invalidation_level(deviation, w, pct=INVALIDATION_PCT)
+        inv = sig.invalidation_level(deviation, w, pct=INVALIDATION_PCT)
         for pct_col in lvls.columns:
             s = lvls[pct_col].dropna()
             if len(s) == 0:
                 continue
-            stability_rows.append({
-                "window": w,
-                "percentile": pct_col,
-                "mean_level": round(s.mean(), 6),
-                "std_level": round(s.std(), 6),
-                "cv": round(s.std() / s.mean(), 4) if s.mean() != 0 else np.nan,
-            })
+            stability_rows.append(
+                {
+                    "window": w,
+                    "percentile": pct_col,
+                    "mean_level": round(s.mean(), 6),
+                    "std_level": round(s.std(), 6),
+                    "cv": round(s.std() / s.mean(), 4) if s.mean() != 0 else np.nan,
+                }
+            )
         s_inv = inv.dropna()
-        stability_rows.append({
-            "window": w,
-            "percentile": INVALIDATION_PCT,
-            "mean_level": round(s_inv.mean(), 6),
-            "std_level": round(s_inv.std(), 6),
-            "cv": round(s_inv.std() / s_inv.mean(), 4) if s_inv.mean() != 0 else np.nan,
-        })
+        stability_rows.append(
+            {
+                "window": w,
+                "percentile": INVALIDATION_PCT,
+                "mean_level": round(s_inv.mean(), 6),
+                "std_level": round(s_inv.std(), 6),
+                "cv": round(s_inv.std() / s_inv.mean(), 4) if s_inv.mean() != 0 else np.nan,
+            }
+        )
     stab_df = pd.DataFrame(stability_rows)
     print(stab_df.to_string(index=False))
 
@@ -184,45 +192,59 @@ def main() -> None:
         inv = sig.invalidation_level(deviation, w)
 
         short_entry = deviation > tier1_lvl
-        short_exit  = (deviation < 0) | (deviation.abs() > inv.abs())
-        long_entry  = deviation < -tier1_lvl
-        long_exit   = (deviation > 0) | (deviation.abs() > inv.abs())
+        short_exit = (deviation < 0) | (deviation.abs() > inv.abs())
+        long_entry = deviation < -tier1_lvl
+        long_exit = (deviation > 0) | (deviation.abs() > inv.abs())
 
         row = run_single_tier_backtest(
-            close, short_entry, long_entry, short_exit, long_exit, spread,
+            close,
+            short_entry,
+            long_entry,
+            short_exit,
+            long_exit,
+            spread,
             label=f"pct_w{w}",
         )
         row["method"] = "percentile"
         row["window"] = w
         results.append(row)
-        print(f"  pct_w{w:5d}  Sharpe={row['sharpe']:+.2f}  "
-              f"n_trades={row['n_trades']:5d}  "
-              f"trades/wk={row['trades_per_week']:.1f}  "
-              f"WR={row['win_rate']:.2%}")
+        print(
+            f"  pct_w{w:5d}  Sharpe={row['sharpe']:+.2f}  "
+            f"n_trades={row['n_trades']:5d}  "
+            f"trades/wk={row['trades_per_week']:.1f}  "
+            f"WR={row['win_rate']:.2%}"
+        )
 
     # ── Single-tier backtest: ATR method ──────────────────────────────────
     from titan.strategies.ml.features import atr as compute_atr
+
     atr_series = compute_atr(df, ATR_PERIOD).shift(1)
     tier1_atr_lvl = vwap + ATR_MULTS[0] * atr_series
     inv_atr = vwap + ATR_MULTS[-1] * atr_series * 2  # rough invalidation
 
     short_entry_atr = close > tier1_atr_lvl
-    short_exit_atr  = (close < vwap) | (close > inv_atr)
-    long_entry_atr  = close < (vwap - ATR_MULTS[0] * atr_series)
-    long_exit_atr   = (close > vwap) | (close < (vwap - ATR_MULTS[-1] * atr_series * 2))
+    short_exit_atr = (close < vwap) | (close > inv_atr)
+    long_entry_atr = close < (vwap - ATR_MULTS[0] * atr_series)
+    long_exit_atr = (close > vwap) | (close < (vwap - ATR_MULTS[-1] * atr_series * 2))
 
     atr_row = run_single_tier_backtest(
-        close, short_entry_atr, long_entry_atr,
-        short_exit_atr, long_exit_atr, spread,
+        close,
+        short_entry_atr,
+        long_entry_atr,
+        short_exit_atr,
+        long_exit_atr,
+        spread,
         label="atr_tier1",
     )
     atr_row["method"] = "atr"
     atr_row["window"] = ATR_PERIOD
     results.append(atr_row)
-    print(f"  atr_tier1  Sharpe={atr_row['sharpe']:+.2f}  "
-          f"n_trades={atr_row['n_trades']:5d}  "
-          f"trades/wk={atr_row['trades_per_week']:.1f}  "
-          f"WR={atr_row['win_rate']:.2%}")
+    print(
+        f"  atr_tier1  Sharpe={atr_row['sharpe']:+.2f}  "
+        f"n_trades={atr_row['n_trades']:5d}  "
+        f"trades/wk={atr_row['trades_per_week']:.1f}  "
+        f"WR={atr_row['win_rate']:.2%}"
+    )
 
     # ── Save outputs ──────────────────────────────────────────────────────
     results_df = pd.DataFrame(results)
@@ -231,31 +253,40 @@ def main() -> None:
     print(f"\n  Saved results -> {out_csv}")
 
     # Persist best percentile window
-    best_pct_row = results_df[results_df["method"] == "percentile"].sort_values(
-        "sharpe", ascending=False
-    ).iloc[0]
+    best_pct_row = (
+        results_df[results_df["method"] == "percentile"]
+        .sort_values("sharpe", ascending=False)
+        .iloc[0]
+    )
     sm.save_stage1(
         method="percentile",
-        vwap_window=0,   # VWAP uses session anchor, no fixed window
+        vwap_window=0,  # VWAP uses session anchor, no fixed window
         best_pct_window=int(best_pct_row["window"]),
         best_pct=TIER1_PCT,
         sharpe=float(best_pct_row["sharpe"]),
     )
-    print(f"  Best percentile window: {int(best_pct_row['window'])}  "
-          f"Sharpe={float(best_pct_row['sharpe']):.3f}")
+    print(
+        f"  Best percentile window: {int(best_pct_row['window'])}  "
+        f"Sharpe={float(best_pct_row['sharpe']):.3f}"
+    )
 
     # ── Deviation distribution plot ───────────────────────────────────────
     print("\n[4/4] Plotting deviation distribution...")
-    fig = make_subplots(rows=2, cols=1,
-                        subplot_titles=["VWAP Deviation Distribution", "Sharpe by Window"])
+    fig = make_subplots(
+        rows=2, cols=1, subplot_titles=["VWAP Deviation Distribution", "Sharpe by Window"]
+    )
 
-    fig.add_trace(go.Histogram(
-        x=deviation.dropna().values,
-        nbinsx=200,
-        name="Deviation",
-        marker_color="steelblue",
-        opacity=0.75,
-    ), row=1, col=1)
+    fig.add_trace(
+        go.Histogram(
+            x=deviation.dropna().values,
+            nbinsx=200,
+            name="Deviation",
+            marker_color="steelblue",
+            opacity=0.75,
+        ),
+        row=1,
+        col=1,
+    )
 
     # Mark percentile levels on histogram
     best_w = int(best_pct_row["window"])
@@ -265,19 +296,27 @@ def main() -> None:
         lvl = float(best_lvls[pct_col].dropna().mean())
         for sign, side in [(1, "short"), (-1, "long")]:
             fig.add_vline(
-                x=sign * lvl, line_dash="dash", line_color=color, opacity=0.7,
-                annotation_text=f"{side} {int(pct_col*100)}th pct",
-                row=1, col=1,
+                x=sign * lvl,
+                line_dash="dash",
+                line_color=color,
+                opacity=0.7,
+                annotation_text=f"{side} {int(pct_col * 100)}th pct",
+                row=1,
+                col=1,
             )
 
     # Sharpe by window (percentile method only)
     pct_results = results_df[results_df["method"] == "percentile"]
-    fig.add_trace(go.Bar(
-        x=pct_results["window"].astype(str),
-        y=pct_results["sharpe"],
-        name="Sharpe",
-        marker_color="teal",
-    ), row=2, col=1)
+    fig.add_trace(
+        go.Bar(
+            x=pct_results["window"].astype(str),
+            y=pct_results["sharpe"],
+            name="Sharpe",
+            marker_color="teal",
+        ),
+        row=2,
+        col=1,
+    )
 
     fig.update_layout(title="Stage 1 — VWAP Deviation Analysis", height=700)
     out_html = REPORTS_DIR / "eurusd_mr_deviation_dist.html"

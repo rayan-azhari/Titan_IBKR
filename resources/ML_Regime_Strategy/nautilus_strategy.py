@@ -76,7 +76,6 @@ class MLRegimeStrategyConfig(StrategyConfig, frozen=True):
 
 
 class MLRegimeStrategy(Strategy):
-
     def __init__(self, config: MLRegimeStrategyConfig):
         super().__init__(config)
 
@@ -259,8 +258,8 @@ class MLRegimeStrategy(Strategy):
         prices = np.array(self._price_window)
         fast_now = prices[-fast_p:].mean()
         slow_now = prices[-slow_p:].mean()
-        fast_prev = prices[-(fast_p + 1):-1].mean()
-        slow_prev = prices[-(slow_p + 1):-1].mean()
+        fast_prev = prices[-(fast_p + 1) : -1].mean()
+        slow_prev = prices[-(slow_p + 1) : -1].mean()
 
         return (fast_now > slow_now) and (fast_prev <= slow_prev)
 
@@ -278,9 +277,7 @@ class MLRegimeStrategy(Strategy):
 
     def _portfolio_value(self) -> float:
         try:
-            return float(
-                self.portfolio.net_exposure(self.instrument.quote_currency)
-            )
+            return float(self.portfolio.net_exposure(self.instrument.quote_currency))
         except Exception:
             return 100_000.0  # fallback during testing
 

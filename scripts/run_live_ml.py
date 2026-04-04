@@ -38,8 +38,6 @@ from nautilus_trader.adapters.interactive_brokers.factories import (
     InteractiveBrokersLiveExecClientFactory,
 )
 
-from titan.strategies.debug.simple_printer import SimplePrinter, SimplePrinterConfig
-
 # ---------------------------------------------------------------------------
 # Structured logging — file + console, matching run_live.py pattern
 # ---------------------------------------------------------------------------
@@ -190,12 +188,10 @@ def main():
         print(f"🚀 Deployed ML Strategy on {bar_type} using {selected_model.name}")
 
     else:
-        print(
-            "⚠ No ML models found in models/ directory. Running in Printer Mode (Monitoring only)."
-        )
-        strategy_config = SimplePrinterConfig()
-        strategy = SimplePrinter(config=strategy_config)
-        node.add_strategy(strategy)
+        logger.error("No ML models found in models/ directory. Cannot start.")
+        print("ERROR: No ML models found. Train a model first:")
+        print("  uv run python research/ml/run_52signal_classifier.py")
+        sys.exit(1)
 
     # 6. Build & Run
     print("🚀 Starting Trading Node...")

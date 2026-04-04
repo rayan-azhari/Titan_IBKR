@@ -48,7 +48,7 @@ class ModelHealthMonitor:
 
     def __init__(
         self,
-        training_regime_dist: np.ndarray,    # [n_states] normalised frequencies
+        training_regime_dist: np.ndarray,  # [n_states] normalised frequencies
         training_prob_mean: float,
         training_prob_std: float,
         n_states: int = 2,
@@ -141,7 +141,7 @@ class ModelHealthMonitor:
             self._raise_alert(alert)
 
     def _check_calibration(self):
-        recent = self._trade_outcomes[-self.calibration_window:]
+        recent = self._trade_outcomes[-self.calibration_window :]
         probs = np.array([t[0] for t in recent])
         outcomes = np.array([t[1] for t in recent])
         expected = probs.mean()
@@ -197,9 +197,9 @@ class RetrainingScheduler:
     def __init__(
         self,
         scheduled_interval_bars: int = 252,  # ~1 year daily bars
-        min_bars_for_trigger: int = 100,       # don't retrain until we have enough data
-        feature_warmup_bars: int = 150,        # FeatureEngine.min_history
-        hmm_warmup_bars: int = 60,             # RegimeDetector.min_seq_len
+        min_bars_for_trigger: int = 100,  # don't retrain until we have enough data
+        feature_warmup_bars: int = 150,  # FeatureEngine.min_history
+        hmm_warmup_bars: int = 60,  # RegimeDetector.min_seq_len
     ):
         self.scheduled_interval_bars = scheduled_interval_bars
         self.min_bars_for_trigger = min_bars_for_trigger

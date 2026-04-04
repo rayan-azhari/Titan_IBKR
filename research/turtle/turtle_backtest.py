@@ -52,11 +52,11 @@ from titan.strategies.ml.features import atr  # noqa: E402
 # ---------------------------------------------------------------------------
 INIT_CASH: float = 100_000.0
 IS_RATIO: float = 0.70
-RISK_PCT: float = 0.01       # 1 % equity at risk per trade (classic Turtle unit)
-STOP_MULT: float = 2.0       # stop placed 2 ATR below entry
-MAX_LEVERAGE: float = 1.5    # hard cap on position size (Audit lowered from 4.0 to 1.5)
-FEES: float = 0.001          # ~10 bps round-trip (equity_lc cost profile)
-SLIPPAGE: float = 0.0002     # ~2 bps slippage
+RISK_PCT: float = 0.01  # 1 % equity at risk per trade (classic Turtle unit)
+STOP_MULT: float = 2.0  # stop placed 2 ATR below entry
+MAX_LEVERAGE: float = 1.5  # hard cap on position size (Audit lowered from 4.0 to 1.5)
+FEES: float = 0.001  # ~10 bps round-trip (equity_lc cost profile)
+SLIPPAGE: float = 0.0002  # ~2 bps slippage
 
 # (entry_channel_period, exit_channel_period)
 SYSTEMS: dict[int, tuple[int, int]] = {
@@ -69,8 +69,8 @@ ATR_PERIOD: int = 20
 # Bars per year by timeframe (used for Sharpe annualisation + RoR horizon)
 BARS_PER_YEAR: dict[str, int] = {
     "D": 252,
-    "H1": 252 * 14,   # ~14 hourly bars/day incl. extended hours
-    "M5": 252 * 78,   # 78 five-min bars per regular session (9:30-16:00)
+    "H1": 252 * 14,  # ~14 hourly bars/day incl. extended hours
+    "M5": 252 * 78,  # 78 five-min bars per regular session (9:30-16:00)
 }
 
 # VectorBT freq string by timeframe
@@ -84,6 +84,7 @@ VBT_FREQ: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
 
 def _load_databento(
     instrument: str,
@@ -105,8 +106,7 @@ def _load_databento(
     path = base / "databento" / f"{instrument}_1yr_5m.csv"
     if not path.exists():
         raise FileNotFoundError(
-            f"Databento 5m file not found: {path}\n"
-            f"Available tickers: ls {base / 'databento'}"
+            f"Databento 5m file not found: {path}\nAvailable tickers: ls {base / 'databento'}"
         )
     df = pd.read_csv(path)
     df.columns = [c.lower() for c in df.columns]
@@ -117,10 +117,7 @@ def _load_databento(
         if col not in df.columns:
             raise ValueError(f"Missing column '{col}' in {path}")
     df = df[["open", "high", "low", "close"]].dropna()
-    print(
-        f"  Databento 5m: {len(df)} bars  "
-        f"{df.index[0].date()} to {df.index[-1].date()}"
-    )
+    print(f"  Databento 5m: {len(df)} bars  {df.index[0].date()} to {df.index[-1].date()}")
     return df
 
 
@@ -138,6 +135,7 @@ def load_data(
 # ---------------------------------------------------------------------------
 # Signal & sizing helpers
 # ---------------------------------------------------------------------------
+
 
 def compute_signals(
     df: pd.DataFrame,
@@ -229,6 +227,7 @@ def compute_pyramid_entries(
 # VectorBT runner
 # ---------------------------------------------------------------------------
 
+
 def _shift_sig(s: pd.Series) -> np.ndarray:
     """Shift boolean signal by 1 bar (fill at next bar, no lookahead)."""
     return np.r_[False, s.values[:-1]]
@@ -300,11 +299,7 @@ def _stats_from_returns(
     max_dd = float(dd_series.min())
 
     bars_per_year = BARS_PER_YEAR.get(timeframe, 252)
-    sharpe = (
-        float(rets.mean() / rets.std() * np.sqrt(bars_per_year))
-        if rets.std() > 0
-        else 0.0
-    )
+    sharpe = float(rets.mean() / rets.std() * np.sqrt(bars_per_year)) if rets.std() > 0 else 0.0
     total_ret = float(equity.iloc[-1] - 1)
     n_bars = len(rets)
     ann_ret = float((1 + total_ret) ** (bars_per_year / n_bars) - 1) if n_bars > 0 else 0.0
@@ -327,9 +322,7 @@ def _stats_from_returns(
     period_rets: dict[str, float] = {}
     if timeframe == "M5":
         for (yr, mo), grp in rets.groupby([rets.index.year, rets.index.month]):
-            period_rets[f"{int(yr)}-{int(mo):02d}"] = float(
-                (1 + grp).prod() - 1
-            )
+            period_rets[f"{int(yr)}-{int(mo):02d}"] = float((1 + grp).prod() - 1)
     elif hasattr(rets.index, "year"):
         for yr, grp in rets.groupby(rets.index.year):
             period_rets[str(int(yr))] = float((1 + grp).prod() - 1)
@@ -368,9 +361,7 @@ def _stats(pf: vbt.Portfolio, timeframe: str = "D") -> dict:
     bar_r: pd.Series = pf.returns()
     try:
         if timeframe == "M5":
-            for (yr, mo), grp in bar_r.groupby(
-                [bar_r.index.year, bar_r.index.month]
-            ):
+            for (yr, mo), grp in bar_r.groupby([bar_r.index.year, bar_r.index.month]):
                 period_rets[f"{int(yr)}-{int(mo):02d}"] = float((1 + grp).prod() - 1)
         elif hasattr(bar_r.index, "year"):
             for yr, grp in bar_r.groupby(bar_r.index.year):
@@ -427,7 +418,11 @@ def _stats(pf: vbt.Portfolio, timeframe: str = "D") -> dict:
         rets_arr = bar_r.dropna().values
         down = rets_arr[rets_arr < 0]
         d_std = np.std(down) * np.sqrt(bars_per_year) if len(down) > 1 else np.nan
-        sortino = (float(np.mean(rets_arr)) * bars_per_year) / d_std if d_std and d_std > 0 else float("nan")
+        sortino = (
+            (float(np.mean(rets_arr)) * bars_per_year) / d_std
+            if d_std and d_std > 0
+            else float("nan")
+        )
     except Exception:
         pass
 
@@ -439,7 +434,7 @@ def _stats(pf: vbt.Portfolio, timeframe: str = "D") -> dict:
         "dd": float(pf.max_drawdown()),
         "ret": float(pf.total_return()),
         "trades": n_trades,
-        "n_long": n_trades,   # single-direction pf: all trades are this direction
+        "n_long": n_trades,  # single-direction pf: all trades are this direction
         "n_short": 0,
         "wr": wr,
         "payoff": payoff,
@@ -493,6 +488,7 @@ def _risk_of_ruin(
 # Core backtest runner
 # ---------------------------------------------------------------------------
 
+
 def run_turtle_system(
     df: pd.DataFrame,
     system_num: int,
@@ -517,16 +513,19 @@ def run_turtle_system(
     freq = VBT_FREQ.get(timeframe, "d")
     bars_per_year = BARS_PER_YEAR.get(timeframe, 252)
 
-    long_en, long_ex, short_en, short_ex, stop_pct, hi_entry, atr_shifted = (
-        compute_signals(df, entry_p, exit_p)
+    long_en, long_ex, short_en, short_ex, stop_pct, hi_entry, atr_shifted = compute_signals(
+        df, entry_p, exit_p
     )
     size_pct = build_size_pct(df["close"], atr_shifted)
 
     # Pyramid: combine base entry with upper levels
     if pyramid:
         long_en = compute_pyramid_entries(
-            df["close"], hi_entry, atr_shifted,
-            max_units=max_units, pyramid_atr_mult=pyramid_atr_mult,
+            df["close"],
+            hi_entry,
+            atr_shifted,
+            max_units=max_units,
+            pyramid_atr_mult=pyramid_atr_mult,
         )
 
     # IS/OOS split (70/30 chronological)
@@ -539,22 +538,33 @@ def run_turtle_system(
         cash = INIT_CASH / 2 if direction == "both" else INIT_CASH
         pf_long = _run_vbt(
             df["close"].loc[idx],
-            long_en.loc[idx], long_ex.loc[idx],
-            stop_pct.loc[idx], size_pct.loc[idx],
-            freq=freq, direction="longonly", cash=cash,
-            sl_trail=trailing_stop, accumulate=pyramid,
+            long_en.loc[idx],
+            long_ex.loc[idx],
+            stop_pct.loc[idx],
+            size_pct.loc[idx],
+            freq=freq,
+            direction="longonly",
+            cash=cash,
+            sl_trail=trailing_stop,
+            accumulate=pyramid,
         )
         if direction == "both":
             pf_short = _run_vbt(
                 df["close"].loc[idx],
-                short_en.loc[idx], short_ex.loc[idx],
-                stop_pct.loc[idx], size_pct.loc[idx],
-                freq=freq, direction="shortonly", cash=cash,
-                sl_trail=trailing_stop, accumulate=pyramid,
+                short_en.loc[idx],
+                short_ex.loc[idx],
+                stop_pct.loc[idx],
+                size_pct.loc[idx],
+                freq=freq,
+                direction="shortonly",
+                cash=cash,
+                sl_trail=trailing_stop,
+                accumulate=pyramid,
             )
             combined_rets = _combine_portfolios(pf_long, pf_short)
             return _stats_from_returns(
-                combined_rets, timeframe=timeframe,
+                combined_rets,
+                timeframe=timeframe,
                 n_long=int(pf_long.trades.count()),
                 n_short=int(pf_short.trades.count()),
             )
@@ -596,6 +606,7 @@ def run_turtle_system(
 # ---------------------------------------------------------------------------
 # Output formatting
 # ---------------------------------------------------------------------------
+
 
 def _fmt_pct(v: float) -> str:
     return f"{v:>+10.1%}"
@@ -639,22 +650,19 @@ def print_results(instrument: str, results: dict[int, dict]) -> None:
     tf = first.get("timeframe", "D")
     print(f"\n{sep}")
     print(
-        f"  TURTLE TRADING POC  --  {instrument}  "
-        f"[{tf} | {dir_label} | {pyr_label} | {sl_label}]"
+        f"  TURTLE TRADING POC  --  {instrument}  [{tf} | {dir_label} | {pyr_label} | {sl_label}]"
     )
-    systems_str = ", ".join(
-        f"S{k}({v['entry_p']}/{v['exit_p']})" for k, v in results.items()
-    )
+    systems_str = ", ".join(f"S{k}({v['entry_p']}/{v['exit_p']})" for k, v in results.items())
     print(f"  Systems: {systems_str}   IS/OOS: 70/30   Risk/trade: 1%   Cash: $100k")
     print(sep)
 
     for sys_num, r in results.items():
         entry_p = r["entry_p"]
-        exit_p  = r["exit_p"]
-        is_s    = r["is_stats"]
-        oos_s   = r["oos_stats"]
-        parity  = r["parity"]
-        gate    = "PASS" if not np.isnan(parity) and parity >= 0.5 else "FAIL"
+        exit_p = r["exit_p"]
+        is_s = r["is_stats"]
+        oos_s = r["oos_stats"]
+        parity = r["parity"]
+        gate = "PASS" if not np.isnan(parity) and parity >= 0.5 else "FAIL"
         parity_str = f"{parity:+.2f}" if not np.isnan(parity) else "N/A"
 
         W = 30  # label width
@@ -664,49 +672,65 @@ def print_results(instrument: str, results: dict[int, dict]) -> None:
         print(thin)
 
         # --- Returns ---
-        print(f"  {'Period (bars)':<{W}} {r['is_bars']:>10}  {r['oos_bars']:>10}  ({r['oos_years']:.1f} yr)")
+        print(
+            f"  {'Period (bars)':<{W}} {r['is_bars']:>10}  {r['oos_bars']:>10}  ({r['oos_years']:.1f} yr)"
+        )
         print(f"  {'Total Return':<{W}} {_fvp(is_s['ret'])}  {_fvp(oos_s['ret'])}")
-        print(f"  {'Annualised Return':<{W}} {_fvp(is_s.get('ann_ret'))}  {_fvp(oos_s.get('ann_ret'))}")
+        print(
+            f"  {'Annualised Return':<{W}} {_fvp(is_s.get('ann_ret'))}  {_fvp(oos_s.get('ann_ret'))}"
+        )
 
         # --- Risk-adjusted ---
         print(f"  {thin}")
         print(f"  {'Sharpe Ratio':<{W}} {_fv(is_s['sharpe']):>10}  {_fv(oos_s['sharpe']):>10}")
-        print(f"  {'Sortino Ratio':<{W}} {_fv(is_s.get('sortino')):>10}  {_fv(oos_s.get('sortino')):>10}")
-        print(f"  {'Calmar Ratio':<{W}} {_fv(is_s.get('calmar')):>10}  {_fv(oos_s.get('calmar')):>10}")
+        print(
+            f"  {'Sortino Ratio':<{W}} {_fv(is_s.get('sortino')):>10}  {_fv(oos_s.get('sortino')):>10}"
+        )
+        print(
+            f"  {'Calmar Ratio':<{W}} {_fv(is_s.get('calmar')):>10}  {_fv(oos_s.get('calmar')):>10}"
+        )
 
         # --- Drawdown ---
         print(f"  {thin}")
         print(f"  {'Max Drawdown':<{W}} {_fvp(is_s['dd'])}  {_fvp(oos_s['dd'])}")
         print(f"  {'Avg Drawdown':<{W}} {_fvp(is_s['avg_dd'])}  {_fvp(oos_s['avg_dd'])}")
-        print(f"  {'Max DD Duration (bars)':<{W}} {is_s['max_dd_days']:>10}  {oos_s['max_dd_days']:>10}")
+        print(
+            f"  {'Max DD Duration (bars)':<{W}} {is_s['max_dd_days']:>10}  {oos_s['max_dd_days']:>10}"
+        )
 
         # --- Capital deployment ---
         print(f"  {thin}")
-        td_is  = is_s.get('time_deployed')
-        td_oos = oos_s.get('time_deployed')
-        td_is_s  = f"{td_is:>9.1%}"  if td_is  is not None and not np.isnan(td_is)  else "       N/A"
-        td_oos_s = f"{td_oos:>9.1%}" if td_oos is not None and not np.isnan(td_oos) else "       N/A"
+        td_is = is_s.get("time_deployed")
+        td_oos = oos_s.get("time_deployed")
+        td_is_s = f"{td_is:>9.1%}" if td_is is not None and not np.isnan(td_is) else "       N/A"
+        td_oos_s = (
+            f"{td_oos:>9.1%}" if td_oos is not None and not np.isnan(td_oos) else "       N/A"
+        )
         print(f"  {'Capital Deployed':<{W}} {td_is_s}  {td_oos_s}")
 
         # --- Trade counts ---
         print(f"  {thin}")
         print(f"  {'Trades (total)':<{W}} {is_s['trades']:>10}  {oos_s['trades']:>10}")
         print(f"  {'  Long trades':<{W}} {is_s.get('n_long', 0):>10}  {oos_s.get('n_long', 0):>10}")
-        print(f"  {'  Short trades':<{W}} {is_s.get('n_short', 0):>10}  {oos_s.get('n_short', 0):>10}")
+        print(
+            f"  {'  Short trades':<{W}} {is_s.get('n_short', 0):>10}  {oos_s.get('n_short', 0):>10}"
+        )
 
         # --- Win/loss structure ---
         print(f"  {thin}")
         print(f"  {'Win Rate':<{W}} {_fvp(is_s['wr'])}  {_fvp(oos_s['wr'])}")
         print(f"  {'Avg Win':<{W}} {_fvp(is_s['avg_win'])}  {_fvp(oos_s['avg_win'])}")
         print(f"  {'Avg Loss':<{W}} {_fvp(is_s['avg_loss'])}  {_fvp(oos_s['avg_loss'])}")
-        print(f"  {'Payoff Ratio (|win/loss|)':<{W}} {_fv(is_s.get('payoff'), '.2f'):>10}  {_fv(oos_s.get('payoff'), '.2f'):>10}")
+        print(
+            f"  {'Payoff Ratio (|win/loss|)':<{W}} {_fv(is_s.get('payoff'), '.2f'):>10}  {_fv(oos_s.get('payoff'), '.2f'):>10}"
+        )
 
         # --- Trade duration ---
         print(f"  {thin}")
-        avg_is  = is_s.get('avg_dur_bars',  float('nan'))
-        avg_oos = oos_s.get('avg_dur_bars', float('nan'))
-        med_is  = is_s.get('median_dur_bars',  float('nan'))
-        med_oos = oos_s.get('median_dur_bars', float('nan'))
+        avg_is = is_s.get("avg_dur_bars", float("nan"))
+        avg_oos = oos_s.get("avg_dur_bars", float("nan"))
+        med_is = is_s.get("median_dur_bars", float("nan"))
+        med_oos = oos_s.get("median_dur_bars", float("nan"))
         print(
             f"  {'Avg Trade Duration':<{W}} "
             f"{_bars_to_hms(avg_is, tf):>10}  {_bars_to_hms(avg_oos, tf):>10}"
@@ -737,10 +761,7 @@ def print_results(instrument: str, results: dict[int, dict]) -> None:
             ]
             for k1, k2 in pairs:
                 r1 = f"{all_periods[k1]:>+9.1%}"
-                r2 = (
-                    f"  {k2:<{col_w}} {all_periods[k2]:>+9.1%}"
-                    if k2 is not None else ""
-                )
+                r2 = f"  {k2:<{col_w}} {all_periods[k2]:>+9.1%}" if k2 is not None else ""
                 print(f"  {k1:<{col_w}} {r1}{r2}")
 
         # Risk of ruin
@@ -757,10 +778,9 @@ def print_results(instrument: str, results: dict[int, dict]) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Turtle Trading System POC — Systems 1 & 2"
-    )
+    parser = argparse.ArgumentParser(description="Turtle Trading System POC — Systems 1 & 2")
     parser.add_argument(
         "--instrument",
         default="AMAT",
@@ -817,9 +837,7 @@ def main() -> None:
         print(f"  Filtered to {args.start} onwards: {len(df)} bars")
 
     if args.timeframe != "M5":
-        print(
-            f"  {len(df)} bars  |  {df.index[0].date()} to {df.index[-1].date()}"
-        )
+        print(f"  {len(df)} bars  |  {df.index[0].date()} to {df.index[-1].date()}")
 
     systems_to_run: list[int]
     if args.system == "both":
@@ -831,8 +849,12 @@ def main() -> None:
     for sys_num in systems_to_run:
         print(f"Running System {sys_num} ...")
         results[sys_num] = run_turtle_system(
-            df, sys_num, timeframe=args.timeframe, direction=args.direction,
-            pyramid=args.pyramid, trailing_stop=args.trailing_stop,
+            df,
+            sys_num,
+            timeframe=args.timeframe,
+            direction=args.direction,
+            pyramid=args.pyramid,
+            trailing_stop=args.trailing_stop,
         )
 
     print_results(args.instrument, results)

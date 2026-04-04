@@ -22,11 +22,11 @@ import pandas as pd
 # Constants
 # ---------------------------------------------------------------------------
 
-AM_START_UTC = 0    # 00:00 UTC inclusive
-AM_END_UTC   = 12   # 12:00 UTC exclusive  -> 144 M5 bars
-PM_START_UTC = 12   # 12:00 UTC inclusive
-PM_END_UTC   = 22   # 22:00 UTC exclusive  -> 120 M5 bars
-MIN_BARS     = 100  # Drop days with fewer bars than this from training
+AM_START_UTC = 0  # 00:00 UTC inclusive
+AM_END_UTC = 12  # 12:00 UTC exclusive  -> 144 M5 bars
+PM_START_UTC = 12  # 12:00 UTC inclusive
+PM_END_UTC = 22  # 22:00 UTC exclusive  -> 120 M5 bars
+MIN_BARS = 100  # Drop days with fewer bars than this from training
 
 
 # ---------------------------------------------------------------------------
@@ -47,11 +47,14 @@ def engineer_features(df: pd.DataFrame, vol_baseline: pd.Series | None = None) -
     """
     # True Range
     prev_close = df["close"].shift(1)
-    tr = pd.concat([
-        df["high"] - df["low"],
-        (df["high"] - prev_close).abs(),
-        (df["low"] - prev_close).abs(),
-    ], axis=1).max(axis=1)
+    tr = pd.concat(
+        [
+            df["high"] - df["low"],
+            (df["high"] - prev_close).abs(),
+            (df["low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
 
     # Close Location Value: (C-L - H-C) / (H-L), in [-1, +1]
     hl = df["high"] - df["low"]
@@ -125,9 +128,9 @@ def _extract_session(
         Array of shape (n_bars, 3) or None if too few bars.
     """
     day_slice = features[
-        (features.index.date == date.date()) &
-        (features.index.hour >= start_hour) &
-        (features.index.hour < end_hour)
+        (features.index.date == date.date())
+        & (features.index.hour >= start_hour)
+        & (features.index.hour < end_hour)
     ]
     if len(day_slice) < MIN_BARS:
         return None

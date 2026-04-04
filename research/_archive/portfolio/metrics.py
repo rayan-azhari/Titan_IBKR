@@ -67,7 +67,7 @@ def compute_ror_montecarlo(
     path_rets = rets[indices].reshape(n_simulations, -1)[:, :horizon_days]
 
     # Cumulative equity via log-sum for numerical stability
-    log1p = np.log1p(path_rets)           # (n_simulations, horizon_days)
+    log1p = np.log1p(path_rets)  # (n_simulations, horizon_days)
     cum_equity = np.exp(np.cumsum(log1p, axis=1))  # (n_simulations, horizon_days)
 
     # Ruin = any point where equity <= ruin_level

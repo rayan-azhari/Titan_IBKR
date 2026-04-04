@@ -59,9 +59,7 @@ def compute_position(entries: pd.Series, exits: pd.Series) -> pd.Series:
     return pos
 
 
-def equity_curve(
-    close: pd.Series, in_pos: pd.Series, fees: float = FEES_BASE
-) -> pd.Series:
+def equity_curve(close: pd.Series, in_pos: pd.Series, fees: float = FEES_BASE) -> pd.Series:
     """Compute daily equity curve for the binary strategy."""
     daily_ret = close.pct_change().fillna(0)
     # transaction cost on entry/exit transitions
@@ -95,16 +93,24 @@ def add_shading(
             in_block = True
         elif not val and in_block:
             fig.add_vrect(
-                x0=block_start, x1=date,
-                fillcolor=color, opacity=opacity, line_width=0,
-                row=row, col=1,
+                x0=block_start,
+                x1=date,
+                fillcolor=color,
+                opacity=opacity,
+                line_width=0,
+                row=row,
+                col=1,
             )
             in_block = False
     if in_block:
         fig.add_vrect(
-            x0=block_start, x1=dates[-1],
-            fillcolor=color, opacity=opacity, line_width=0,
-            row=row, col=1,
+            x0=block_start,
+            x1=dates[-1],
+            fillcolor=color,
+            opacity=opacity,
+            line_width=0,
+            row=row,
+            col=1,
         )
 
 
@@ -163,10 +169,11 @@ def main() -> None:
     is_date_end = close.index[split - 1].date()
 
     print(f"  IS  ({is_date_start} – {is_date_end}): {pct_is_in:.0%} in market")
-    print(f"  OOS ({oos_date_start} – {oos_date_end}): {pct_in:.0%} in market  "
-          f"({n_entries_oos} long periods)")
-    print(f"  OOS bars flat (cash): {n_oos_bars - n_in} / {n_oos_bars} "
-          f"({pct_out:.0%})")
+    print(
+        f"  OOS ({oos_date_start} – {oos_date_end}): {pct_in:.0%} in market  "
+        f"({n_entries_oos} long periods)"
+    )
+    print(f"  OOS bars flat (cash): {n_oos_bars - n_in} / {n_oos_bars} ({pct_out:.0%})")
 
     # -- Equity curves normalised to 1.0 at OOS start ---------------------
     eq_strat_norm = eq_strat / eq_strat.iloc[split]
@@ -174,7 +181,8 @@ def main() -> None:
 
     # -- Build chart (4 panels) --------------------------------------------
     fig = make_subplots(
-        rows=4, cols=1,
+        rows=4,
+        cols=1,
         shared_xaxes=True,
         row_heights=[0.38, 0.10, 0.32, 0.20],
         vertical_spacing=0.03,
@@ -197,69 +205,131 @@ def main() -> None:
     for row in (1, 2, 3, 4):
         fig.add_shape(
             type="line",
-            x0=split_ts, x1=split_ts, y0=0, y1=1,
-            xref="x", yref=f"y{row} domain" if row > 1 else "y domain",
+            x0=split_ts,
+            x1=split_ts,
+            y0=0,
+            y1=1,
+            xref="x",
+            yref=f"y{row} domain" if row > 1 else "y domain",
             line=dict(dash="dash", color="navy", width=1.5),
-            row=row, col=1,
+            row=row,
+            col=1,
         )
     fig.add_annotation(
-        x=split_ts, y=1.03, xref="x", yref="paper",
-        text="◄ IS    OOS ►", showarrow=False,
-        font=dict(size=10, color="navy"), xanchor="center",
+        x=split_ts,
+        y=1.03,
+        xref="x",
+        yref="paper",
+        text="◄ IS    OOS ►",
+        showarrow=False,
+        font=dict(size=10, color="navy"),
+        xanchor="center",
     )
 
     # --- Panel 1: Price + MAs + entry/exit markers ------------------------
-    fig.add_trace(go.Scatter(
-        x=dates, y=close.values, name=instrument,
-        line=dict(color="#1f77b4", width=1.2),
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=dates, y=slow_ma.values, name=f"SMA {config['slow_ma']}",
-        line=dict(color="black", width=1.5, dash="dash"),
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=dates, y=fast_ma.values, name=f"SMA {config['fast_reentry_ma']} (re-entry)",
-        line=dict(color="darkorange", width=1, dash="dot"),
-    ), row=1, col=1)
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=close.values,
+            name=instrument,
+            line=dict(color="#1f77b4", width=1.2),
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=slow_ma.values,
+            name=f"SMA {config['slow_ma']}",
+            line=dict(color="black", width=1.5, dash="dash"),
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=fast_ma.values,
+            name=f"SMA {config['fast_reentry_ma']} (re-entry)",
+            line=dict(color="darkorange", width=1, dash="dot"),
+        ),
+        row=1,
+        col=1,
+    )
 
     # Entry/exit markers — only show actual position changes
     entry_dates = dates[entries & ~in_pos.shift(1).fillna(True)]
     exit_dates = dates[exits & in_pos.shift(1).fillna(False)]
     if len(entry_dates):
-        fig.add_trace(go.Scatter(
-            x=entry_dates, y=close.loc[entry_dates].values * 0.985,
-            mode="markers", name="Entry (buy)",
-            marker=dict(symbol="triangle-up", size=9, color="green"),
-        ), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(
+                x=entry_dates,
+                y=close.loc[entry_dates].values * 0.985,
+                mode="markers",
+                name="Entry (buy)",
+                marker=dict(symbol="triangle-up", size=9, color="green"),
+            ),
+            row=1,
+            col=1,
+        )
     if len(exit_dates):
-        fig.add_trace(go.Scatter(
-            x=exit_dates, y=close.loc[exit_dates].values * 1.015,
-            mode="markers", name="Exit (sell)",
-            marker=dict(symbol="triangle-down", size=9, color="red"),
-        ), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(
+                x=exit_dates,
+                y=close.loc[exit_dates].values * 1.015,
+                mode="markers",
+                name="Exit (sell)",
+                marker=dict(symbol="triangle-down", size=9, color="red"),
+            ),
+            row=1,
+            col=1,
+        )
 
     # --- Panel 2: Binary position 1/0 step chart --------------------------
     pos_vals = in_pos.astype(int).values
-    fig.add_trace(go.Scatter(
-        x=dates, y=pos_vals, name="Position (1=long)",
-        line=dict(color="green", width=1.5, shape="hv"),
-        fill="tozeroy", fillcolor="rgba(0,160,0,0.15)",
-        showlegend=True,
-    ), row=2, col=1)
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=pos_vals,
+            name="Position (1=long)",
+            line=dict(color="green", width=1.5, shape="hv"),
+            fill="tozeroy",
+            fillcolor="rgba(0,160,0,0.15)",
+            showlegend=True,
+        ),
+        row=2,
+        col=1,
+    )
     fig.update_yaxes(
-        tickvals=[0, 1], ticktext=["Flat", "Long"],
-        range=[-0.1, 1.3], row=2, col=1,
+        tickvals=[0, 1],
+        ticktext=["Flat", "Long"],
+        range=[-0.1, 1.3],
+        row=2,
+        col=1,
     )
 
     # --- Panel 3: Equity curves -------------------------------------------
-    fig.add_trace(go.Scatter(
-        x=dates, y=eq_strat_norm.values, name="Strategy equity",
-        line=dict(color="steelblue", width=2),
-    ), row=3, col=1)
-    fig.add_trace(go.Scatter(
-        x=dates, y=eq_bah_norm.values, name="Buy & Hold equity",
-        line=dict(color="tomato", width=1.5, dash="dot"),
-    ), row=3, col=1)
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=eq_strat_norm.values,
+            name="Strategy equity",
+            line=dict(color="steelblue", width=2),
+        ),
+        row=3,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=eq_bah_norm.values,
+            name="Buy & Hold equity",
+            line=dict(color="tomato", width=1.5, dash="dot"),
+        ),
+        row=3,
+        col=1,
+    )
     fig.add_hline(y=1.0, line_color="grey", line_width=0.8, line_dash="dot", row=3, col=1)
     # Shade strategy above/below B&H
     add_shading(fig, dates, eq_strat_norm > eq_bah_norm, "steelblue", row=3, opacity=0.07)
@@ -268,14 +338,24 @@ def main() -> None:
     # --- Panel 4: Decel composite -----------------------------------------
     add_shading(fig, dates, decel >= 0, "green", row=4, opacity=0.08)
     add_shading(fig, dates, decel < 0, "red", row=4, opacity=0.08)
-    fig.add_trace(go.Scatter(
-        x=dates, y=decel.values, name="Decel composite",
-        line=dict(color="purple", width=1.2),
-    ), row=4, col=1)
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=decel.values,
+            name="Decel composite",
+            line=dict(color="purple", width=1.2),
+        ),
+        row=4,
+        col=1,
+    )
     fig.add_hline(y=0, line_dash="dash", line_color="black", line_width=1, row=4, col=1)
     fig.add_hline(
         y=config["exit_decel_thresh"],
-        line_dash="dot", line_color="red", line_width=1, row=4, col=1,
+        line_dash="dot",
+        line_color="red",
+        line_width=1,
+        row=4,
+        col=1,
     )
 
     # --- Layout -----------------------------------------------------------
@@ -286,8 +366,7 @@ def main() -> None:
     )
     fig.update_layout(
         title=dict(
-            text=f"{instrument} ETF Trend Strategy — Full Breakdown<br>"
-                 f"<sup>{stats_text}</sup>",
+            text=f"{instrument} ETF Trend Strategy — Full Breakdown<br><sup>{stats_text}</sup>",
             font_size=15,
         ),
         height=980,
@@ -305,10 +384,14 @@ def main() -> None:
     fig.update_yaxes(title_text="Decel", row=4, col=1)
 
     fig.add_annotation(
-        x=0.01, y=0.99, xref="paper", yref="paper",
+        x=0.01,
+        y=0.99,
+        xref="paper",
+        yref="paper",
         text=f"OOS: {pct_in:.0%} long  {pct_out:.0%} cash",
         showarrow=False,
-        bgcolor="rgba(255,255,255,0.85)", bordercolor="grey",
+        bgcolor="rgba(255,255,255,0.85)",
+        bordercolor="grey",
         font=dict(size=11),
     )
 

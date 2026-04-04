@@ -62,10 +62,10 @@ def build_observations(
     abs_ret = np.abs(log_ret)
 
     sg_win = sg_window if sg_window % 2 == 1 else sg_window + 1  # must be odd
-    smoothed_ret     = savgol_filter(log_ret,    window_length=sg_win, polyorder=sg_poly)
-    smoothed_vol     = savgol_filter(real_vol,   window_length=sg_win, polyorder=sg_poly)
-    smoothed_vov     = savgol_filter(vol_of_vol, window_length=sg_win, polyorder=sg_poly)
-    smoothed_abs_ret = savgol_filter(abs_ret,    window_length=sg_win, polyorder=sg_poly)
+    smoothed_ret = savgol_filter(log_ret, window_length=sg_win, polyorder=sg_poly)
+    smoothed_vol = savgol_filter(real_vol, window_length=sg_win, polyorder=sg_poly)
+    smoothed_vov = savgol_filter(vol_of_vol, window_length=sg_win, polyorder=sg_poly)
+    smoothed_abs_ret = savgol_filter(abs_ret, window_length=sg_win, polyorder=sg_poly)
     return np.column_stack([smoothed_ret, smoothed_vol, smoothed_vov, smoothed_abs_ret])
 
 
@@ -117,7 +117,7 @@ def label_states(model: hmm.GaussianHMM) -> dict[int, str]:
     Returns:
         Dict mapping state_index -> label string.
     """
-    mean_vols = model.means_[:, 1]   # column 1 = smoothed realised vol
+    mean_vols = model.means_[:, 1]  # column 1 = smoothed realised vol
     sorted_idx = np.argsort(mean_vols)
     labels = {}
     labels[sorted_idx[0]] = "ranging"
@@ -169,11 +169,9 @@ def rolling_regime_posterior(
     # Pre-compute all emission log-probs in one vectorised call: (n, K)
     log_emit = np.zeros((n, K))
     for k in range(K):
-        log_emit[:, k] = multivariate_normal.logpdf(
-            obs, mean=model.means_[k], cov=model.covars_[k]
-        )
+        log_emit[:, k] = multivariate_normal.logpdf(obs, mean=model.means_[k], cov=model.covars_[k])
 
-    log_A = np.log(model.transmat_ + 1e-300)           # (K, K)
+    log_A = np.log(model.transmat_ + 1e-300)  # (K, K)
     log_alpha = np.log(model.startprob_ + 1e-300) + log_emit[0]  # (K,)
 
     posteriors = np.full(n, np.nan)
@@ -222,13 +220,10 @@ def _hurst_rs(series: np.ndarray) -> float:
     # Anis-Lloyd correction
     if n <= 340:
         correction = (
-            (n - 0.5) / n
+            (n - 0.5)
+            / n
             * np.sqrt(np.pi / 2)
-            / (
-                np.sum(1.0 / np.sqrt(np.arange(1, n)))
-                if n > 1
-                else 1.0
-            )
+            / (np.sum(1.0 / np.sqrt(np.arange(1, n))) if n > 1 else 1.0)
         )
         rs = rs / correction if correction > 0 else rs
 
@@ -282,7 +277,11 @@ def regime_gate(
     Returns:
         Boolean Series — True means entries are allowed.
     """
-    post = pd.Series(hmm_posterior, index=hurst.index) if isinstance(hmm_posterior, np.ndarray) else hmm_posterior
+    post = (
+        pd.Series(hmm_posterior, index=hurst.index)
+        if isinstance(hmm_posterior, np.ndarray)
+        else hmm_posterior
+    )
     return (post >= p_thresh) & (hurst < hurst_thresh)
 
 

@@ -107,11 +107,7 @@ def build_signals(
     ma_type = config["ma_type"]
     slow_ma_p = config["slow_ma"]
     decel_signals = config.get("decel_signals", [])
-    decel_params = {
-        k: config[k]
-        for k in ("d_pct_smooth", "rv_window", "macd_fast")
-        if k in config
-    }
+    decel_params = {k: config[k] for k in ("d_pct_smooth", "rv_window", "macd_fast") if k in config}
     entry_mode = config.get("entry_mode", "decel_positive")
     fast_reentry_ma_p = config.get("fast_reentry_ma")
     exit_mode = config["exit_mode"]
@@ -174,23 +170,32 @@ def run_pf(
         return _EquityCurvePortfolio(equity, entries, strat_rets)
     if sizing_mode == "binary":
         return vbt.Portfolio.from_signals(
-            close, entries=entries, exits=exits,
-            init_cash=INIT_CASH, fees=fees, slippage=SLIPPAGE, freq="1D",
+            close,
+            entries=entries,
+            exits=exits,
+            init_cash=INIT_CASH,
+            fees=fees,
+            slippage=SLIPPAGE,
+            freq="1D",
         )
     else:  # dynamic_decel -- fixed initial-cash allocation
         return vbt.Portfolio.from_signals(
-            close, entries=entries, exits=exits,
-            size=sizes * INIT_CASH, size_type="value",
-            init_cash=INIT_CASH, fees=fees, slippage=SLIPPAGE, freq="1D",
+            close,
+            entries=entries,
+            exits=exits,
+            size=sizes * INIT_CASH,
+            size_type="value",
+            init_cash=INIT_CASH,
+            fees=fees,
+            slippage=SLIPPAGE,
+            freq="1D",
         )
 
 
 class _EquityCurvePortfolio:
     """Thin wrapper around a pre-computed equity curve, mimicking VBT Portfolio API."""
 
-    def __init__(
-        self, equity: "pd.Series", entries: "pd.Series", rets: "pd.Series"
-    ) -> None:
+    def __init__(self, equity: "pd.Series", entries: "pd.Series", rets: "pd.Series") -> None:
         import numpy as np
 
         self._equity = equity
@@ -299,7 +304,8 @@ def _save_cb_params_to_toml(instrument: str, cb_params: dict) -> None:
         print(f"  [WARN] Config not found, skipping CB save: {config_path}")
         return
     lines = [
-        ln for ln in config_path.read_text().splitlines()
+        ln
+        for ln in config_path.read_text().splitlines()
         if not ln.startswith("cb_trip_pct") and not ln.startswith("cb_reset_pct")
     ]
     while lines and lines[-1].strip() == "":
@@ -353,7 +359,7 @@ def main() -> None:
         common = sig_df.index.intersection(exec_df.index)
         sig_df = sig_df.loc[common]
         exec_df = exec_df.loc[common]
-        close = sig_df["close"]     # signal close (QQQ)
+        close = sig_df["close"]  # signal close (QQQ)
         exec_close = exec_df["close"]  # execution close (TQQQ)
         print(f"  Signal src: {signal_sym}  (signals on {signal_sym}, P&L on {instrument})")
     else:
@@ -362,8 +368,8 @@ def main() -> None:
         exec_close = close
 
     split = int(len(close) * 0.70)
-    oos_close = exec_close.iloc[split:]   # P&L slice (TQQQ or same instrument)
-    oos_sig_close = close.iloc[split:]    # signal slice (QQQ or same instrument)
+    oos_close = exec_close.iloc[split:]  # P&L slice (TQQQ or same instrument)
+    oos_sig_close = close.iloc[split:]  # signal slice (QQQ or same instrument)
 
     print(f"  OOS period: {oos_sig_close.index[0].date()} to {oos_sig_close.index[-1].date()}")
     print(f"  OOS bars:   {len(oos_sig_close)}")
@@ -492,16 +498,10 @@ def main() -> None:
             if reset_pct <= trip_pct:
                 continue  # reset must be less severe (closer to 0) than trip
 
-            cb_full = compute_circuit_breaker(
-                close, CB_ROLLING_WINDOW, trip_pct, reset_pct
-            )
+            cb_full = compute_circuit_breaker(close, CB_ROLLING_WINDOW, trip_pct, reset_pct)
             oos_cb = cb_full.iloc[split:]
-            cb_entries, cb_exits = apply_circuit_breaker(
-                oos_entries, oos_exits, oos_cb
-            )
-            pf_cb = run_pf(
-                oos_close, cb_entries, cb_exits, binary_sizes, FEES_BASE, "binary"
-            )
+            cb_entries, cb_exits = apply_circuit_breaker(oos_entries, oos_exits, oos_cb)
+            pf_cb = run_pf(oos_close, cb_entries, cb_exits, binary_sizes, FEES_BASE, "binary")
             row = stats_row(f"cb trip={trip_pct:.0%} reset={reset_pct:.0%}", pf_cb)
             row["cb_bars_flat"] = int(oos_cb.sum())
             row["trip_pct"] = trip_pct
@@ -514,25 +514,37 @@ def main() -> None:
         baseline = stats_row("no CB (binary)", pf_binary)
         cb_df = pd.DataFrame([baseline] + cb_rows)
         display_cols = [
-            "scenario", "total_return", "sharpe", "calmar", "max_drawdown",
-            "n_trades", "win_rate",
+            "scenario",
+            "total_return",
+            "sharpe",
+            "calmar",
+            "max_drawdown",
+            "n_trades",
+            "win_rate",
         ]
         print("\n" + cb_df[display_cols].to_string(index=False))
 
         if best_cb_params:
             best_row = next(
-                r for r in cb_rows
+                r
+                for r in cb_rows
                 if r["trip_pct"] == best_cb_params["trip_pct"]
                 and r["reset_pct"] == best_cb_params["reset_pct"]
             )
-            print(f"\n  Baseline:  Sharpe={baseline['sharpe']:.3f}  "
-                  f"MaxDD={baseline['max_drawdown']:.1%}  "
-                  f"Return={baseline['total_return']:.1%}")
-            print(f"  Best CB:   Sharpe={best_row['sharpe']:.3f}  "
-                  f"MaxDD={best_row['max_drawdown']:.1%}  "
-                  f"Return={best_row['total_return']:.1%}")
-            print(f"  Params:    trip={best_cb_params['trip_pct']:.0%}  "
-                  f"reset={best_cb_params['reset_pct']:.0%}")
+            print(
+                f"\n  Baseline:  Sharpe={baseline['sharpe']:.3f}  "
+                f"MaxDD={baseline['max_drawdown']:.1%}  "
+                f"Return={baseline['total_return']:.1%}"
+            )
+            print(
+                f"  Best CB:   Sharpe={best_row['sharpe']:.3f}  "
+                f"MaxDD={best_row['max_drawdown']:.1%}  "
+                f"Return={best_row['total_return']:.1%}"
+            )
+            print(
+                f"  Params:    trip={best_cb_params['trip_pct']:.0%}  "
+                f"reset={best_cb_params['reset_pct']:.0%}"
+            )
             _save_cb_params_to_toml(inst_lower, best_cb_params)
             print(f"  Saved to:  config/etf_trend_{inst_lower}.toml")
 

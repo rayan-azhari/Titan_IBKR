@@ -32,9 +32,9 @@ class PCAArchetypes:
         n_clusters: int = 5,
         random_state: int = 42,
     ) -> None:
-        self.n_components  = n_components
-        self.n_clusters    = n_clusters
-        self.random_state  = random_state
+        self.n_components = n_components
+        self.n_clusters = n_clusters
+        self.random_state = random_state
         self.scaler_: StandardScaler | None = None
         self.pca_: PCA | None = None
         self.km_: KMeans | None = None
@@ -50,7 +50,7 @@ class PCAArchetypes:
             self
         """
         n_days = matrices.shape[0]
-        flat   = matrices.reshape(n_days, -1)
+        flat = matrices.reshape(n_days, -1)
 
         self.scaler_ = StandardScaler()
         flat_sc = self.scaler_.fit_transform(flat)
@@ -58,7 +58,7 @@ class PCAArchetypes:
         # Cap n_components at min(n_days-1, n_features)
         n_comp = min(self.n_components, flat_sc.shape[0] - 1, flat_sc.shape[1])
         self.pca_ = PCA(n_components=n_comp, random_state=self.random_state)
-        scores    = self.pca_.fit_transform(flat_sc)
+        scores = self.pca_.fit_transform(flat_sc)
 
         # Clamp n_clusters: need at least 2 samples per cluster
         effective_k = min(self.n_clusters, n_days // 2)
@@ -87,9 +87,9 @@ class PCAArchetypes:
         assert self.scaler_ is not None, "Call fit() first."
         if matrices.ndim == 2:
             matrices = matrices[np.newaxis]
-        flat   = matrices.reshape(len(matrices), -1)
+        flat = matrices.reshape(len(matrices), -1)
         flat_sc = self.scaler_.transform(flat)
-        scores  = self.pca_.transform(flat_sc)
+        scores = self.pca_.transform(flat_sc)
         return self.km_.predict(scores)
 
     def explained_variance(self) -> float:
@@ -122,12 +122,14 @@ def sweep_k(
     for k in k_values:
         m = PCAArchetypes(n_components=n_components, n_clusters=k, random_state=random_state)
         m.fit(matrices)
-        results.append({
-            "k": k,
-            "silhouette": m.silhouette_,
-            "explained_variance": m.explained_variance(),
-            "model": m,
-        })
+        results.append(
+            {
+                "k": k,
+                "silhouette": m.silhouette_,
+                "explained_variance": m.explained_variance(),
+                "model": m,
+            }
+        )
 
     return sorted(results, key=lambda r: r["silhouette"], reverse=True)
 
@@ -163,9 +165,7 @@ def fit_dtw_archetypes(
         from tslearn.clustering import TimeSeriesKMeans
         from tslearn.metrics import cdist_dtw
     except ImportError as exc:
-        raise ImportError(
-            "tslearn not installed. Run: uv add tslearn"
-        ) from exc
+        raise ImportError("tslearn not installed. Run: uv add tslearn") from exc
 
     km = TimeSeriesKMeans(
         n_clusters=n_clusters,
@@ -180,7 +180,7 @@ def fit_dtw_archetypes(
     # Silhouette via DTW distance matrix (expensive but exact)
     try:
         dist = cdist_dtw(matrices)
-        sil  = float(silhouette_score(dist, labels, metric="precomputed"))
+        sil = float(silhouette_score(dist, labels, metric="precomputed"))
     except Exception:
         sil = float("nan")
 
@@ -213,28 +213,37 @@ def describe_archetypes(
     for k in range(n_clusters):
         mask = labels == k
         if mask.sum() == 0:
-            descriptions.append({"label": k, "n_days": 0, "suggested_name": "Empty",
-                                  "_clv_end_raw": 0.0, "_clv_start_raw": 0.0})
+            descriptions.append(
+                {
+                    "label": k,
+                    "n_days": 0,
+                    "suggested_name": "Empty",
+                    "_clv_end_raw": 0.0,
+                    "_clv_start_raw": 0.0,
+                }
+            )
             continue
-        cluster = matrices[mask]   # (n_k, n_bars, 3)
-        mean_clv    = cluster[:, :, 1].mean(axis=0)   # (n_bars,)
-        mean_tr     = float(cluster[:, :, 0].mean())
+        cluster = matrices[mask]  # (n_k, n_bars, 3)
+        mean_clv = cluster[:, :, 1].mean(axis=0)  # (n_bars,)
+        mean_tr = float(cluster[:, :, 0].mean())
         mean_relvol = float(cluster[:, :, 2].mean())
 
-        clv_start = float(mean_clv[:len(mean_clv) // 4].mean())
-        clv_end   = float(mean_clv[3 * len(mean_clv) // 4:].mean())
+        clv_start = float(mean_clv[: len(mean_clv) // 4].mean())
+        clv_end = float(mean_clv[3 * len(mean_clv) // 4 :].mean())
 
-        descriptions.append({
-            "label": k,
-            "n_days": int(mask.sum()),
-            "mean_clv_start": round(clv_start, 4),
-            "mean_clv_end":   round(clv_end, 4),
-            "mean_tr":        round(mean_tr, 6),
-            "mean_relvol":    round(mean_relvol, 4),
-            "_clv_end_raw":   clv_end,
-            "_clv_start_raw": clv_start,
-            "suggested_name": "Flat",   # overwritten in relative pass below
-        })
+        descriptions.append(
+            {
+                "label": k,
+                "n_days": int(mask.sum()),
+                "mean_clv_start": round(clv_start, 4),
+                "mean_clv_end": round(clv_end, 4),
+                "mean_tr": round(mean_tr, 6),
+                "mean_relvol": round(mean_relvol, 4),
+                "_clv_end_raw": clv_end,
+                "_clv_start_raw": clv_start,
+                "suggested_name": "Flat",  # overwritten in relative pass below
+            }
+        )
 
     # Relative labelling: rank by CLV_end across valid (n>=3) clusters.
     valid = [d for d in descriptions if d["n_days"] >= 3]

@@ -51,9 +51,9 @@ SLIPPAGE = 0.0005
 DECEL_IMPROVEMENT_THRESHOLD = 0.02  # min OOS total return gain to include a signal
 
 # Signal hyperparameter sweep grid (per Malik strategy)
-D_PCT_SMOOTH_VALS = [5, 10, 20]     # EWM span for d_pct smoothing
-RV_WINDOW_VALS = [10, 20, 30]       # rolling window (days) for realized vol
-MACD_FAST_VALS = [8, 12, 16]        # MACD fast EMA period
+D_PCT_SMOOTH_VALS = [5, 10, 20]  # EWM span for d_pct smoothing
+RV_WINDOW_VALS = [10, 20, 30]  # rolling window (days) for realized vol
+MACD_FAST_VALS = [8, 12, 16]  # MACD fast EMA period
 
 
 # ── Data loading ───────────────────────────────────────────────────────────
@@ -242,11 +242,19 @@ def sweep_signal_params(
         for rv_win in RV_WINDOW_VALS:
             for m_fast in MACD_FAST_VALS:
                 oos_decel = build_composite_from_params(
-                    oos_close, oos_slow, oos_df,
-                    selected_signals, d_smooth, rv_win, m_fast,
+                    oos_close,
+                    oos_slow,
+                    oos_df,
+                    selected_signals,
+                    d_smooth,
+                    rv_win,
+                    m_fast,
                 ).fillna(0)
                 oos_pf = run_backtest_with_decel(
-                    oos_close, oos_slow, decel=oos_decel, exec_close=oos_exec,
+                    oos_close,
+                    oos_slow,
+                    decel=oos_decel,
+                    exec_close=oos_exec,
                 )
                 oos_ret = get_total_return(oos_pf)
                 label = f"  d_smooth={d_smooth:2d}  rv_win={rv_win:2d}  macd_fast={m_fast:2d}"
@@ -325,7 +333,8 @@ def main() -> None:
         "--load-state", action="store_true", help="Load Stage 1 results from state file"
     )
     parser.add_argument(
-        "--signal-instrument", default=None,
+        "--signal-instrument",
+        default=None,
         help="Signal source instrument (e.g. QQQ for TQQQ). Defaults to --instrument.",
     )
     args = parser.parse_args()
@@ -461,7 +470,12 @@ def main() -> None:
     best_params: dict = {}
     if selected:
         best_params = sweep_signal_params(
-            close, slow_full, sig_df, selected, split, exec_close=exec_close_full,
+            close,
+            slow_full,
+            sig_df,
+            selected,
+            split,
+            exec_close=exec_close_full,
         )
         print(
             f"\n  Best signal params: d_pct_smooth={best_params['d_pct_smooth']}  "

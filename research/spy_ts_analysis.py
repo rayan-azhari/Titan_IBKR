@@ -64,7 +64,9 @@ def _load_daily(symbol: str) -> pd.Series:
     df.columns = [c.lower() for c in df.columns]
     df = df.sort_index()
     close = df["close"].dropna()
-    print(f"{symbol} loaded: {len(close)} bars  [{close.index[0].date()} to {close.index[-1].date()}]")
+    print(
+        f"{symbol} loaded: {len(close)} bars  [{close.index[0].date()} to {close.index[-1].date()}]"
+    )
     return close
 
 
@@ -127,10 +129,15 @@ def _hurst_rs_core(ts: np.ndarray, lags: np.ndarray) -> float:
     xl = log_lags[:count]
     yl = log_rs[:count]
     n_pts = float(count)
-    sx = 0.0; sy = 0.0; sxx = 0.0; sxy = 0.0
+    sx = 0.0
+    sy = 0.0
+    sxx = 0.0
+    sxy = 0.0
     for i in range(count):
-        sx += xl[i]; sy += yl[i]
-        sxx += xl[i] * xl[i]; sxy += xl[i] * yl[i]
+        sx += xl[i]
+        sy += yl[i]
+        sxx += xl[i] * xl[i]
+        sxy += xl[i] * yl[i]
     denom = n_pts * sxx - sx * sx
     if denom == 0.0:
         return np.nan
@@ -144,7 +151,7 @@ def _rolling_hurst_nb(series: np.ndarray, lags: np.ndarray, window: int, step: i
     values = np.full(n, np.nan)
     i = window
     while i < n:
-        values[i] = _hurst_rs_core(series[i - window: i], lags)
+        values[i] = _hurst_rs_core(series[i - window : i], lags)
         i += step
     return values
 
@@ -196,9 +203,13 @@ def _kpss_summary(series: pd.Series, label: str) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--symbol", default="SPY_D", help="Parquet stem in data/, e.g. SPY_D or GBP_USD_D")
     parser.add_argument(
-        "--period", type=int, default=252,
+        "--symbol", default="SPY_D", help="Parquet stem in data/, e.g. SPY_D or GBP_USD_D"
+    )
+    parser.add_argument(
+        "--period",
+        type=int,
+        default=252,
         help="Seasonal decomposition period (default 252=annual daily; use 120 for H1 weekly cycle)",
     )
     args = parser.parse_args()
@@ -214,8 +225,10 @@ def main() -> None:
     print("\n" + "=" * 60)
     print(f"A. SEASONAL DECOMPOSITION  (multiplicative, period={period})")
     print("=" * 60)
-    decomp = seasonal_decompose(close, model="multiplicative", period=period, extrapolate_trend="freq")
-    seasonal_amplitude = (decomp.seasonal.max() - decomp.seasonal.min())
+    decomp = seasonal_decompose(
+        close, model="multiplicative", period=period, extrapolate_trend="freq"
+    )
+    seasonal_amplitude = decomp.seasonal.max() - decomp.seasonal.min()
     print(f"  Seasonal amplitude (max-min): {seasonal_amplitude:.4f}")
     print(f"  Trend range: [{decomp.trend.min():.2f}, {decomp.trend.max():.2f}]")
     residual_std = decomp.resid.dropna().std()
@@ -228,16 +241,23 @@ def main() -> None:
     print("B. AUTOCORRELATION (log returns)")
     print("=" * 60)
     from statsmodels.tsa.stattools import acf as _acf
+
     acf_vals = _acf(log_ret, nlags=40, fft=True)
     lag1_acf = acf_vals[1]
     lb = acorr_ljungbox(log_ret, lags=[10, 20], return_df=True)
     print(f"  Lag-1 ACF: {lag1_acf:.4f}")
-    nature = "TRENDING (momentum)" if lag1_acf > 0.02 else (
-        "MEAN-REVERTING (choppiness)" if lag1_acf < -0.02 else "NEAR RANDOM WALK"
+    nature = (
+        "TRENDING (momentum)"
+        if lag1_acf > 0.02
+        else ("MEAN-REVERTING (choppiness)" if lag1_acf < -0.02 else "NEAR RANDOM WALK")
     )
     print(f"  Nature implied by lag-1: {nature}")
-    print(f"  Ljung-Box Q (lag 10): stat={lb['lb_stat'].iloc[0]:.3f}  p={lb['lb_pvalue'].iloc[0]:.4f}")
-    print(f"  Ljung-Box Q (lag 20): stat={lb['lb_stat'].iloc[1]:.3f}  p={lb['lb_pvalue'].iloc[1]:.4f}")
+    print(
+        f"  Ljung-Box Q (lag 10): stat={lb['lb_stat'].iloc[0]:.3f}  p={lb['lb_pvalue'].iloc[0]:.4f}"
+    )
+    print(
+        f"  Ljung-Box Q (lag 20): stat={lb['lb_stat'].iloc[1]:.3f}  p={lb['lb_pvalue'].iloc[1]:.4f}"
+    )
 
     # -----------------------------------------------------------------------
     # C. Hurst Exponent
@@ -257,8 +277,10 @@ def main() -> None:
     rolling_h = rolling_hurst(log_ret.values, window=252, step=21)
     valid_h = rolling_h[~np.isnan(rolling_h)]
     if len(valid_h):
-        print(f"  Rolling H (252-bar, step 21): mean={valid_h.mean():.3f}  "
-              f"min={valid_h.min():.3f}  max={valid_h.max():.3f}")
+        print(
+            f"  Rolling H (252-bar, step 21): mean={valid_h.mean():.3f}  "
+            f"min={valid_h.min():.3f}  max={valid_h.max():.3f}"
+        )
 
     # -----------------------------------------------------------------------
     # D. ADF + KPSS stationarity
@@ -327,14 +349,34 @@ def main() -> None:
     ax6.axis("off")
     table_data = [
         ["Test", "Series", "Stat", "p-value", "Verdict"],
-        ["ADF", "Close", f"{adf_close['stat']:.3f}", f"{adf_close['p']:.4f}",
-         "Non-Stat." if "NON" in adf_close["verdict"] else "Stationary"],
-        ["ADF", "Returns", f"{adf_ret['stat']:.3f}", f"{adf_ret['p']:.4f}",
-         "Non-Stat." if "NON" in adf_ret["verdict"] else "Stationary"],
-        ["KPSS", "Close", f"{kpss_close['stat']:.3f}", f"{kpss_close['p']:.4f}",
-         "Non-Stat." if "NON" in kpss_close["verdict"] else "Stationary"],
-        ["KPSS", "Returns", f"{kpss_ret['stat']:.3f}", f"{kpss_ret['p']:.4f}",
-         "Non-Stat." if "NON" in kpss_ret["verdict"] else "Stationary"],
+        [
+            "ADF",
+            "Close",
+            f"{adf_close['stat']:.3f}",
+            f"{adf_close['p']:.4f}",
+            "Non-Stat." if "NON" in adf_close["verdict"] else "Stationary",
+        ],
+        [
+            "ADF",
+            "Returns",
+            f"{adf_ret['stat']:.3f}",
+            f"{adf_ret['p']:.4f}",
+            "Non-Stat." if "NON" in adf_ret["verdict"] else "Stationary",
+        ],
+        [
+            "KPSS",
+            "Close",
+            f"{kpss_close['stat']:.3f}",
+            f"{kpss_close['p']:.4f}",
+            "Non-Stat." if "NON" in kpss_close["verdict"] else "Stationary",
+        ],
+        [
+            "KPSS",
+            "Returns",
+            f"{kpss_ret['stat']:.3f}",
+            f"{kpss_ret['p']:.4f}",
+            "Non-Stat." if "NON" in kpss_ret["verdict"] else "Stationary",
+        ],
         ["", "", "", "", ""],
         ["Lag-1 ACF", f"{lag1_acf:.4f}", "", "", nature[:20]],
         ["Full Hurst", f"{h_full:.4f}", "", "", h_label[:20]],

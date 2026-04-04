@@ -288,7 +288,8 @@ def main() -> None:
     parser.add_argument("--instrument", default="SPY", help="Symbol (default: SPY)")
     parser.add_argument("--load-state", action="store_true", help="Load Stage 1+2 from state")
     parser.add_argument(
-        "--signal-instrument", default=None,
+        "--signal-instrument",
+        default=None,
         help="Signal source instrument (e.g. QQQ for TQQQ). Defaults to --instrument.",
     )
     args = parser.parse_args()
@@ -384,13 +385,27 @@ def main() -> None:
                     for confirm_days in confirm_day_options:
                         for decel_confirm in decel_confirm_options:
                             is_pf = run_exit_backtest(
-                                is_close, is_slow, is_decel_raw, exit_mode, thresh,
-                                entry_mode, is_fast_ma, confirm_days, decel_confirm,
+                                is_close,
+                                is_slow,
+                                is_decel_raw,
+                                exit_mode,
+                                thresh,
+                                entry_mode,
+                                is_fast_ma,
+                                confirm_days,
+                                decel_confirm,
                                 exec_close=is_exec,
                             )
                             oos_pf = run_exit_backtest(
-                                oos_close, oos_slow, oos_decel_raw, exit_mode, thresh,
-                                entry_mode, oos_fast_ma, confirm_days, decel_confirm,
+                                oos_close,
+                                oos_slow,
+                                oos_decel_raw,
+                                exit_mode,
+                                thresh,
+                                entry_mode,
+                                oos_fast_ma,
+                                confirm_days,
+                                decel_confirm,
                                 exec_close=oos_exec,
                             )
 
@@ -418,7 +433,9 @@ def main() -> None:
                                     "entry_mode": entry_mode,
                                     "fast_reentry_ma": fast_p if fast_p else "n/a",
                                     "exit_mode": exit_mode,
-                                    "exit_decel_thresh": thresh if exit_mode in ("C", "D") else "n/a",
+                                    "exit_decel_thresh": thresh
+                                    if exit_mode in ("C", "D")
+                                    else "n/a",
                                     "exit_confirm_days": confirm_days,
                                     "decel_confirm_days": decel_confirm,
                                     "is_sharpe": round(is_stats["sharpe"], 3),

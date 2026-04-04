@@ -61,9 +61,7 @@ from research.ic_analysis.run_ic import (  # noqa: E402
     compute_icir,
 )
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 # Default TFs in order: coarsest -> finest
@@ -158,7 +156,9 @@ def build_aligned_signals(
         tf_signals[tf] = aligned
         logger.info(
             "%s: %d native bars -> %d aligned H1 bars",
-            tf, len(native_signals), len(aligned),
+            tf,
+            len(native_signals),
+            len(aligned),
         )
 
     return tf_signals, base_index
@@ -236,7 +236,9 @@ def _score_series(
     # Also ICIR at first horizon for comparison
     h1_col = f"fwd_{horizons[0]}"
     if h1_col in fwd_returns.columns:
-        icir_h1_s = compute_icir(sig_df, fwd_returns[[h1_col]], horizons=[horizons[0]], window=window_1y)
+        icir_h1_s = compute_icir(
+            sig_df, fwd_returns[[h1_col]], horizons=[horizons[0]], window=window_1y
+        )
         icir_h1 = float(icir_h1_s.iloc[0]) if not icir_h1_s.empty else np.nan
     else:
         icir_h1 = np.nan
@@ -276,8 +278,14 @@ def build_stacked_composites(
     all_results: list[dict] = []
     for sig in signal_names:
         rows = _build_stacked_for_signal(
-            sig, tf_signals, ic_by_tf, icir_by_tf,
-            fwd_returns, horizons, tfs, base_tf,
+            sig,
+            tf_signals,
+            ic_by_tf,
+            icir_by_tf,
+            fwd_returns,
+            horizons,
+            tfs,
+            base_tf,
         )
         all_results.extend(rows)
     return pd.DataFrame(all_results) if all_results else pd.DataFrame()
@@ -306,11 +314,7 @@ def _build_stacked_for_signal(
 
     # H1-only IC reference (at best horizon across all horizons)
     _h1_ic: pd.DataFrame = ic_by_tf[h1_tf] if h1_tf in ic_by_tf else pd.DataFrame()
-    h1_ic_row = (
-        _h1_ic.loc[signal_name]
-        if signal_name in _h1_ic.index
-        else pd.Series(dtype=float)
-    )
+    h1_ic_row = _h1_ic.loc[signal_name] if signal_name in _h1_ic.index else pd.Series(dtype=float)
     if h1_ic_row.empty:
         h1_best_ic = np.nan
     else:
@@ -345,18 +349,24 @@ def _build_stacked_for_signal(
         best_ic, best_h, best_icir, _, verdict = _score_series(
             eq[valid], fwd_returns[valid], horizons
         )
-        delta = abs(best_ic) - h1_best_ic if not np.isnan(best_ic) and not np.isnan(h1_best_ic) else np.nan
-        results.append({
-            "signal": signal_name,
-            "method": "equal_weight",
-            "n_tfs": len(oriented),
-            "best_ic": best_ic,
-            "best_h": best_h,
-            "best_icir": best_icir,
-            "verdict": verdict,
-            "h1_best_ic": h1_best_ic,
-            "vs_h1_ic": delta,
-        })
+        delta = (
+            abs(best_ic) - h1_best_ic
+            if not np.isnan(best_ic) and not np.isnan(h1_best_ic)
+            else np.nan
+        )
+        results.append(
+            {
+                "signal": signal_name,
+                "method": "equal_weight",
+                "n_tfs": len(oriented),
+                "best_ic": best_ic,
+                "best_h": best_h,
+                "best_icir": best_icir,
+                "verdict": verdict,
+                "h1_best_ic": h1_best_ic,
+                "vs_h1_ic": delta,
+            }
+        )
 
     # ── Method 2: ICIR-weighted ────────────────────────────────────────────────
     icir_vals = {tf: _icir_val(tf) for tf in tfs if tf in tf_series}
@@ -364,7 +374,8 @@ def _build_stacked_for_signal(
     if total_icir > 0:
         weighted_parts = [
             tf_series[tf] * _ic_sign(tf) * (icir_vals[tf] / total_icir)
-            for tf in tfs if tf in tf_series
+            for tf in tfs
+            if tf in tf_series
         ]
         iw = pd.concat(weighted_parts, axis=1).sum(axis=1)
         iw.name = f"{signal_name}_mtf_iw"
@@ -372,18 +383,24 @@ def _build_stacked_for_signal(
         best_ic, best_h, best_icir, _, verdict = _score_series(
             iw[valid], fwd_returns[valid], horizons
         )
-        delta = abs(best_ic) - h1_best_ic if not np.isnan(best_ic) and not np.isnan(h1_best_ic) else np.nan
-        results.append({
-            "signal": signal_name,
-            "method": "icir_weighted",
-            "n_tfs": len(icir_vals),
-            "best_ic": best_ic,
-            "best_h": best_h,
-            "best_icir": best_icir,
-            "verdict": verdict,
-            "h1_best_ic": h1_best_ic,
-            "vs_h1_ic": delta,
-        })
+        delta = (
+            abs(best_ic) - h1_best_ic
+            if not np.isnan(best_ic) and not np.isnan(h1_best_ic)
+            else np.nan
+        )
+        results.append(
+            {
+                "signal": signal_name,
+                "method": "icir_weighted",
+                "n_tfs": len(icir_vals),
+                "best_ic": best_ic,
+                "best_h": best_h,
+                "best_icir": best_icir,
+                "verdict": verdict,
+                "h1_best_ic": h1_best_ic,
+                "vs_h1_ic": delta,
+            }
+        )
 
     # ── Method 3: Confluence gate (proportion of TFs that agree) ──────────────
     # +1 if TF agrees with positive orientation, -1 if disagrees, 0 if zero
@@ -395,18 +412,24 @@ def _build_stacked_for_signal(
         best_ic, best_h, best_icir, _, verdict = _score_series(
             conf[valid], fwd_returns[valid], horizons
         )
-        delta = abs(best_ic) - h1_best_ic if not np.isnan(best_ic) and not np.isnan(h1_best_ic) else np.nan
-        results.append({
-            "signal": signal_name,
-            "method": "confluence",
-            "n_tfs": len(sign_parts),
-            "best_ic": best_ic,
-            "best_h": best_h,
-            "best_icir": best_icir,
-            "verdict": verdict,
-            "h1_best_ic": h1_best_ic,
-            "vs_h1_ic": delta,
-        })
+        delta = (
+            abs(best_ic) - h1_best_ic
+            if not np.isnan(best_ic) and not np.isnan(h1_best_ic)
+            else np.nan
+        )
+        results.append(
+            {
+                "signal": signal_name,
+                "method": "confluence",
+                "n_tfs": len(sign_parts),
+                "best_ic": best_ic,
+                "best_h": best_h,
+                "best_icir": best_icir,
+                "verdict": verdict,
+                "h1_best_ic": h1_best_ic,
+                "vs_h1_ic": delta,
+            }
+        )
 
     return results
 
@@ -467,8 +490,7 @@ def _print_stacking_leaderboard(
     # Best result per (signal, method) — already one row per combination
     # Rank by vs_h1_ic descending
     ranked = (
-        stacking_results
-        .assign(abs_ic=stacking_results["best_ic"].abs())
+        stacking_results.assign(abs_ic=stacking_results["best_ic"].abs())
         .sort_values("abs_ic", ascending=False)
         .head(top_n)
         .reset_index(drop=True)
@@ -532,9 +554,7 @@ def run_mtf_stack(
     # 1. Load and align all TFs to base
     tf_signals, base_index = build_aligned_signals(instrument, tfs, base_tf)
     group_map = dict(_sweep._SIGNAL_GROUP)  # populated by build_all_signals calls
-    signal_names: list[str] = [
-        str(s) for s in tf_signals[base_tf].columns if s in group_map
-    ]
+    signal_names: list[str] = [str(s) for s in tf_signals[base_tf].columns if s in group_map]
 
     # 2. Forward returns on base TF (H1)
     base_close = _load_ohlcv(instrument, base_tf)["close"]
@@ -558,8 +578,14 @@ def run_mtf_stack(
     all_results: list[dict] = []
     for sig in signal_names:
         rows = _build_stacked_for_signal(
-            sig, tf_signals, ic_by_tf, icir_by_tf,
-            fwd_returns, horizons, tfs, base_tf,
+            sig,
+            tf_signals,
+            ic_by_tf,
+            icir_by_tf,
+            fwd_returns,
+            horizons,
+            tfs,
+            base_tf,
         )
         all_results.extend(rows)
 
@@ -611,11 +637,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="MTF Signal Stacking IC Analysis")
     parser.add_argument("--instrument", default="EUR_USD")
     parser.add_argument(
-        "--tfs", default=",".join(DEFAULT_TFS),
+        "--tfs",
+        default=",".join(DEFAULT_TFS),
         help="Comma-separated timeframes coarse-to-fine, e.g. W,D,H4,H1",
     )
     parser.add_argument(
-        "--horizons", default=",".join(str(h) for h in HORIZONS),
+        "--horizons",
+        default=",".join(str(h) for h in HORIZONS),
         help="Comma-separated H1 forward horizons, e.g. 1,4,20,80,240",
     )
     args = parser.parse_args()

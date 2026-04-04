@@ -192,10 +192,7 @@ def main() -> None:
         )
         strategy = ICMTFStrategy(strat_config)
         node.trader.add_strategy(strategy)
-        logger.info(
-            f"Added ICMTFStrategy for {inst_id}"
-            f" | threshold=±{strat_config.threshold}z"
-        )
+        logger.info(f"Added ICMTFStrategy for {inst_id} | threshold=±{strat_config.threshold}z")
 
     # 7. Run
     print("\nStarting IC MTF Trading Node...")

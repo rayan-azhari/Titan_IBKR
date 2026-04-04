@@ -36,8 +36,8 @@ except ImportError:
     print("ERROR: vectorbt not installed.")
     sys.exit(1)
 
-FEES = 0.001        # 0.10% per side
-SLIPPAGE = 0.0005   # 0.05% per side
+FEES = 0.001  # 0.10% per side
+SLIPPAGE = 0.0005  # 0.05% per side
 
 # Parameter grid
 SLOW_MAS = [50, 75, 100, 150, 200, 250]
@@ -52,6 +52,7 @@ MALIK_REF = {"sharpe": 1.15, "total_return": 2.910, "max_drawdown": -0.235}
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
 
 def load_data(instrument: str) -> pd.DataFrame:
     path = DATA_DIR / f"{instrument}_D.parquet"
@@ -73,6 +74,7 @@ def load_data(instrument: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Backtests
 # ---------------------------------------------------------------------------
+
 
 def compute_sma(close: pd.Series, period: int) -> pd.Series:
     return close.rolling(period).mean()
@@ -137,6 +139,7 @@ def run_price_above_sma(close: pd.Series, slow_ma: pd.Series) -> "vbt.Portfolio"
 # Stats
 # ---------------------------------------------------------------------------
 
+
 def stats_from_pf(pf: "vbt.Portfolio") -> dict:
     total_ret = float(pf.total_return())
     sharpe = float(pf.sharpe_ratio())
@@ -153,7 +156,7 @@ def stats_from_pf(pf: "vbt.Portfolio") -> dict:
 def bah_stats(close: pd.Series) -> dict:
     rets = close.pct_change().dropna()
     total_ret = float(close.iloc[-1] / close.iloc[0] - 1)
-    sharpe = float(rets.mean() / rets.std() * (252 ** 0.5)) if rets.std() > 0 else 0.0
+    sharpe = float(rets.mean() / rets.std() * (252**0.5)) if rets.std() > 0 else 0.0
     max_dd = float((close / close.cummax() - 1).min())
     calmar = total_ret / abs(max_dd) if abs(max_dd) > 0.001 else 0.0
     return {
@@ -168,6 +171,7 @@ def bah_stats(close: pd.Series) -> dict:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="MA Crossover Parameter Sweep.")
     parser.add_argument("--instrument", default="QQQ", help="Symbol (default: QQQ)")
@@ -175,9 +179,7 @@ def main() -> None:
     instrument = args.instrument.upper()
     inst_lower = instrument.lower()
 
-    valid_pairs = [
-        (f, s) for s in SLOW_MAS for f in FAST_MAS if f < s
-    ]
+    valid_pairs = [(f, s) for s in SLOW_MAS for f in FAST_MAS if f < s]
     total_combos = len(valid_pairs) * len(CONFIRM_DAYS)
 
     print("=" * 70)
@@ -196,10 +198,14 @@ def main() -> None:
     is_close = close.iloc[:split]
     oos_close = close.iloc[split:]
 
-    print(f"\n  IS  period: {is_close.index[0].date()} -> {is_close.index[-1].date()}"
-          f"  ({len(is_close)} bars)")
-    print(f"  OOS period: {oos_close.index[0].date()} -> {oos_close.index[-1].date()}"
-          f"  ({len(oos_close)} bars)")
+    print(
+        f"\n  IS  period: {is_close.index[0].date()} -> {is_close.index[-1].date()}"
+        f"  ({len(is_close)} bars)"
+    )
+    print(
+        f"  OOS period: {oos_close.index[0].date()} -> {oos_close.index[-1].date()}"
+        f"  ({len(oos_close)} bars)"
+    )
 
     # ------------------------------------------------------------------
     # Benchmarks
@@ -248,10 +254,7 @@ def main() -> None:
                 oos_pf = run_crossover_backtest(oos_close, oos_fast, oos_slow, cd)
                 is_s = stats_from_pf(is_pf)
                 oos_s = stats_from_pf(oos_pf)
-                ratio = (
-                    oos_s["sharpe"] / is_s["sharpe"]
-                    if is_s["sharpe"] > 0.01 else 0.0
-                )
+                ratio = oos_s["sharpe"] / is_s["sharpe"] if is_s["sharpe"] > 0.01 else 0.0
                 label = f"fast={fast_p:3d} slow={slow_p:3d} cd={cd}"
                 print(
                     f"  {label}  IS={is_s['sharpe']:6.3f}  "
@@ -260,17 +263,19 @@ def main() -> None:
                     f"DD={oos_s['max_drawdown']:7.1%}  "
                     f"Ratio={ratio:.2f}"
                 )
-                results.append({
-                    "fast_ma": fast_p,
-                    "slow_ma": slow_p,
-                    "confirm_days": cd,
-                    "is_sharpe": is_s["sharpe"],
-                    "oos_sharpe": oos_s["sharpe"],
-                    "oos_is_ratio": round(ratio, 3),
-                    "oos_total_return": oos_s["total_return"],
-                    "oos_max_drawdown": oos_s["max_drawdown"],
-                    "oos_calmar": oos_s["calmar"],
-                })
+                results.append(
+                    {
+                        "fast_ma": fast_p,
+                        "slow_ma": slow_p,
+                        "confirm_days": cd,
+                        "is_sharpe": is_s["sharpe"],
+                        "oos_sharpe": oos_s["sharpe"],
+                        "oos_is_ratio": round(ratio, 3),
+                        "oos_total_return": oos_s["total_return"],
+                        "oos_max_drawdown": oos_s["max_drawdown"],
+                        "oos_calmar": oos_s["calmar"],
+                    }
+                )
 
     # ------------------------------------------------------------------
     # Results
@@ -293,8 +298,10 @@ def main() -> None:
     print(f"  Confirm days: {best_cd}")
     print(f"  IS  Sharpe:   {best['is_sharpe']:.3f}")
     print(f"  OOS Sharpe:   {best['oos_sharpe']:.3f}")
-    print(f"  OOS/IS ratio: {best['oos_is_ratio']:.3f}  "
-          f"{'[OK]' if best['oos_is_ratio'] >= 0.5 else '[WARN: < 0.5, possible overfit]'}")
+    print(
+        f"  OOS/IS ratio: {best['oos_is_ratio']:.3f}  "
+        f"{'[OK]' if best['oos_is_ratio'] >= 0.5 else '[WARN: < 0.5, possible overfit]'}"
+    )
     print(f"  OOS Return:   {best['oos_total_return']:.1%}")
     print(f"  OOS MaxDD:    {best['oos_max_drawdown']:.1%}")
     print(f"  OOS Calmar:   {best['oos_calmar']:.3f}")
@@ -303,12 +310,18 @@ def main() -> None:
     beats_bah = best["oos_sharpe"] > bah["sharpe"]
     beats_stage1 = best["oos_sharpe"] > baseline["sharpe"]
     beats_malik = best["oos_sharpe"] > MALIK_REF["sharpe"]
-    print(f"  vs B&H {instrument}:          {bah['sharpe']:.3f}  ->  "
-          f"{'BEATS' if beats_bah else 'LOSES'}")
-    print(f"  vs price>SMA200:       {baseline['sharpe']:.3f}  ->  "
-          f"{'BEATS' if beats_stage1 else 'LOSES'}")
-    print(f"  vs Full Malik {instrument}:   {MALIK_REF['sharpe']:.3f}  ->  "
-          f"{'BEATS' if beats_malik else 'LOSES'}")
+    print(
+        f"  vs B&H {instrument}:          {bah['sharpe']:.3f}  ->  "
+        f"{'BEATS' if beats_bah else 'LOSES'}"
+    )
+    print(
+        f"  vs price>SMA200:       {baseline['sharpe']:.3f}  ->  "
+        f"{'BEATS' if beats_stage1 else 'LOSES'}"
+    )
+    print(
+        f"  vs Full Malik {instrument}:   {MALIK_REF['sharpe']:.3f}  ->  "
+        f"{'BEATS' if beats_malik else 'LOSES'}"
+    )
 
     # Top 10 table
     print("\n  Top 10 by OOS Sharpe:")

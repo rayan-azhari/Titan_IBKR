@@ -23,7 +23,6 @@ from research.ml_regime.cross_validation import PurgedKFold, compute_sample_uniq
 
 
 class MetaLabeller:
-
     def __init__(
         self,
         n_splits: int = 5,
@@ -103,8 +102,7 @@ class MetaLabeller:
             "mean_auc": float(np.mean(fold_aucs)) if fold_aucs else None,
             "std_auc": float(np.std(fold_aucs)) if fold_aucs else None,
             "oof_auc": (
-                float(roc_auc_score(y_valid, p_valid))
-                if len(np.unique(y_valid)) > 1 else None
+                float(roc_auc_score(y_valid, p_valid)) if len(np.unique(y_valid)) > 1 else None
             ),
             "oof_f1": float(f1_score(y_valid, oof_preds, zero_division=0)),
             "oof_precision": float(precision_score(y_valid, oof_preds, zero_division=0)),

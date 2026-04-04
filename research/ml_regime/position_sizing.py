@@ -26,7 +26,7 @@ class WinLossTracker:
     """Running tracker of trade returns for dynamic Kelly W/L ratio estimation."""
 
     window: int = 200
-    prior_wl_ratio: float = 1.5   # conservative prior before enough data
+    prior_wl_ratio: float = 1.5  # conservative prior before enough data
 
     _wins: List[float] = field(default_factory=list, repr=False)
     _losses: List[float] = field(default_factory=list, repr=False)
@@ -123,9 +123,7 @@ class FractionalKelly:
         price: float,
     ) -> float:
         """Convenience: returns number of shares/contracts."""
-        dollar_size = self.size(
-            prob_success, win_loss_ratio, portfolio_value, instrument_daily_vol
-        )
+        dollar_size = self.size(prob_success, win_loss_ratio, portfolio_value, instrument_daily_vol)
         if price <= 0:
             return 0.0
         return dollar_size / price

@@ -25,8 +25,8 @@ from numba import njit
 def _triple_barrier_core(
     prices: np.ndarray,
     entry_indices: np.ndarray,
-    upper_barriers: np.ndarray,   # fractional, e.g. 0.04 = 4%
-    lower_barriers: np.ndarray,   # fractional, e.g. 0.02 = 2%
+    upper_barriers: np.ndarray,  # fractional, e.g. 0.04 = 4%
+    lower_barriers: np.ndarray,  # fractional, e.g. 0.02 = 2%
     max_holding: int,
 ) -> np.ndarray:
     """Numba-compiled inner loop.

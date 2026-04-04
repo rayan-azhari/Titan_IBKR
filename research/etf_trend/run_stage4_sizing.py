@@ -56,7 +56,7 @@ FEES = 0.001
 SLIPPAGE = 0.0005
 
 SIZING_MODES = ["binary", "dynamic_decel"]
-SIZING_MODES_LEVERAGED = ["binary"]   # no margin leverage on top of already-leveraged ETFs
+SIZING_MODES_LEVERAGED = ["binary"]  # no margin leverage on top of already-leveraged ETFs
 ATR_STOP_MULTS = [3.0, 4.0, 5.0]
 
 # Exchange suffix per symbol (used when writing locked config)
@@ -163,8 +163,8 @@ def run_vol_target_stats(
     # Detect actual regime transitions (not raw entry signal) for cost accounting.
     # size_arr[t] > 0 = in trade; size_arr[t] == 0 = flat.
     in_pos = size_arr > 0
-    entering = in_pos & (~in_pos.shift(1).fillna(True))   # flat → long
-    exiting = (~in_pos) & in_pos.shift(1).fillna(False)    # long → flat
+    entering = in_pos & (~in_pos.shift(1).fillna(True))  # flat → long
+    exiting = (~in_pos) & in_pos.shift(1).fillna(False)  # long → flat
 
     exec_c = exec_close if exec_close is not None else close
     daily_rets = exec_c.pct_change().fillna(0)
@@ -351,7 +351,8 @@ def main() -> None:
     parser.add_argument("--instrument", default="SPY", help="Symbol (default: SPY)")
     parser.add_argument("--load-state", action="store_true", help="Load Stages 1-3 from state")
     parser.add_argument(
-        "--signal-instrument", default=None,
+        "--signal-instrument",
+        default=None,
         help="Signal source instrument (e.g. QQQ for TQQQ). Defaults to --instrument.",
     )
     args = parser.parse_args()
@@ -378,15 +379,25 @@ def main() -> None:
         ma_type, slow_ma_p, _s1_fast_ma = s1
         decel_signals, _decel_weights, decel_params = s2 if s2 else ([], {}, {})
         s3_result = s3 if s3 else ("A", -0.3, "decel_positive", None, 1, 1)
-        (exit_mode, exit_decel_thresh, entry_mode,
-         fast_reentry_ma_p, exit_confirm_days_p, decel_confirm_days_p) = s3_result
+        (
+            exit_mode,
+            exit_decel_thresh,
+            entry_mode,
+            fast_reentry_ma_p,
+            exit_confirm_days_p,
+            decel_confirm_days_p,
+        ) = s3_result
     else:
         ma_type, slow_ma_p = "SMA", 200
         decel_signals, _decel_weights, decel_params = [], {}, {}
-        (exit_mode, exit_decel_thresh, entry_mode,
-         fast_reentry_ma_p, exit_confirm_days_p, decel_confirm_days_p) = (
-            "A", -0.3, "decel_positive", None, 1, 1
-        )
+        (
+            exit_mode,
+            exit_decel_thresh,
+            entry_mode,
+            fast_reentry_ma_p,
+            exit_confirm_days_p,
+            decel_confirm_days_p,
+        ) = ("A", -0.3, "decel_positive", None, 1, 1)
 
     # Binary-only sizing for leveraged ETFs (already 3× leveraged; no additional margin)
     active_sizing_modes = SIZING_MODES_LEVERAGED if is_dual else SIZING_MODES
@@ -447,15 +458,31 @@ def main() -> None:
     for sizing_mode in active_sizing_modes:
         for atr_mult in ATR_STOP_MULTS:
             is_pf = run_sized_backtest(
-                is_close, is_slow, is_decel, exit_mode, exit_decel_thresh,
-                sizing_mode, atr_mult, entry_mode, is_fast_ma,
-                exit_confirm_days_p, decel_confirm_days_p,
+                is_close,
+                is_slow,
+                is_decel,
+                exit_mode,
+                exit_decel_thresh,
+                sizing_mode,
+                atr_mult,
+                entry_mode,
+                is_fast_ma,
+                exit_confirm_days_p,
+                decel_confirm_days_p,
                 exec_close=is_exec,
             )
             oos_pf = run_sized_backtest(
-                oos_close, oos_slow, oos_decel, exit_mode, exit_decel_thresh,
-                sizing_mode, atr_mult, entry_mode, oos_fast_ma,
-                exit_confirm_days_p, decel_confirm_days_p,
+                oos_close,
+                oos_slow,
+                oos_decel,
+                exit_mode,
+                exit_decel_thresh,
+                sizing_mode,
+                atr_mult,
+                entry_mode,
+                oos_fast_ma,
+                exit_confirm_days_p,
+                decel_confirm_days_p,
                 exec_close=oos_exec,
             )
             is_stats = extract_stats(is_pf)
@@ -483,12 +510,28 @@ def main() -> None:
             for max_lev in MAX_LEVERAGES:
                 for atr_mult in ATR_STOP_MULTS:
                     is_stats = run_vol_target_stats(
-                        is_close, is_slow, is_decel, exit_mode, exit_decel_thresh,
-                        target_vol, max_lev, entry_mode, is_fast_ma, exit_confirm_days_p,
+                        is_close,
+                        is_slow,
+                        is_decel,
+                        exit_mode,
+                        exit_decel_thresh,
+                        target_vol,
+                        max_lev,
+                        entry_mode,
+                        is_fast_ma,
+                        exit_confirm_days_p,
                     )
                     oos_stats = run_vol_target_stats(
-                        oos_close, oos_slow, oos_decel, exit_mode, exit_decel_thresh,
-                        target_vol, max_lev, entry_mode, oos_fast_ma, exit_confirm_days_p,
+                        oos_close,
+                        oos_slow,
+                        oos_decel,
+                        exit_mode,
+                        exit_decel_thresh,
+                        target_vol,
+                        max_lev,
+                        entry_mode,
+                        oos_fast_ma,
+                        exit_confirm_days_p,
                     )
                     ratio = (
                         oos_stats["sharpe"] / is_stats["sharpe"]
@@ -571,7 +614,8 @@ def main() -> None:
         "atr_stop_mult": float(best["atr_stop_mult"]),
     }
     config_path = write_config(
-        inst_lower, params,
+        inst_lower,
+        params,
         signal_instrument=signal_inst if is_dual else None,
     )
     print(f"\n  Config written: {config_path.relative_to(PROJECT_ROOT)}")

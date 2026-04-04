@@ -25,7 +25,6 @@ import pandas as pd
 
 
 class PurgedKFold:
-
     def __init__(self, n_splits: int = 5, embargo_pct: float = 0.01):
         """Args:
         n_splits:     Number of folds (test folds are sequential, not shuffled)

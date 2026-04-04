@@ -51,15 +51,17 @@ def save_stage1(
     sharpe: float,
 ) -> None:
     """Save Stage 1 best signal params."""
-    save_state({
-        "stage1": {
-            "method": method,
-            "vwap_window": vwap_window,
-            "best_pct_window": best_pct_window,
-            "best_tier1_pct": best_pct,
-            "sharpe": sharpe,
+    save_state(
+        {
+            "stage1": {
+                "method": method,
+                "vwap_window": vwap_window,
+                "best_pct_window": best_pct_window,
+                "best_tier1_pct": best_pct,
+                "sharpe": sharpe,
+            }
         }
-    })
+    )
 
 
 def get_stage1() -> dict[str, Any] | None:
@@ -75,15 +77,17 @@ def save_stage2(
     hmm_model_path: str,
 ) -> None:
     """Save Stage 2 regime filter params."""
-    save_state({
-        "stage2": {
-            "ranging_state_idx": ranging_state_idx,
-            "p_thresh": p_thresh,
-            "hurst_thresh": hurst_thresh,
-            "sharpe_lift": sharpe_lift,
-            "hmm_model_path": hmm_model_path,
+    save_state(
+        {
+            "stage2": {
+                "ranging_state_idx": ranging_state_idx,
+                "p_thresh": p_thresh,
+                "hurst_thresh": hurst_thresh,
+                "sharpe_lift": sharpe_lift,
+                "hmm_model_path": hmm_model_path,
+            }
         }
-    })
+    )
 
 
 def get_stage2() -> dict[str, Any] | None:
@@ -102,18 +106,20 @@ def save_stage3(
     gate_results: dict[str, bool],
 ) -> None:
     """Save Stage 3 validation results."""
-    save_state({
-        "stage3": {
-            "is_sharpe": is_sharpe,
-            "oos_sharpe": oos_sharpe,
-            "oos_is_ratio": oos_is_ratio,
-            "win_rate": win_rate,
-            "max_dd": max_dd,
-            "n_oos_trades": n_oos_trades,
-            "all_gates_passed": gates_passed,
-            "gate_results": gate_results,
+    save_state(
+        {
+            "stage3": {
+                "is_sharpe": is_sharpe,
+                "oos_sharpe": oos_sharpe,
+                "oos_is_ratio": oos_is_ratio,
+                "win_rate": win_rate,
+                "max_dd": max_dd,
+                "n_oos_trades": n_oos_trades,
+                "all_gates_passed": gates_passed,
+                "gate_results": gate_results,
+            }
         }
-    })
+    )
 
 
 def get_stage3() -> dict[str, Any] | None:

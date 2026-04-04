@@ -64,9 +64,7 @@ from titan.strategies.ml.features import (  # noqa: E402
     stochastic,
 )
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 HORIZONS = [1, 5, 10, 20, 60]
@@ -224,8 +222,10 @@ def _compute_family_ic(
 
         # ICIR on IS
         icir_s = compute_icir(
-            sig_df_is, fwd_is[[fwd_col]],
-            horizons=[h], window=ICIR_WINDOW,
+            sig_df_is,
+            fwd_is[[fwd_col]],
+            horizons=[h],
+            window=ICIR_WINDOW,
         )
         is_icir = float(icir_s.iloc[0]) if not icir_s.empty else np.nan
 
@@ -285,16 +285,18 @@ def _sweep_family(
             else:
                 verdict = "NOISE"
 
-            rows.append({
-                "family": family,
-                "params": params_str,
-                "horizon": h,
-                "is_ic": round(is_ic, 5) if not np.isnan(is_ic) else np.nan,
-                "is_icir": round(is_icir, 3) if not np.isnan(is_icir) else np.nan,
-                "oos_ic": round(oos_ic, 5) if not np.isnan(oos_ic) else np.nan,
-                "verdict": verdict,
-                "overfit_warn": overfit,
-            })
+            rows.append(
+                {
+                    "family": family,
+                    "params": params_str,
+                    "horizon": h,
+                    "is_ic": round(is_ic, 5) if not np.isnan(is_ic) else np.nan,
+                    "is_icir": round(is_icir, 3) if not np.isnan(is_icir) else np.nan,
+                    "oos_ic": round(oos_ic, 5) if not np.isnan(oos_ic) else np.nan,
+                    "verdict": verdict,
+                    "overfit_warn": overfit,
+                }
+            )
 
     return pd.DataFrame(rows)
 
@@ -325,23 +327,20 @@ def _print_family_results(family: str, results: pd.DataFrame, top_n: int = 5) ->
     W = 80
     print(f"\n  {family}")
     print("  " + "-" * (W - 2))
-    print(
-        f"  {'h':>4}  {'Params':<30}  {'IS_IC':>8}  {'OOS_IC':>8}  "
-        f"{'IS_ICIR':>7}  Verdict  Warn"
-    )
+    print(f"  {'h':>4}  {'Params':<30}  {'IS_IC':>8}  {'OOS_IC':>8}  {'IS_ICIR':>7}  Verdict  Warn")
     print("  " + "-" * (W - 2))
 
     for h in sorted(results["horizon"].unique()):
         sub = results[results["horizon"] == h].copy()
-        sub = sub.assign(abs_is_ic=sub["is_ic"].abs()).sort_values(
-            "abs_is_ic", ascending=False
-        ).head(top_n)
+        sub = (
+            sub.assign(abs_is_ic=sub["is_ic"].abs())
+            .sort_values("abs_is_ic", ascending=False)
+            .head(top_n)
+        )
 
         for _, row in sub.iterrows():
             is_ic_s = f"{row['is_ic']:>+8.4f}" if not np.isnan(row["is_ic"]) else "     NaN"
-            oos_ic_s = (
-                f"{row['oos_ic']:>+8.4f}" if not np.isnan(row["oos_ic"]) else "     NaN"
-            )
+            oos_ic_s = f"{row['oos_ic']:>+8.4f}" if not np.isnan(row["oos_ic"]) else "     NaN"
             icir_s = f"{row['is_icir']:>+7.3f}" if not np.isnan(row["is_icir"]) else "    NaN"
             warn_s = " [OVERFIT]" if row["overfit_warn"] else ""
             print(
@@ -356,25 +355,21 @@ def _print_summary(all_results: pd.DataFrame) -> None:
     print("\n" + "=" * W)
     print("  BEST PARAMETERS SUMMARY (ranked by IS |IC|, showing OOS IC)")
     print("=" * W)
-    print(
-        f"  {'Family':<14}  {'h':>4}  {'Params':<30}  {'IS_IC':>8}  {'OOS_IC':>8}  Verdict"
-    )
+    print(f"  {'Family':<14}  {'h':>4}  {'Params':<30}  {'IS_IC':>8}  {'OOS_IC':>8}  Verdict")
     print("  " + "-" * (W - 2))
 
     for family in sorted(all_results["family"].unique()):
         for h in sorted(all_results["horizon"].unique()):
-            sub = all_results[
-                (all_results["family"] == family) & (all_results["horizon"] == h)
-            ]
+            sub = all_results[(all_results["family"] == family) & (all_results["horizon"] == h)]
             if sub.empty:
                 continue
-            best = sub.assign(abs_is_ic=sub["is_ic"].abs()).sort_values(
-                "abs_is_ic", ascending=False
-            ).iloc[0]
-            is_ic_s = f"{best['is_ic']:>+8.4f}" if not np.isnan(best["is_ic"]) else "     NaN"
-            oos_ic_s = (
-                f"{best['oos_ic']:>+8.4f}" if not np.isnan(best["oos_ic"]) else "     NaN"
+            best = (
+                sub.assign(abs_is_ic=sub["is_ic"].abs())
+                .sort_values("abs_is_ic", ascending=False)
+                .iloc[0]
             )
+            is_ic_s = f"{best['is_ic']:>+8.4f}" if not np.isnan(best["is_ic"]) else "     NaN"
+            oos_ic_s = f"{best['oos_ic']:>+8.4f}" if not np.isnan(best["oos_ic"]) else "     NaN"
             warn = " [!]" if best["overfit_warn"] else ""
             print(
                 f"  {family:<14}  h={h:<3}  {best['params']:<30}  "
@@ -413,8 +408,12 @@ def run_param_sweep(
     fwd_oos = fwd_all.reindex(oos_idx)
     logger.info(
         "IS: %d bars (%s - %s), OOS: %d bars (%s - %s)",
-        len(is_idx), is_idx[0].date(), is_idx[-1].date(),
-        len(oos_idx), oos_idx[0].date(), oos_idx[-1].date(),
+        len(is_idx),
+        is_idx[0].date(),
+        is_idx[-1].date(),
+        len(oos_idx),
+        oos_idx[0].date(),
+        oos_idx[-1].date(),
     )
 
     # 4. Sweep all families
@@ -424,17 +423,13 @@ def run_param_sweep(
     W = 74
     print("\n" + "=" * W)
     print(f"  INDICATOR PARAMETER SWEEP -- {instrument} {timeframe}")
-    print(
-        f"  Horizons: {horizons}  |  IS: {len(is_idx):,} bars  |  OOS: {len(oos_idx):,} bars"
-    )
+    print(f"  Horizons: {horizons}  |  IS: {len(is_idx):,} bars  |  OOS: {len(oos_idx):,} bars")
     print(f"  IS fraction: {IS_FRACTION:.0%}  |  OOS warn threshold: >{OOS_DROP_WARN:.0%} drop")
     print("=" * W)
 
     for family, grid in param_grid.items():
         logger.info("Sweeping %s (%d combinations)...", family, len(grid))
-        family_results = _sweep_family(
-            family, grid, df, close, fwd_is, fwd_oos, horizons
-        )
+        family_results = _sweep_family(family, grid, df, close, fwd_is, fwd_oos, horizons)
         if not family_results.empty:
             all_results.append(family_results)
             _print_family_results(family, family_results, top_n=3)
@@ -463,9 +458,11 @@ def run_param_sweep(
             sub = combined[(combined["family"] == family) & (combined["horizon"] == h)]
             if sub.empty:
                 continue
-            best = sub.assign(abs_is_ic=sub["is_ic"].abs()).sort_values(
-                "abs_is_ic", ascending=False
-            ).iloc[0]
+            best = (
+                sub.assign(abs_is_ic=sub["is_ic"].abs())
+                .sort_values("abs_is_ic", ascending=False)
+                .iloc[0]
+            )
             best_rows.append(best)
     best_df = pd.DataFrame(best_rows).drop(columns=["abs_is_ic"], errors="ignore")
     best_path = report_dir / f"phase1_params_{instrument}_{timeframe}_best.csv"

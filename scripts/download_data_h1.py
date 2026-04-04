@@ -29,8 +29,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
-DEFAULT_START = "2018-05-01"   # earliest available on XNAS.ITCH / XNYS.PILLAR
-SCHEMA        = "ohlcv-1h"
+DEFAULT_START = "2018-05-01"  # earliest available on XNAS.ITCH / XNYS.PILLAR
+SCHEMA = "ohlcv-1h"
 
 # ── Exchange routing ───────────────────────────────────────────────────────────
 # Primary-exchange Databento dataset for each S&P 100 component.
@@ -38,30 +38,142 @@ SCHEMA        = "ohlcv-1h"
 # XNYS.PILLAR = NYSE Pillar      (~2015-present)
 
 NASDAQ_ITCH: list[str] = [
-    "AAPL", "ADBE", "ADI",  "AMAT", "AMD",  "AMGN", "AMZN", "BKNG",
-    "CME",  "COST", "CSCO", "GILD", "GOOGL","INTU", "INTC", "ISRG",
-    "META", "MSFT", "NFLX", "NOW",  "NVDA", "QCOM", "REGN", "SBUX",
-    "TMUS", "TXN",  "VRTX", "ADP",  "AVGO", "TSLA", "PYPL", "KLAC",
-    "LRCX", "MU",   "CDNS", "SNPS", "PANW", "ORLY", "FAST", "PAYX",
+    "AAPL",
+    "ADBE",
+    "ADI",
+    "AMAT",
+    "AMD",
+    "AMGN",
+    "AMZN",
+    "BKNG",
+    "CME",
+    "COST",
+    "CSCO",
+    "GILD",
+    "GOOGL",
+    "INTU",
+    "INTC",
+    "ISRG",
+    "META",
+    "MSFT",
+    "NFLX",
+    "NOW",
+    "NVDA",
+    "QCOM",
+    "REGN",
+    "SBUX",
+    "TMUS",
+    "TXN",
+    "VRTX",
+    "ADP",
+    "AVGO",
+    "TSLA",
+    "PYPL",
+    "KLAC",
+    "LRCX",
+    "MU",
+    "CDNS",
+    "SNPS",
+    "PANW",
+    "ORLY",
+    "FAST",
+    "PAYX",
 ]
 
 XNYS_PILLAR: list[str] = [
-    "ABBV", "ABT",  "ACN",  "AFL",  "APD",  "AXP",  "BA",   "BAC",
-    "BDX",  "BLK",  "BSX",  "C",    "CAT",  "CB",   "CI",   "CL",
-    "COP",  "CRM",  "CVS",  "CVX",  "DE",   "DHR",  "DIS",  "DUK",
-    "ELV",  "EMR",  "EOG",  "ETN",  "FDX",  "GD",   "GE",   "GS",
-    "HCA",  "HD",   "HON",  "IBM",  "ICE",  "ITW",  "JNJ",  "JPM",
-    "KO",   "LIN",  "LLY",  "LMT",  "LOW",  "MA",   "MCD",  "MCO",
-    "MDT",  "MMC",  "MMM",  "MO",   "MRK",  "MS",   "NEE",  "NOC",
-    "ORCL", "PEP",  "PFE",  "PG",   "PGR",  "PM",   "PLD",  "PNC",
-    "RTX",  "SCHW", "SLB",  "SO",   "SPGI", "SYK",  "T",    "TJX",
-    "TMO",  "UNH",  "UNP",  "UPS",  "USB",  "V",    "VZ",   "WFC",
-    "WM",   "WMT",  "XOM",  "ZTS",  "EW",   "HUM",  "NEM",  "OXY",
+    "ABBV",
+    "ABT",
+    "ACN",
+    "AFL",
+    "APD",
+    "AXP",
+    "BA",
+    "BAC",
+    "BDX",
+    "BLK",
+    "BSX",
+    "C",
+    "CAT",
+    "CB",
+    "CI",
+    "CL",
+    "COP",
+    "CRM",
+    "CVS",
+    "CVX",
+    "DE",
+    "DHR",
+    "DIS",
+    "DUK",
+    "ELV",
+    "EMR",
+    "EOG",
+    "ETN",
+    "FDX",
+    "GD",
+    "GE",
+    "GS",
+    "HCA",
+    "HD",
+    "HON",
+    "IBM",
+    "ICE",
+    "ITW",
+    "JNJ",
+    "JPM",
+    "KO",
+    "LIN",
+    "LLY",
+    "LMT",
+    "LOW",
+    "MA",
+    "MCD",
+    "MCO",
+    "MDT",
+    "MMC",
+    "MMM",
+    "MO",
+    "MRK",
+    "MS",
+    "NEE",
+    "NOC",
+    "ORCL",
+    "PEP",
+    "PFE",
+    "PG",
+    "PGR",
+    "PM",
+    "PLD",
+    "PNC",
+    "RTX",
+    "SCHW",
+    "SLB",
+    "SO",
+    "SPGI",
+    "SYK",
+    "T",
+    "TJX",
+    "TMO",
+    "UNH",
+    "UNP",
+    "UPS",
+    "USB",
+    "V",
+    "VZ",
+    "WFC",
+    "WM",
+    "WMT",
+    "XOM",
+    "ZTS",
+    "EW",
+    "HUM",
+    "NEM",
+    "OXY",
 ]
 
 # Build routing lookup  {symbol -> dataset}
 SYMBOL_DATASET: dict[str, str] = {
-    **{s: "XNAS.ITCH"   for s in NASDAQ_ITCH},
+    **{s: "XNAS.ITCH" for s in NASDAQ_ITCH},
     **{s: "XNYS.PILLAR" for s in XNYS_PILLAR},
 }
 
@@ -76,11 +188,11 @@ for _s in NASDAQ_ITCH + XNYS_PILLAR:
 
 # ── Column map ────────────────────────────────────────────────────────────────
 
-COLUMN_MAP = {"open": "open", "high": "high", "low": "low",
-              "close": "close", "volume": "volume"}
+COLUMN_MAP = {"open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"}
 
 
 # ── Download single symbol ─────────────────────────────────────────────────────
+
 
 def download_symbol(
     client,
@@ -91,12 +203,12 @@ def download_symbol(
 ) -> pd.DataFrame:
     print(f"  [{dataset}] {symbol}: {start} -> {end or 'today'} ...")
     data = client.timeseries.get_range(
-        dataset  = dataset,
-        schema   = SCHEMA,
-        symbols  = [symbol],
-        start    = start,
-        end      = end,
-        stype_in = "raw_symbol",
+        dataset=dataset,
+        schema=SCHEMA,
+        symbols=[symbol],
+        start=start,
+        end=end,
+        stype_in="raw_symbol",
     )
     df = data.to_df()
 
@@ -119,42 +231,37 @@ def download_symbol(
         df[col] = df[col].astype(float)
 
     df = df.sort_index().dropna(how="all")
-    print(
-        f"    {len(df):,} hourly bars  "
-        f"({df.index[0].date()} -> {df.index[-1].date()})"
-    )
+    print(f"    {len(df):,} hourly bars  ({df.index[0].date()} -> {df.index[-1].date()})")
     return df
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Download 10-year S&P 100 hourly OHLCV from Databento"
     )
     parser.add_argument(
-        "--symbols", nargs="+", default=None,
-        help=f"Symbols to download (default: all {len(DEFAULT_SYMBOLS)} S&P 100 symbols)"
+        "--symbols",
+        nargs="+",
+        default=None,
+        help=f"Symbols to download (default: all {len(DEFAULT_SYMBOLS)} S&P 100 symbols)",
     )
     parser.add_argument(
-        "--start", default=DEFAULT_START,
-        help=f"Start date ISO (default: {DEFAULT_START})"
+        "--start", default=DEFAULT_START, help=f"Start date ISO (default: {DEFAULT_START})"
+    )
+    parser.add_argument("--end", default=str(date.today()), help="End date ISO (default: today)")
+    parser.add_argument(
+        "--dataset", default=None, help="Override dataset for all symbols (e.g. XNAS.ITCH)"
     )
     parser.add_argument(
-        "--end", default=str(date.today()),
-        help="End date ISO (default: today)"
+        "--dry-run", action="store_true", help="Print routing table without downloading"
     )
     parser.add_argument(
-        "--dataset", default=None,
-        help="Override dataset for all symbols (e.g. XNAS.ITCH)"
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Print routing table without downloading"
-    )
-    parser.add_argument(
-        "--skip-existing", action="store_true",
-        help="Skip symbols that already have a parquet file in data/"
+        "--skip-existing",
+        action="store_true",
+        help="Skip symbols that already have a parquet file in data/",
     )
     args = parser.parse_args()
 

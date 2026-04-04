@@ -47,7 +47,7 @@ def build_transition_matrix(
     Returns:
         Probability matrix, shape (n_am, n_pm), rows sum to 1.
     """
-    counts = np.ones((n_am, n_pm), dtype=float)   # Laplace prior
+    counts = np.ones((n_am, n_pm), dtype=float)  # Laplace prior
     for a, p in zip(am_labels, pm_labels):
         counts[int(a), int(p)] += 1
     return counts / counts.sum(axis=1, keepdims=True)
@@ -73,7 +73,7 @@ def align_am_pm_labels(
     common = sorted(set(am_dates) & set(pm_dates))
     if not common:
         return np.array([]), np.array([]), np.array([])
-    dates  = np.array(common)
+    dates = np.array(common)
     a_labs = np.array([am_map[d] for d in common])
     p_labs = np.array([pm_map[d] for d in common])
     return dates, a_labs, p_labs
@@ -108,7 +108,7 @@ def make_daily_signals(
     signals = {}
     for date, am_label in zip(am_dates, am_labels):
         probs = transition[int(am_label)]
-        p_up   = float(probs[trend_up_indices].sum())
+        p_up = float(probs[trend_up_indices].sum())
         p_down = float(probs[trend_down_indices].sum())
         if p_up >= threshold and p_up > p_down:
             sig = 1
@@ -145,8 +145,8 @@ def expand_signal_to_bars(
     hours = df_index.hour
     pm_mask = (hours >= PM_START_UTC) & (hours < PM_END_UTC)
     # The 12:00 UTC bar itself is the AM-close bar; signal applies from 12:05 onward
-    at_cut  = (hours == PM_START_UTC) & (df_index.minute == 0)
-    active  = pm_mask & ~at_cut
+    at_cut = (hours == PM_START_UTC) & (df_index.minute == 0)
+    active = pm_mask & ~at_cut
 
     signal_ff[~active] = 0
     return signal_ff
@@ -178,16 +178,16 @@ class AMPMPipeline:
         n_pca_components: int = 15,
         random_state: int = 42,
     ) -> None:
-        self.n_am         = n_am
-        self.n_pm         = n_pm
-        self.threshold    = threshold
-        self.n_pca        = n_pca_components
+        self.n_am = n_am
+        self.n_pm = n_pm
+        self.threshold = threshold
+        self.n_pca = n_pca_components
         self.random_state = random_state
 
         self.am_model_: PCAArchetypes | None = None
         self.pm_model_: PCAArchetypes | None = None
-        self.transition_: np.ndarray | None  = None
-        self.trend_up_idx_:   list[int] = []
+        self.transition_: np.ndarray | None = None
+        self.trend_up_idx_: list[int] = []
         self.trend_down_idx_: list[int] = []
         self.am_descriptions_: list[dict] = []
         self.pm_descriptions_: list[dict] = []
@@ -218,13 +218,11 @@ class AMPMPipeline:
         self.am_descriptions_ = describe_archetypes(am_mats, am_labels, actual_n_am)
         self.pm_descriptions_ = describe_archetypes(pm_mats, pm_labels, actual_n_pm)
 
-        self.trend_up_idx_   = [
-            d["label"] for d in self.pm_descriptions_
-            if d.get("suggested_name") == "TrendUp"
+        self.trend_up_idx_ = [
+            d["label"] for d in self.pm_descriptions_ if d.get("suggested_name") == "TrendUp"
         ]
         self.trend_down_idx_ = [
-            d["label"] for d in self.pm_descriptions_
-            if d.get("suggested_name") == "TrendDown"
+            d["label"] for d in self.pm_descriptions_ if d.get("suggested_name") == "TrendDown"
         ]
 
         # Align dates and build transition matrix
@@ -249,7 +247,8 @@ class AMPMPipeline:
 
         am_labels = self.am_model_.predict(am_mats)
         return make_daily_signals(
-            am_labels, am_dates,
+            am_labels,
+            am_dates,
             self.transition_,
             self.trend_up_idx_,
             self.trend_down_idx_,

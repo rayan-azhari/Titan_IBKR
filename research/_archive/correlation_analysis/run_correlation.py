@@ -55,15 +55,29 @@ TMP.mkdir(exist_ok=True)
 
 DEFAULT_SYMBOLS = [
     # US equities
-    "SPY_D", "QQQ_D",
-    "UNH_D", "AMAT_D", "TXN_D", "INTC_D", "CAT_D", "WMT_D", "TMO_D",
+    "SPY_D",
+    "QQQ_D",
+    "UNH_D",
+    "AMAT_D",
+    "TXN_D",
+    "INTC_D",
+    "CAT_D",
+    "WMT_D",
+    "TMO_D",
     # Indices
-    "^FTSE_D", "^GDAXI_D",
+    "^FTSE_D",
+    "^GDAXI_D",
     # FX
-    "EUR_USD_D", "GBP_USD_D", "USD_JPY_D", "AUD_USD_D", "USD_CHF_D", "AUD_JPY_D",
+    "EUR_USD_D",
+    "GBP_USD_D",
+    "USD_JPY_D",
+    "AUD_USD_D",
+    "USD_CHF_D",
+    "AUD_JPY_D",
     # Commodities
     "GLD_D",
 ]
+
 
 # Short display labels (strip _D suffix for readability)
 def _label(sym: str) -> str:
@@ -138,8 +152,10 @@ def load_returns(
         full_n = len(s)
         lost = full_n - n_common
         if lost > 5:
-            print(f"  {sym}: {full_n} bars total, {lost} dropped to align "
-                  f"(individual start: {s.index[0].date()})")
+            print(
+                f"  {sym}: {full_n} bars total, {lost} dropped to align "
+                f"(individual start: {s.index[0].date()})"
+            )
 
     # Drop symbols with too few bars after alignment
     survivors = [c for c in aligned.columns if aligned[c].count() >= min_bars]
@@ -196,21 +212,26 @@ def classify_pairs(
             cls = "negative"
         else:
             cls = "uncorrelated"
-        rows.append({
-            "symbol_a": a,
-            "symbol_b": b,
-            "pearson_r": round(r_p, 4),
-            "spearman_r": round(r_s, 4),
-            "class": cls,
-            "n_obs": n_obs,
-        })
+        rows.append(
+            {
+                "symbol_a": a,
+                "symbol_b": b,
+                "pearson_r": round(r_p, 4),
+                "spearman_r": round(r_s, 4),
+                "class": cls,
+                "n_obs": n_obs,
+            }
+        )
     df = pd.DataFrame(rows).sort_values("pearson_r", key=abs, ascending=False)
     return df
 
 
-def identify_clusters(corr: pd.DataFrame, order: list[int], threshold: float) -> dict[int, list[str]]:
+def identify_clusters(
+    corr: pd.DataFrame, order: list[int], threshold: float
+) -> dict[int, list[str]]:
     """Label clusters by cutting the dendrogram at distance = 1 - threshold."""
     from scipy.cluster.hierarchy import fcluster
+
     symbols = list(corr.columns)
     n = len(symbols)
     if n < 3:
@@ -254,8 +275,7 @@ def plot_heatmap(corr_clustered: pd.DataFrame, out_path: Path, title: str) -> No
             for j in range(n):
                 val = mat[i, j]
                 color = "white" if abs(val) > 0.6 else "black"
-                ax.text(j, i, f"{val:.2f}", ha="center", va="center",
-                        fontsize=7, color=color)
+                ax.text(j, i, f"{val:.2f}", ha="center", va="center", fontsize=7, color=color)
 
     ax.set_title(title, fontsize=12, fontweight="bold", pad=12)
     plt.tight_layout()
@@ -276,10 +296,21 @@ def plot_dendrogram(corr: pd.DataFrame, out_path: Path, title: str, threshold: f
     fig_w = max(12, n * 0.4)
     fig, ax = plt.subplots(figsize=(fig_w, 7))
     cut = 1.0 - threshold
-    dendrogram(Z, labels=labels, ax=ax, color_threshold=cut,
-               leaf_rotation=45, leaf_font_size=9 if n > 20 else 10)
-    ax.axhline(cut, color="red", linewidth=1.0, linestyle="--",
-               label=f"Cut at 1-r={cut:.1f} (r={threshold})")
+    dendrogram(
+        Z,
+        labels=labels,
+        ax=ax,
+        color_threshold=cut,
+        leaf_rotation=45,
+        leaf_font_size=9 if n > 20 else 10,
+    )
+    ax.axhline(
+        cut,
+        color="red",
+        linewidth=1.0,
+        linestyle="--",
+        label=f"Cut at 1-r={cut:.1f} (r={threshold})",
+    )
     ax.set_title(title, fontsize=12, fontweight="bold")
     ax.set_ylabel("Ward linkage distance")
     ax.legend(fontsize=9)
@@ -305,17 +336,23 @@ def print_summary(
 
     def fmt_pair(row: pd.Series) -> str:
         a, b = _label(row["symbol_a"]), _label(row["symbol_b"])
-        return f"  {a:<14} <-> {b:<14}  r={row['pearson_r']:+.4f}  (spearman={row['spearman_r']:+.4f})"
+        return (
+            f"  {a:<14} <-> {b:<14}  r={row['pearson_r']:+.4f}  (spearman={row['spearman_r']:+.4f})"
+        )
 
-    print(f"\n{'='*65}")
+    print(f"\n{'=' * 65}")
     print(f"CORRELATION SUMMARY  (n_obs={n_obs}, threshold=+/-{threshold})")
-    print(f"{'='*65}")
+    print(f"{'=' * 65}")
 
-    print(f"\nTop POSITIVE pairs  (r > +{threshold})  [{len(pairs[pairs['class']=='positive'])} total]")
+    print(
+        f"\nTop POSITIVE pairs  (r > +{threshold})  [{len(pairs[pairs['class'] == 'positive'])} total]"
+    )
     for _, row in pos.iterrows():
         print(fmt_pair(row))
 
-    print(f"\nTop NEGATIVE pairs  (r < -{threshold})  [{len(pairs[pairs['class']=='negative'])} total]")
+    print(
+        f"\nTop NEGATIVE pairs  (r < -{threshold})  [{len(pairs[pairs['class'] == 'negative'])} total]"
+    )
     for _, row in neg.iterrows():
         print(fmt_pair(row))
 
@@ -337,16 +374,28 @@ def print_summary(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--symbols", nargs="+", default=None,
-                        help="Parquet stems (without .parquet). Default: curated cross-asset set.")
-    parser.add_argument("--all", action="store_true",
-                        help="Use all *_D.parquet files in data/")
+    parser.add_argument(
+        "--symbols",
+        nargs="+",
+        default=None,
+        help="Parquet stems (without .parquet). Default: curated cross-asset set.",
+    )
+    parser.add_argument("--all", action="store_true", help="Use all *_D.parquet files in data/")
     parser.add_argument("--start", default=None, help="Start date e.g. 2016-01-01")
     parser.add_argument("--end", default=None, help="End date e.g. 2024-12-31")
-    parser.add_argument("--threshold", type=float, default=0.3,
-                        help="Abs correlation threshold for positive/negative/uncorrelated (default 0.3)")
-    parser.add_argument("--min-bars", type=int, default=252, dest="min_bars",
-                        help="Minimum bars in common window to include a symbol (default 252)")
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.3,
+        help="Abs correlation threshold for positive/negative/uncorrelated (default 0.3)",
+    )
+    parser.add_argument(
+        "--min-bars",
+        type=int,
+        default=252,
+        dest="min_bars",
+        help="Minimum bars in common window to include a symbol (default 252)",
+    )
     parser.add_argument("--tag", default="", help="Optional output filename tag")
     args = parser.parse_args()
 

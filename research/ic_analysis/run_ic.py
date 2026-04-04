@@ -350,6 +350,7 @@ def _tied_rank(x: np.ndarray) -> np.ndarray:
         i = j + 1
     return ranks
 
+
 @njit
 def _rolling_spearman_numba(sig_vals: np.ndarray, fwd_vals: np.ndarray, window: int) -> np.ndarray:
     """Numba-compiled exact rolling Spearman calculation."""
@@ -368,8 +369,8 @@ def _rolling_spearman_numba(sig_vals: np.ndarray, fwd_vals: np.ndarray, window: 
 
         var_s, var_f = 0.0, 0.0
         for k in range(window):
-            var_s += (ws[k] - mean_ws)**2
-            var_f += (wf[k] - mean_wf)**2
+            var_s += (ws[k] - mean_ws) ** 2
+            var_f += (wf[k] - mean_wf) ** 2
 
         if var_s < 1e-14 or var_f < 1e-14:
             continue
@@ -395,9 +396,10 @@ def _rolling_spearman_numba(sig_vals: np.ndarray, fwd_vals: np.ndarray, window: 
         if var_rs < 1e-14 or var_rf < 1e-14:
             continue
 
-        out[i-1] = cov / np.sqrt(var_rs * var_rf)
+        out[i - 1] = cov / np.sqrt(var_rs * var_rf)
 
     return out
+
 
 def _rolling_ic_series(
     sig: pd.Series,
@@ -491,8 +493,7 @@ def build_rolling_ic_map(
             _rolling_spearman_numba(first[1][:window], first[2][:window], window)
 
     results: list[tuple[str, np.ndarray]] = Parallel(n_jobs=n_jobs, backend="loky")(
-        delayed(_compute_one_rolling_ic)(sig_col, sv, fv, w)
-        for sig_col, sv, fv, w in tasks
+        delayed(_compute_one_rolling_ic)(sig_col, sv, fv, w) for sig_col, sv, fv, w in tasks
     )
     return dict(results)
 
@@ -559,9 +560,7 @@ def compute_icir_nw(
         if rolling_ic_map is not None:
             roll_ic_clean = rolling_ic_map.get(sig_col, np.array([]))
         else:
-            roll_ic_clean = _rolling_ic_series(
-                signals[sig_col], fwd_returns[fwd_col], window
-            )
+            roll_ic_clean = _rolling_ic_series(signals[sig_col], fwd_returns[fwd_col], window)
 
         if len(roll_ic_clean) < 30:
             icirs_nw[sig_col] = np.nan

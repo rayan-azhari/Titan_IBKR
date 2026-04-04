@@ -20,8 +20,8 @@ from titan.strategies.ml.features import atr
 # Session helpers
 # ---------------------------------------------------------------------------
 
-LONDON_HOUR  = 7   # 07:00 UTC
-NY_HOUR      = 13  # 13:00 UTC
+LONDON_HOUR = 7  # 07:00 UTC
+NY_HOUR = 13  # 13:00 UTC
 US_OPEN_HOUR = 14  # 14:00 UTC — nearest H1 bar to NYSE open (09:30 ET)
 
 
@@ -68,15 +68,15 @@ def session_mask(index: pd.DatetimeIndex, sessions: list[str]) -> pd.Series:
     hours = _utc_hours(index)
     mask = pd.Series(False, index=index)
     if "london_core" in sessions:
-        mask |= (hours >= 7) & (hours < 12)    # 07:00-12:00 UTC
+        mask |= (hours >= 7) & (hours < 12)  # 07:00-12:00 UTC
     elif "london" in sessions:
         mask |= (hours >= 7) & (hours < 16)
     if "ny" in sessions:
         mask |= (hours >= 13) & (hours < 21)
     if "us_regular" in sessions:
-        mask |= (hours >= 14) & (hours < 21)   # 09:30-16:00 ET = 14:30-21:00 UTC
+        mask |= (hours >= 14) & (hours < 21)  # 09:30-16:00 ET = 14:30-21:00 UTC
     if "us_open" in sessions:
-        mask |= (hours >= 14) & (hours < 17)   # first 3 hours: highest MR tendency
+        mask |= (hours >= 14) & (hours < 17)  # first 3 hours: highest MR tendency
     return mask
 
 

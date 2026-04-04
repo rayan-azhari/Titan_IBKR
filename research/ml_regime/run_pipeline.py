@@ -50,7 +50,7 @@ TIMEFRAME_PRESETS = {
     "D": {
         "vol_span": 20,
         "hmm_min_seq": 60,
-        "fast_ma": 5,       # faster MAs -> ~200 IS events (vs 77 with 10/30)
+        "fast_ma": 5,  # faster MAs -> ~200 IS events (vs 77 with 10/30)
         "slow_ma": 20,
         "fees": 0.001,
         "slippage": 0.001,
@@ -125,8 +125,8 @@ def label_ma_trades(close: pd.Series, fast: int, slow: int) -> pd.DataFrame:
     fast_above = fast_ma > slow_ma
 
     entry_cross = fast_above & ~fast_above.shift(1).fillna(False)
-    entry_signal = entry_cross.shift(1).fillna(False)   # execute next bar
-    exit_cond = ~fast_above                              # fast back below slow
+    entry_signal = entry_cross.shift(1).fillna(False)  # execute next bar
+    exit_cond = ~fast_above  # fast back below slow
 
     entry_locs = np.where(entry_signal.values)[0]
     records = []
@@ -135,15 +135,14 @@ def label_ma_trades(close: pd.Series, fast: int, slow: int) -> pd.DataFrame:
         entry_t = close.index[ei]
         entry_p = float(close.iloc[ei])
 
-        below_after = exit_cond.iloc[ei + 1:]
+        below_after = exit_cond.iloc[ei + 1 :]
         hit = np.where(below_after.values)[0]
         xi = ei + 1 + int(hit[0]) if len(hit) > 0 else len(close) - 1
 
         exit_t = close.index[xi]
         ret = float(close.iloc[xi]) / entry_p - 1.0
         records.append(
-            {"entry_time": entry_t, "exit_time": exit_t,
-             "label": int(ret > 0), "trade_return": ret}
+            {"entry_time": entry_t, "exit_time": exit_t, "label": int(ret > 0), "trade_return": ret}
         )
 
     if not records:
@@ -186,15 +185,19 @@ def build_all_posteriors(
     oos = full_arr[is_cutoff:]
     if len(oos) == 0:
         return is_post
-    warmup = full_arr[max(0, is_cutoff - hmm_min_seq):is_cutoff]
+    warmup = full_arr[max(0, is_cutoff - hmm_min_seq) : is_cutoff]
     combined = _canonical_posteriors(detector, np.vstack([warmup, oos]))
-    return np.vstack([is_post, combined[len(warmup):]])
+    return np.vstack([is_post, combined[len(warmup) :]])
 
 
 def _run_pf(close, entries, exits, fees, slippage, freq) -> vbt.Portfolio:
     return vbt.Portfolio.from_signals(
-        close, entries=entries, exits=exits,
-        fees=fees, slippage=slippage, freq=freq,
+        close,
+        entries=entries,
+        exits=exits,
+        fees=fees,
+        slippage=slippage,
+        freq=freq,
     )
 
 
@@ -213,25 +216,31 @@ def run_pipeline(
     if preset is None:
         raise ValueError(f"Unknown timeframe '{timeframe}'. Choose: {list(TIMEFRAME_PRESETS)}")
 
-    vol_span   = preset["vol_span"]
+    vol_span = preset["vol_span"]
     hmm_min_seq = preset["hmm_min_seq"]
-    fast       = fast_ma if fast_ma is not None else preset["fast_ma"]
-    slow       = slow_ma if slow_ma is not None else preset["slow_ma"]
-    fees       = preset["fees"]
-    slippage   = preset["slippage"]
-    vbt_freq   = preset["vbt_freq"]
+    fast = fast_ma if fast_ma is not None else preset["fast_ma"]
+    slow = slow_ma if slow_ma is not None else preset["slow_ma"]
+    fees = preset["fees"]
+    slippage = preset["slippage"]
+    vbt_freq = preset["vbt_freq"]
 
-    logger.info(f"Timeframe={timeframe} | fast_ma={fast}, slow_ma={slow}, hmm_min_seq={hmm_min_seq}")
+    logger.info(
+        f"Timeframe={timeframe} | fast_ma={fast}, slow_ma={slow}, hmm_min_seq={hmm_min_seq}"
+    )
 
     # ── 1. Load ───────────────────────────────────────────────────────────────
     close = load_close(instrument, timeframe)
 
     # ── 2. IS/OOS split ───────────────────────────────────────────────────────
     is_cutoff_price = int(len(close) * is_frac)
-    is_close  = close.iloc[:is_cutoff_price]
+    is_close = close.iloc[:is_cutoff_price]
     oos_close = close.iloc[is_cutoff_price:]
-    logger.info(f"IS:  {len(is_close)} bars ({is_close.index[0].date()} - {is_close.index[-1].date()})")
-    logger.info(f"OOS: {len(oos_close)} bars ({oos_close.index[0].date()} - {oos_close.index[-1].date()})")
+    logger.info(
+        f"IS:  {len(is_close)} bars ({is_close.index[0].date()} - {is_close.index[-1].date()})"
+    )
+    logger.info(
+        f"OOS: {len(oos_close)} bars ({oos_close.index[0].date()} - {oos_close.index[-1].date()})"
+    )
 
     # ── 3. Features ───────────────────────────────────────────────────────────
     logger.info("Phase 1: Feature engineering...")
@@ -239,7 +248,7 @@ def run_pipeline(
     full_feat_df = engine.batch(close).dropna()
 
     is_cutoff_feat = int(full_feat_df.index.searchsorted(is_close.index[-1], side="right"))
-    is_feat_df  = full_feat_df.iloc[:is_cutoff_feat]
+    is_feat_df = full_feat_df.iloc[:is_cutoff_feat]
     oos_feat_df = full_feat_df.iloc[is_cutoff_feat:]
     full_feat_arr = full_feat_df.values
     logger.info(f"Features: {len(full_feat_df)} bars. IS={len(is_feat_df)}, OOS={len(oos_feat_df)}")
@@ -252,12 +261,15 @@ def run_pipeline(
         logger.info(f"  {desc}")
 
     full_regimes = detector.predict_sequence(full_feat_arr)
-    regime_dist  = np.bincount(full_regimes[:is_cutoff_feat], minlength=N_HMM_STATES) / is_cutoff_feat
+    regime_dist = (
+        np.bincount(full_regimes[:is_cutoff_feat], minlength=N_HMM_STATES) / is_cutoff_feat
+    )
     logger.info(f"  IS regime dist: {np.round(regime_dist, 3).tolist()}")
 
     all_posteriors = build_all_posteriors(detector, full_feat_arr, is_cutoff_feat, hmm_min_seq)
-    posteriors_df  = pd.DataFrame(
-        all_posteriors, index=full_feat_df.index,
+    posteriors_df = pd.DataFrame(
+        all_posteriors,
+        index=full_feat_df.index,
         columns=[f"regime_prob_{i}" for i in range(N_HMM_STATES)],
     )
     spread_feat = ma_spread_feature(close, fast, slow).reindex(full_feat_df.index)
@@ -269,13 +281,11 @@ def run_pipeline(
     is_labels = is_labels[is_labels.index.isin(is_feat_df.index)]
 
     if len(is_labels) == 0:
-        raise RuntimeError(
-            f"No IS trades generated. Check MA params (fast={fast}, slow={slow})."
-        )
+        raise RuntimeError(f"No IS trades generated. Check MA params (fast={fast}, slow={slow}).")
 
     n_win = int(is_labels["label"].sum())
     logger.info(
-        f"  IS trades: {len(is_labels)} | wins={n_win} ({n_win/len(is_labels):.1%}) "
+        f"  IS trades: {len(is_labels)} | wins={n_win} ({n_win / len(is_labels):.1%}) "
         f"| mean return={is_labels['trade_return'].mean():.4f}"
     )
 
@@ -290,7 +300,7 @@ def run_pipeline(
         ],
         axis=1,
     ).dropna()
-    meta_y     = is_labels["label"].reindex(X.index).dropna().astype(int)
+    meta_y = is_labels["label"].reindex(X.index).dropna().astype(int)
     exit_times = is_labels.loc[X.index, "exit_time"]
 
     logger.info(f"  X: {X.shape}, cols: {X.columns.tolist()}")
@@ -302,7 +312,9 @@ def run_pipeline(
     ml.fit(X, meta_y, exit_times, bar_times=is_feat_df.index)
 
     cv = ml.cv_results
-    logger.info(f"  Mean CV AUC: {cv.get('mean_auc', float('nan')):.4f} +/- {cv.get('std_auc', float('nan')):.4f}")
+    logger.info(
+        f"  Mean CV AUC: {cv.get('mean_auc', float('nan')):.4f} +/- {cv.get('std_auc', float('nan')):.4f}"
+    )
     logger.info(f"  OOF AUC:   {cv.get('oof_auc')}")
     logger.info(f"  OOF F1:    {cv.get('oof_f1', 0.0):.4f}")
     logger.info(f"  Threshold: {cv.get('optimal_threshold'):.4f}")
@@ -312,17 +324,19 @@ def run_pipeline(
     logger.info("Phase 6: OOS backtest (raw MA vs ML-filtered)...")
 
     oos_entries_all = ma_entry_series(close, fast, slow).reindex(oos_close.index).fillna(False)
-    oos_exits_all   = ma_exit_series(close, fast, slow).reindex(oos_close.index).fillna(False)
+    oos_exits_all = ma_exit_series(close, fast, slow).reindex(oos_close.index).fillna(False)
 
     # Variant 1: raw MA strategy
     raw_pf = _run_pf(oos_close, oos_entries_all, oos_exits_all, fees, slippage, vbt_freq)
 
     # Variant 2: ML filter applied to crossover entry bars
-    oos_entry_times = oos_entries_all[oos_entries_all & oos_entries_all.index.isin(oos_feat_df.index)].index
+    oos_entry_times = oos_entries_all[
+        oos_entries_all & oos_entries_all.index.isin(oos_feat_df.index)
+    ].index
     logger.info(f"  OOS crossover events: {len(oos_entry_times)}")
 
     ml_pf = None
-    n_ml  = 0
+    n_ml = 0
     if len(oos_entry_times) > 0:
         X_oos = pd.concat(
             [
@@ -335,7 +349,9 @@ def run_pipeline(
         if len(X_oos) > 0:
             approved = X_oos.index[ml.predict(X_oos).astype(bool)]
             n_ml = len(approved)
-            logger.info(f"  ML-approved: {n_ml} ({n_ml/max(len(oos_entry_times),1):.1%} pass rate)")
+            logger.info(
+                f"  ML-approved: {n_ml} ({n_ml / max(len(oos_entry_times), 1):.1%} pass rate)"
+            )
             if n_ml > 0:
                 ml_entries = pd.Series(False, index=oos_close.index)
                 ml_entries.loc[approved] = True
@@ -343,14 +359,16 @@ def run_pipeline(
 
     # IS Sharpe on raw MA (for OOS/IS ratio)
     is_entries_s = ma_entry_series(is_close, fast, slow)
-    is_exits_s   = ma_exit_series(is_close, fast, slow)
+    is_exits_s = ma_exit_series(is_close, fast, slow)
     is_pf = _run_pf(is_close, is_entries_s, is_exits_s, fees, slippage, vbt_freq)
     is_sharpe = float(is_pf.sharpe_ratio())
 
     # B&H OOS
     bh_e = pd.Series(False, index=oos_close.index)
     bh_e.iloc[0] = True
-    bh_pf     = _run_pf(oos_close, bh_e, pd.Series(False, index=oos_close.index), fees, slippage, vbt_freq)
+    bh_pf = _run_pf(
+        oos_close, bh_e, pd.Series(False, index=oos_close.index), fees, slippage, vbt_freq
+    )
     bh_sharpe = float(bh_pf.sharpe_ratio())
     bh_return = float(bh_pf.total_return())
 
@@ -380,8 +398,8 @@ def run_pipeline(
 
     results_df = pd.DataFrame(rows)
     raw_sharpe = rows[0]["sharpe"]
-    ml_sharpe  = rows[1]["sharpe"] if ml_pf is not None else None
-    ratio      = (ml_sharpe / is_sharpe) if (ml_sharpe and is_sharpe > 0) else None
+    ml_sharpe = rows[1]["sharpe"] if ml_pf is not None else None
+    ratio = (ml_sharpe / is_sharpe) if (ml_sharpe and is_sharpe > 0) else None
 
     print("\n" + "=" * 70)
     print(f"ML REGIME STRATEGY — {instrument} {timeframe} (fast={fast}, slow={slow})")
@@ -402,7 +420,9 @@ def run_pipeline(
     if cv.get("oof_auc") is not None and cv["oof_auc"] < 0.52:
         print("\n[NOTE] OOF AUC near 0.5 — ML adds marginal signal.")
     if ml_sharpe is not None and ml_sharpe < raw_sharpe:
-        print(f"\n[NOTE] ML filter ({ml_sharpe:.3f}) below raw MA ({raw_sharpe:.3f}) — filter is not adding value.")
+        print(
+            f"\n[NOTE] ML filter ({ml_sharpe:.3f}) below raw MA ({raw_sharpe:.3f}) — filter is not adding value."
+        )
     if ml_sharpe is not None and ml_sharpe < bh_sharpe:
         print(f"\n[NOTE] ML Sharpe ({ml_sharpe:.3f}) below B&H ({bh_sharpe:.3f}).")
 

@@ -64,19 +64,19 @@ def compute_cross_sectional_ic(
                 continue
             fwd = compute_forward_returns(df["close"], [horizon])
             fwd_col = f"fwd_{horizon}"
-            combo = pd.DataFrame({
-                "signal": signals[signal_name],
-                "fwd": fwd[fwd_col] if fwd_col in fwd.columns else np.nan,
-            })
+            combo = pd.DataFrame(
+                {
+                    "signal": signals[signal_name],
+                    "fwd": fwd[fwd_col] if fwd_col in fwd.columns else np.nan,
+                }
+            )
             all_data[inst] = combo.dropna()
         except Exception as exc:
             logger.warning("Could not load %s: %s", inst, exc)
             continue
 
     if len(all_data) < 3:
-        raise ValueError(
-            f"Need ≥3 instruments for cross-sectional IC, got {len(all_data)}"
-        )
+        raise ValueError(f"Need ≥3 instruments for cross-sectional IC, got {len(all_data)}")
 
     # Build signal and fwd matrices: rows=dates, cols=instruments.
     sig_frames = {inst: d["signal"] for inst, d in all_data.items()}
@@ -104,11 +104,11 @@ def compute_cross_sectional_ic(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Cross-Sectional IC for multi-instrument universe"
-    )
+    parser = argparse.ArgumentParser(description="Cross-Sectional IC for multi-instrument universe")
     parser.add_argument(
-        "--instruments", nargs="+", required=True,
+        "--instruments",
+        nargs="+",
+        required=True,
         help="List of instrument names, e.g. SPY QQQ AAPL MSFT",
     )
     parser.add_argument("--signal", required=True, help="Signal name, e.g. accel_rsi14")

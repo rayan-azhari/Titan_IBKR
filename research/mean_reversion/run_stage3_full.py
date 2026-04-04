@@ -48,8 +48,8 @@ from plotly.subplots import make_subplots
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-DATA_DIR    = PROJECT_ROOT / "data"
-MODELS_DIR  = PROJECT_ROOT / "models"
+DATA_DIR = PROJECT_ROOT / "data"
+MODELS_DIR = PROJECT_ROOT / "models"
 REPORTS_DIR = PROJECT_ROOT / ".tmp" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -75,26 +75,26 @@ CONFIG_PATH = PROJECT_ROOT / "config" / "eurusd_mr.toml"
 with open(CONFIG_PATH, "rb") as f:
     CFG = tomllib.load(f)
 
-PAIR              = CFG["base"]["instrument"]
-TF                = CFG["base"]["timeframe"]
-ANCHOR_SESSIONS   = CFG["vwap"]["anchor_sessions"]
-TIERS_PCT         = CFG["signal"]["tiers_pct"]
-TIER_SIZES        = CFG["signal"]["tier_sizes"]
-PROFIT_MARGIN     = CFG["signal"]["profit_margin"]
-REVERSION_PCT     = CFG["signal"]["reversion_target_pct"]
-SESSION_FILTER    = CFG["signal"]["session_filter"]
-INVALIDATION_PCT  = CFG["signal"]["invalidation_pct"]
-NY_CLOSE_UTC      = CFG["risk"]["ny_close_utc"]
+PAIR = CFG["base"]["instrument"]
+TF = CFG["base"]["timeframe"]
+ANCHOR_SESSIONS = CFG["vwap"]["anchor_sessions"]
+TIERS_PCT = CFG["signal"]["tiers_pct"]
+TIER_SIZES = CFG["signal"]["tier_sizes"]
+PROFIT_MARGIN = CFG["signal"]["profit_margin"]
+REVERSION_PCT = CFG["signal"]["reversion_target_pct"]
+SESSION_FILTER = CFG["signal"]["session_filter"]
+INVALIDATION_PCT = CFG["signal"]["invalidation_pct"]
+NY_CLOSE_UTC = CFG["risk"]["ny_close_utc"]
 
 IS_SPLIT = 0.70
 MC_N_SHUFFLES = 500
 MC_PERCENTILE = 5.0
 
 # Quality gate thresholds
-GATE_OOS_SHARPE     = 1.0
-GATE_OOS_IS_RATIO   = 0.5
-GATE_WIN_RATE       = 0.40
-GATE_MAX_DD         = 0.25
+GATE_OOS_SHARPE = 1.0
+GATE_OOS_IS_RATIO = 0.5
+GATE_WIN_RATE = 0.40
+GATE_MAX_DD = 0.25
 GATE_MIN_OOS_TRADES = 200
 
 
@@ -163,54 +163,61 @@ def run_full_pipeline(
         sess_mask = sig.session_mask(df.index, parts)
 
     # VWAP and deviation
-    vwap      = sig.compute_anchored_vwap(df, anchor_sessions=ANCHOR_SESSIONS)
+    vwap = sig.compute_anchored_vwap(df, anchor_sessions=ANCHOR_SESSIONS)
     deviation = sig.compute_deviation(df, vwap)
 
     # Percentile levels
-    levels    = sig.percentile_levels(deviation, pct_window, pcts=TIERS_PCT)
-    inv_lvl   = sig.invalidation_level(deviation, pct_window, pct=INVALIDATION_PCT)
-    tier1_lvl = levels.iloc[:, 0]   # first (lowest) tier level for reversion TP
+    levels = sig.percentile_levels(deviation, pct_window, pcts=TIERS_PCT)
+    inv_lvl = sig.invalidation_level(deviation, pct_window, pct=INVALIDATION_PCT)
+    tier1_lvl = levels.iloc[:, 0]  # first (lowest) tier level for reversion TP
 
     # Regime filter
-    obs       = reg.build_observations(close)
-    model     = reg.load_hmm(hmm_model_path)
+    obs = reg.build_observations(close)
+    model = reg.load_hmm(hmm_model_path)
     ranging_i = reg.ranging_state_index(model)
-    post_arr  = reg.rolling_regime_posterior(model, obs, ranging_i, min_bars=100)
-    post      = pd.Series(post_arr, index=df.index)
-    hurst     = compute_hurst_h1_ffill(df)
-    gate      = reg.regime_gate(post, hurst, p_thresh=p_thresh, hurst_thresh=hurst_thresh)
-    gate      = gate & sess_mask
+    post_arr = reg.rolling_regime_posterior(model, obs, ranging_i, min_bars=100)
+    post = pd.Series(post_arr, index=df.index)
+    hurst = compute_hurst_h1_ffill(df)
+    gate = reg.regime_gate(post, hurst, p_thresh=p_thresh, hurst_thresh=hurst_thresh)
+    gate = gate & sess_mask
 
     # Grid entries
     grid_entries = exe.build_grid_entries(deviation, levels, gate, tier_sizes)
 
     # Basket VWAP exit (secondary TP: close vs average entry price)
-    basket_exit = exe.compute_basket_vwap_exit(
-        close, grid_entries, profit_margin, direction="both"
-    )
+    basket_exit = exe.compute_basket_vwap_exit(close, grid_entries, profit_margin, direction="both")
 
     # Direction-aware combined exits (primary TP: partial reversion)
     long_exit, short_exit = rsk.build_combined_exit(
-        basket_exit, deviation, inv_lvl, df.index,
-        tier1_level=tier1_lvl, reversion_pct=reversion_pct,
+        basket_exit,
+        deviation,
+        inv_lvl,
+        df.index,
+        tier1_level=tier1_lvl,
+        reversion_pct=reversion_pct,
         cutoff_hour_utc=NY_CLOSE_UTC,
     )
 
     # Sub-portfolios
     sub_pfs = exe.build_subportfolios(
-        close, grid_entries, long_exit, short_exit,
-        spread.reindex(df.index), total_cash=10_000.0,
+        close,
+        grid_entries,
+        long_exit,
+        short_exit,
+        spread.reindex(df.index),
+        total_cash=10_000.0,
     )
 
     daily_ret = exe.combine_portfolio_returns(sub_pfs)
-    sharpe    = exe.compute_combined_sharpe(daily_ret)
+    sharpe = exe.compute_combined_sharpe(daily_ret)
 
     # Aggregate metrics from sub-portfolios
     total_trades = sum(int(pf.trades.count()) for pf in sub_pfs)
-    avg_win_rate = float(np.mean([float(pf.trades.win_rate()) for pf in sub_pfs
-                                   if pf.trades.count() > 0]))
-    worst_dd     = float(max(float(pf.max_drawdown()) for pf in sub_pfs))
-    weeks        = (df.index[-1] - df.index[0]).days / 7
+    avg_win_rate = float(
+        np.mean([float(pf.trades.win_rate()) for pf in sub_pfs if pf.trades.count() > 0])
+    )
+    worst_dd = float(max(float(pf.max_drawdown()) for pf in sub_pfs))
+    weeks = (df.index[-1] - df.index[0]).days / 7
 
     return {
         "label": label,
@@ -281,30 +288,37 @@ def walk_forward(
 
     for i in range(is_months, len(dates) - oos_months):
         is_start = dates[i - is_months]
-        is_end   = dates[i]
-        oos_end  = dates[i + oos_months]
+        is_end = dates[i]
+        oos_end = dates[i + oos_months]
 
-        df_is  = df[is_start:is_end]
+        df_is = df[is_start:is_end]
         df_oos = df[is_end:oos_end]
 
         if len(df_is) < 500 or len(df_oos) < 50:
             continue
 
         metrics_oos = run_full_pipeline(
-            df_oos, pct_window, p_thresh, hurst_thresh, hmm_model_path,
-            tier_sizes, profit_margin,
+            df_oos,
+            pct_window,
+            p_thresh,
+            hurst_thresh,
+            hmm_model_path,
+            tier_sizes,
+            profit_margin,
             spread=spread.reindex(df_oos.index),
             label=f"wfo_oos_{i}",
             session_filter=session_filter,
             reversion_pct=reversion_pct,
         )
-        fold_results.append({
-            "fold": i,
-            "oos_start": str(df_oos.index[0].date()),
-            "oos_end": str(df_oos.index[-1].date()),
-            "sharpe": metrics_oos["sharpe"],
-            "n_trades": metrics_oos["n_trades"],
-        })
+        fold_results.append(
+            {
+                "fold": i,
+                "oos_start": str(df_oos.index[0].date()),
+                "oos_end": str(df_oos.index[-1].date()),
+                "sharpe": metrics_oos["sharpe"],
+                "n_trades": metrics_oos["n_trades"],
+            }
+        )
         if len(metrics_oos["daily_returns"]) > 0:
             stitched.append(metrics_oos["daily_returns"])
 
@@ -324,18 +338,17 @@ def evaluate_gates(
     stress_oos_sharpe: float,
     wfo_fold_results: list[dict],
 ) -> dict[str, bool]:
-    ratio = (oos_metrics["sharpe"] / is_metrics["sharpe"]
-             if is_metrics["sharpe"] != 0 else 0.0)
+    ratio = oos_metrics["sharpe"] / is_metrics["sharpe"] if is_metrics["sharpe"] != 0 else 0.0
     neg_folds = sum(1 for f in wfo_fold_results if f["sharpe"] < 0)
 
     gates = {
-        "G_oos_sharpe":    oos_metrics["sharpe"] > GATE_OOS_SHARPE,
-        "G_oos_is_ratio":  ratio > GATE_OOS_IS_RATIO,
-        "G_win_rate":      oos_metrics["win_rate"] > GATE_WIN_RATE,
-        "G_max_dd":        oos_metrics["max_dd"] < GATE_MAX_DD,
-        "G_min_trades":    oos_metrics["n_trades"] >= GATE_MIN_OOS_TRADES,
-        "G1_monte_carlo":  mc_result["pass"],
-        "G3_slippage":     stress_oos_sharpe > 0.5,
+        "G_oos_sharpe": oos_metrics["sharpe"] > GATE_OOS_SHARPE,
+        "G_oos_is_ratio": ratio > GATE_OOS_IS_RATIO,
+        "G_win_rate": oos_metrics["win_rate"] > GATE_WIN_RATE,
+        "G_max_dd": oos_metrics["max_dd"] < GATE_MAX_DD,
+        "G_min_trades": oos_metrics["n_trades"] >= GATE_MIN_OOS_TRADES,
+        "G1_monte_carlo": mc_result["pass"],
+        "G3_slippage": stress_oos_sharpe > 0.5,
         "G4_wfo_neg_folds": neg_folds <= 2,
     }
     return gates
@@ -356,14 +369,14 @@ def main() -> None:
     s2 = sm.get_stage2()
     if s1 is None or s2 is None:
         print("WARNING: Stage 1/2 state missing.  Using config defaults.")
-        pct_window        = CFG["signal"]["percentile_window"]
-        p_thresh          = CFG["regime"]["p_ranging_thresh"]
-        hurst_thresh      = CFG["regime"]["hurst_thresh"]
-        hmm_model_path    = str(MODELS_DIR / "eurusd_mr_hmm.joblib")
+        pct_window = CFG["signal"]["percentile_window"]
+        p_thresh = CFG["regime"]["p_ranging_thresh"]
+        hurst_thresh = CFG["regime"]["hurst_thresh"]
+        hmm_model_path = str(MODELS_DIR / "eurusd_mr_hmm.joblib")
     else:
-        pct_window     = s1["best_pct_window"]
-        p_thresh       = s2["p_thresh"]
-        hurst_thresh   = s2["hurst_thresh"]
+        pct_window = s1["best_pct_window"]
+        p_thresh = s2["p_thresh"]
+        hurst_thresh = s2["hurst_thresh"]
         hmm_model_path = s2["hmm_model_path"]
         print(f"  pct_window={pct_window}  p_thresh={p_thresh}  hurst_thresh={hurst_thresh}")
 
@@ -372,36 +385,55 @@ def main() -> None:
         print("       Run Stage 2 first.")
         sys.exit(1)
 
-    df     = load_m5(PAIR)
+    df = load_m5(PAIR)
     spread = build_spread_series(df, PAIR)
 
-    is_end   = int(len(df) * IS_SPLIT)
-    df_is    = df.iloc[:is_end]
-    df_oos   = df.iloc[is_end:]
+    is_end = int(len(df) * IS_SPLIT)
+    df_is = df.iloc[:is_end]
+    df_oos = df.iloc[is_end:]
     print(f"\n  IS:  {len(df_is):,} bars  OOS: {len(df_oos):,} bars")
 
     # ── IS and OOS backtests (london+ny session filter) ───────────────────
     print("\n[1/6] IS backtest...")
     is_metrics = run_full_pipeline(
-        df_is, pct_window, p_thresh, hurst_thresh, hmm_model_path,
-        TIER_SIZES, PROFIT_MARGIN,
+        df_is,
+        pct_window,
+        p_thresh,
+        hurst_thresh,
+        hmm_model_path,
+        TIER_SIZES,
+        PROFIT_MARGIN,
         spread=spread.reindex(df_is.index),
-        label="IS", session_filter=SESSION_FILTER, reversion_pct=REVERSION_PCT,
+        label="IS",
+        session_filter=SESSION_FILTER,
+        reversion_pct=REVERSION_PCT,
     )
-    print(f"  IS  Sharpe={is_metrics['sharpe']:+.2f}  MaxDD={is_metrics['max_dd']:.2%}  "
-          f"WR={is_metrics['win_rate']:.2%}  n={is_metrics['n_trades']}")
+    print(
+        f"  IS  Sharpe={is_metrics['sharpe']:+.2f}  MaxDD={is_metrics['max_dd']:.2%}  "
+        f"WR={is_metrics['win_rate']:.2%}  n={is_metrics['n_trades']}"
+    )
 
     print("\n[2/6] OOS backtest...")
     oos_metrics = run_full_pipeline(
-        df_oos, pct_window, p_thresh, hurst_thresh, hmm_model_path,
-        TIER_SIZES, PROFIT_MARGIN,
+        df_oos,
+        pct_window,
+        p_thresh,
+        hurst_thresh,
+        hmm_model_path,
+        TIER_SIZES,
+        PROFIT_MARGIN,
         spread=spread.reindex(df_oos.index),
-        label="OOS", session_filter=SESSION_FILTER, reversion_pct=REVERSION_PCT,
+        label="OOS",
+        session_filter=SESSION_FILTER,
+        reversion_pct=REVERSION_PCT,
     )
-    oos_is_ratio = (oos_metrics["sharpe"] / is_metrics["sharpe"]
-                    if is_metrics["sharpe"] != 0 else 0.0)
-    print(f"  OOS Sharpe={oos_metrics['sharpe']:+.2f}  MaxDD={oos_metrics['max_dd']:.2%}  "
-          f"WR={oos_metrics['win_rate']:.2%}  n={oos_metrics['n_trades']}")
+    oos_is_ratio = (
+        oos_metrics["sharpe"] / is_metrics["sharpe"] if is_metrics["sharpe"] != 0 else 0.0
+    )
+    print(
+        f"  OOS Sharpe={oos_metrics['sharpe']:+.2f}  MaxDD={oos_metrics['max_dd']:.2%}  "
+        f"WR={oos_metrics['win_rate']:.2%}  n={oos_metrics['n_trades']}"
+    )
     print(f"  OOS/IS ratio: {oos_is_ratio:.2f}")
 
     # ── Monte Carlo (G1) ──────────────────────────────────────────────────
@@ -410,42 +442,60 @@ def main() -> None:
     mc_result = monte_carlo_gate(
         oos_metrics["daily_returns"], n_shuffles=MC_N_SHUFFLES, pct=MC_PERCENTILE
     )
-    print(f"  5th-pct Sharpe={mc_result['pct_sharpe']:.3f}  "
-          f"% profitable={mc_result['pct_profitable']:.1%}  "
-          f"PASS={mc_result['pass']}")
+    print(
+        f"  5th-pct Sharpe={mc_result['pct_sharpe']:.3f}  "
+        f"% profitable={mc_result['pct_profitable']:.1%}  "
+        f"PASS={mc_result['pass']}"
+    )
 
     # ── 3× Slippage stress (G3) ───────────────────────────────────────────
     print("\n[4/6] 3× slippage stress test (G3)...")
     total_cost_3x = build_total_cost_series(df_oos, PAIR) * 3.0
     stress_metrics = run_full_pipeline(
-        df_oos, pct_window, p_thresh, hurst_thresh, hmm_model_path,
-        TIER_SIZES, PROFIT_MARGIN,
+        df_oos,
+        pct_window,
+        p_thresh,
+        hurst_thresh,
+        hmm_model_path,
+        TIER_SIZES,
+        PROFIT_MARGIN,
         spread=total_cost_3x.reindex(df_oos.index),
-        label="OOS_3xSlippage", session_filter=SESSION_FILTER, reversion_pct=REVERSION_PCT,
+        label="OOS_3xSlippage",
+        session_filter=SESSION_FILTER,
+        reversion_pct=REVERSION_PCT,
     )
-    print(f"  3× stress Sharpe={stress_metrics['sharpe']:+.2f}  PASS={stress_metrics['sharpe'] > 0.5}")
+    print(
+        f"  3× stress Sharpe={stress_metrics['sharpe']:+.2f}  PASS={stress_metrics['sharpe'] > 0.5}"
+    )
 
     # ── Walk-Forward Optimisation ─────────────────────────────────────────
     print("\n[5/6] Walk-Forward Optimisation (6mo IS / 2mo OOS)...")
     wfo_returns, wfo_folds = walk_forward(
-        df, pct_window, p_thresh, hurst_thresh, hmm_model_path,
-        TIER_SIZES, PROFIT_MARGIN, spread,
-        is_months=6, oos_months=2,
-        session_filter=SESSION_FILTER, reversion_pct=REVERSION_PCT,
+        df,
+        pct_window,
+        p_thresh,
+        hurst_thresh,
+        hmm_model_path,
+        TIER_SIZES,
+        PROFIT_MARGIN,
+        spread,
+        is_months=6,
+        oos_months=2,
+        session_filter=SESSION_FILTER,
+        reversion_pct=REVERSION_PCT,
     )
     neg_folds = sum(1 for f in wfo_folds if f["sharpe"] < 0)
     wfo_sharpe = exe.compute_combined_sharpe(wfo_returns) if len(wfo_returns) > 0 else np.nan
     print(f"  WFO stitched Sharpe={wfo_sharpe:.3f}  Negative folds={neg_folds}/{len(wfo_folds)}")
     for f in wfo_folds:
-        print(f"    Fold {f['fold']}: {f['oos_start']} -> {f['oos_end']}  "
-              f"Sharpe={f['sharpe']:+.2f}  n={f['n_trades']}")
+        print(
+            f"    Fold {f['fold']}: {f['oos_start']} -> {f['oos_end']}  "
+            f"Sharpe={f['sharpe']:+.2f}  n={f['n_trades']}"
+        )
 
     # ── Quality gates ─────────────────────────────────────────────────────
     print("\n[6/6] Quality gate evaluation...")
-    gates = evaluate_gates(
-        is_metrics, oos_metrics, mc_result,
-        stress_metrics["sharpe"], wfo_folds
-    )
+    gates = evaluate_gates(is_metrics, oos_metrics, mc_result, stress_metrics["sharpe"], wfo_folds)
     all_passed = all(gates.values())
 
     print(f"\n  {'GATE':<25} {'RESULT'}")
@@ -488,19 +538,29 @@ def main() -> None:
     print(f"\n  Saved validation report -> {out_json}")
 
     # ── Equity curve chart ────────────────────────────────────────────────
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=False,
-                        subplot_titles=["IS vs OOS Daily Returns (cumulative)",
-                                        "WFO Stitched OOS Equity Curve"])
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=False,
+        subplot_titles=["IS vs OOS Daily Returns (cumulative)", "WFO Stitched OOS Equity Curve"],
+    )
 
-    is_cum  = (1 + is_metrics["daily_returns"]).cumprod()
+    is_cum = (1 + is_metrics["daily_returns"]).cumprod()
     oos_cum = (1 + oos_metrics["daily_returns"]).cumprod()
-    fig.add_trace(go.Scatter(x=is_cum.index, y=is_cum, name="IS", line=dict(color="steelblue")), row=1, col=1)
-    fig.add_trace(go.Scatter(x=oos_cum.index, y=oos_cum, name="OOS", line=dict(color="orange")), row=1, col=1)
+    fig.add_trace(
+        go.Scatter(x=is_cum.index, y=is_cum, name="IS", line=dict(color="steelblue")), row=1, col=1
+    )
+    fig.add_trace(
+        go.Scatter(x=oos_cum.index, y=oos_cum, name="OOS", line=dict(color="orange")), row=1, col=1
+    )
 
     if len(wfo_returns) > 0:
         wfo_cum = (1 + wfo_returns).cumprod()
-        fig.add_trace(go.Scatter(x=wfo_cum.index, y=wfo_cum, name="WFO OOS",
-                                  line=dict(color="green")), row=2, col=1)
+        fig.add_trace(
+            go.Scatter(x=wfo_cum.index, y=wfo_cum, name="WFO OOS", line=dict(color="green")),
+            row=2,
+            col=1,
+        )
 
     title_suffix = "ALL GATES PASSED" if all_passed else "GATES FAILED"
     fig.update_layout(title=f"Stage 3 Validation — {title_suffix}", height=700)
@@ -511,7 +571,9 @@ def main() -> None:
     if all_passed:
         print("\n[Stage 3 PASSED]  Next steps:")
         print("  1. Update config/eurusd_mr.toml with optimised values (already in state file)")
-        print("  2. Optional pairs module: uv run python research/mean_reversion/run_stage4_pairs.py")
+        print(
+            "  2. Optional pairs module: uv run python research/mean_reversion/run_stage4_pairs.py"
+        )
         print("  3. When ready for live: implement titan/strategies/mean_reversion/strategy.py")
     else:
         print("\n[Stage 3 FAILED]  Review gate failures above before proceeding.")

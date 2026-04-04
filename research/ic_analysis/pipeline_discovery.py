@@ -236,7 +236,9 @@ def run_discovery(
             if regime_path.exists():
                 try:
                     regime_df = pd.read_parquet(regime_path)
-                    log.info("[Phase 0] Loaded existing regime labels for %s %s", instrument, timeframe)
+                    log.info(
+                        "[Phase 0] Loaded existing regime labels for %s %s", instrument, timeframe
+                    )
                 except Exception:
                     pass
 
@@ -248,9 +250,7 @@ def run_discovery(
                 all_phase1_results.append(p1_df)
         else:
             # Try to load existing Phase 1 CSV for Phase 2 use
-            p1_path = (
-                REPORTS_DIR / f"phase1_{instrument}_{timeframe}.csv"
-            )
+            p1_path = REPORTS_DIR / f"phase1_{instrument}_{timeframe}.csv"
             if p1_path.exists():
                 p1_df = pd.read_csv(p1_path)
                 p1_df.insert(0, "instrument", instrument)
@@ -337,22 +337,18 @@ def main() -> None:
         default="all",
         help="Phases to run: '0', '1', '2', '0,1', '1,2', or 'all'. Default: all.",
     )
-    p.add_argument("--frac-diff", action="store_true", help="Enable fractional differencing in Phase 0.")
+    p.add_argument(
+        "--frac-diff", action="store_true", help="Enable fractional differencing in Phase 0."
+    )
     p.add_argument("--hmm-states", type=int, default=2, help="Number of HMM states (default: 2).")
     args = p.parse_args()
 
     instruments = args.instruments or [args.instrument]
 
     tfs = [t.strip() for t in args.tfs.split(",")] if args.tfs else None
-    horizons = (
-        [int(h.strip()) for h in args.horizons.split(",")]
-        if args.horizons
-        else None
-    )
+    horizons = [int(h.strip()) for h in args.horizons.split(",")] if args.horizons else None
     combo_horizons = (
-        [int(h.strip()) for h in args.combo_horizons.split(",")]
-        if args.combo_horizons
-        else None
+        [int(h.strip()) for h in args.combo_horizons.split(",")] if args.combo_horizons else None
     )
 
     run_discovery(

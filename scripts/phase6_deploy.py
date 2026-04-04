@@ -110,9 +110,7 @@ def _read_best_threshold(csv_path: Path, direction: str) -> dict[str, float]:
         df = df[df["direction"] == direction]
 
     if df.empty:
-        raise ValueError(
-            f"No rows matching direction='{direction}' in {csv_path.name}."
-        )
+        raise ValueError(f"No rows matching direction='{direction}' in {csv_path.name}.")
 
     # Best row = highest OOS trade Sharpe
     best = df.loc[df["oos_trade_sharpe"].idxmax()]

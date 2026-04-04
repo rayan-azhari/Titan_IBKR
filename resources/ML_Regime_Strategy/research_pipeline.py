@@ -49,8 +49,7 @@ def run(
     fees: float = 0.001,
     slippage: float = 0.001,
 ) -> dict:
-    """Run the full research pipeline and return trained artefacts + backtest results.
-    """
+    """Run the full research pipeline and return trained artefacts + backtest results."""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -146,9 +145,7 @@ def run(
     X = pd.concat([X_base, post_df], axis=1)
 
     # Exit times for purging
-    exit_times = pd.Series(
-        prices_aligned.index[labels["exit_idx"].values], index=labels.index
-    )
+    exit_times = pd.Series(prices_aligned.index[labels["exit_idx"].values], index=labels.index)
 
     print(f"  Final feature matrix: {X.shape}")
 

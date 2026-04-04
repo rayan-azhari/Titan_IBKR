@@ -55,7 +55,7 @@ REPORTS_DIR = ROOT / ".tmp" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_THRESHOLDS = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
-MIN_OOS_IS_RATIO = 0.5   # Phase 3 gate --below this, skip Phase 4+5
+MIN_OOS_IS_RATIO = 0.5  # Phase 3 gate --below this, skip Phase 4+5
 
 
 # ---------------------------------------------------------------------------
@@ -331,9 +331,7 @@ def run_validation(
                     best_row = p3_df.loc[p3_df["oos_sharpe"].idxmax()]
                     row["p3_oos_sharpe"] = round(float(best_row.get("oos_sharpe", 0)), 3)
                     row["p3_is_sharpe"] = round(float(best_row.get("is_sharpe", 0)), 3)
-                    row["p3_is_oos_ratio"] = round(
-                        float(best_row.get("is_oos_ratio", 0)), 3
-                    )
+                    row["p3_is_oos_ratio"] = round(float(best_row.get("is_oos_ratio", 0)), 3)
                     row["p3_win_rate"] = round(float(best_row.get("win_rate", 0)), 3)
                     row["p3_max_dd_pct"] = round(float(best_row.get("max_dd_pct", 0)), 2)
                     row["p3_ror_25pct"] = round(float(best_row.get("ror_25pct", 1)), 4)
@@ -370,12 +368,8 @@ def run_validation(
                 )
                 if p4_df is not None and not p4_df.empty:
                     row["p4_folds"] = len(p4_df)
-                    row["p4_pct_positive"] = round(
-                        float((p4_df["oos_sharpe"] > 0).mean()), 3
-                    )
-                    row["p4_mean_oos_sharpe"] = round(
-                        float(p4_df["oos_sharpe"].mean()), 3
-                    )
+                    row["p4_pct_positive"] = round(float((p4_df["oos_sharpe"] > 0).mean()), 3)
+                    row["p4_mean_oos_sharpe"] = round(float(p4_df["oos_sharpe"].mean()), 3)
                     row["p4_worst_sharpe"] = round(float(p4_df["oos_sharpe"].min()), 3)
                     row["p4_status"] = "OK"
                 else:
@@ -384,9 +378,7 @@ def run_validation(
         # Phase 5 --only if Phase 3 passed or was skipped
         if "5" in run_phases:
             if not p3_passed and "3" in run_phases:
-                log.warning(
-                    "[Phase 5] SKIP %s --Phase 3 gate failed.", instrument
-                )
+                log.warning("[Phase 5] SKIP %s --Phase 3 gate failed.", instrument)
                 row["p5_all_pass"] = False
                 row["p5_status"] = "SKIPPED_P3_FAIL"
             else:
@@ -409,7 +401,9 @@ def run_validation(
                     row["p5_all_pass"] = p5_result.get("all_pass", False)
                     for gate in ("g1", "g2", "g3", "g4", "g5", "g6"):
                         g = p5_result.get(gate, {})
-                        row[f"p5_{gate}_pass"] = g.get("gate_pass", False) if isinstance(g, dict) else False
+                        row[f"p5_{gate}_pass"] = (
+                            g.get("gate_pass", False) if isinstance(g, dict) else False
+                        )
                     row["p5_status"] = "OK"
                 else:
                     row["p5_all_pass"] = False
@@ -440,15 +434,15 @@ def run_validation(
         p4_sh = row.get("p4_mean_oos_sharpe", "–")
 
         p3_str = f"P3={'PASS' if p3_ok else 'FAIL'}(OOS_Sharpe={p3_sh})"
-        p4_str = f"P4={p4_st}(mean={p4_sh})" if p4_st not in ("–", "SKIPPED_P3_FAIL") else f"P4={p4_st}"
+        p4_str = (
+            f"P4={p4_st}(mean={p4_sh})" if p4_st not in ("–", "SKIPPED_P3_FAIL") else f"P4={p4_st}"
+        )
         p5_str = f"P5={'PASS' if p5_ok else 'FAIL'}" if isinstance(p5_ok, bool) else f"P5={p5_ok}"
 
         print(f"  {inst:<20}  {p3_str}  {p4_str}  {p5_str}")
 
     cleared = [
-        r["instrument"]
-        for r in summary_rows
-        if r.get("p3_passed") and r.get("p5_all_pass", False)
+        r["instrument"] for r in summary_rows if r.get("p3_passed") and r.get("p5_all_pass", False)
     ]
     if cleared:
         print(f"\n  CLEARED for Phase 6: {', '.join(cleared)}")

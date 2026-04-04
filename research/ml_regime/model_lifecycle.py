@@ -85,10 +85,7 @@ class ModelHealthMonitor:
         self._check_prob_drift()
 
     def _check_regime_drift(self):
-        window = (
-            self._live_regimes[-200:] if len(self._live_regimes) >= 200
-            else self._live_regimes
-        )
+        window = self._live_regimes[-200:] if len(self._live_regimes) >= 200 else self._live_regimes
         counts = np.bincount(window, minlength=self.n_states)
         live_dist = counts / counts.sum()
 
@@ -112,10 +109,7 @@ class ModelHealthMonitor:
             self._raise_alert(alert)
 
     def _check_prob_drift(self):
-        window = (
-            self._live_probs[-200:] if len(self._live_probs) >= 200
-            else self._live_probs
-        )
+        window = self._live_probs[-200:] if len(self._live_probs) >= 200 else self._live_probs
         if len(window) < 30:
             return
         live_mean = np.mean(window)
@@ -135,7 +129,7 @@ class ModelHealthMonitor:
             self._raise_alert(alert)
 
     def _check_calibration(self):
-        recent = self._trade_outcomes[-self.calibration_window:]
+        recent = self._trade_outcomes[-self.calibration_window :]
         probs = np.array([t[0] for t in recent])
         outcomes = np.array([t[1] for t in recent])
         expected = probs.mean()

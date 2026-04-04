@@ -48,13 +48,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 logger = logging.getLogger(__name__)
 
 # ── Fixed hyperparameters (H4 frequency) ─────────────────────────────────────
-VOL_SPAN = 30           # ~5-day EWM vol on H4
+VOL_SPAN = 30  # ~5-day EWM vol on H4
 FRAC_D = 0.4
 N_HMM_STATES = 2
-HMM_MIN_SEQ = 120       # ~20-day warm-up
+HMM_MIN_SEQ = 120  # ~20-day warm-up
 N_CV_SPLITS = 5
 EMBARGO_PCT = 0.01
-FEES = 0.0001           # ~1 pip per side
+FEES = 0.0001  # ~1 pip per side
 SLIPPAGE = 0.00005
 VBT_FREQ = "4h"
 IS_FRAC = 0.70
@@ -137,7 +137,7 @@ def compute_mtf_confluence(
             tf_cfg.get("rsi_period", 14),
         )
         aligned_sig = sig.reindex(primary_index, method="ffill")
-        tf_signals[tf] = aligned_sig          # raw signal, unweighted
+        tf_signals[tf] = aligned_sig  # raw signal, unweighted
         weighted.append(aligned_sig * w)
         total_weight += w
         logger.info(f"  {tf} (w={w:.2f}): bullish {(sig > 0).mean():.1%} | {len(df)} bars")
@@ -218,7 +218,7 @@ def label_mtf_trades(
         entry_t = close.index[ei]
         entry_p = float(close.iloc[ei])
 
-        adverse_after = adverse.iloc[ei + 1:]
+        adverse_after = adverse.iloc[ei + 1 :]
         hit = np.where(adverse_after.values)[0]
         xi = ei + 1 + int(hit[0]) if len(hit) > 0 else len(close) - 1
         in_trade_until = xi
@@ -227,8 +227,9 @@ def label_mtf_trades(
         exit_p = float(close.iloc[xi])
         ret = (exit_p / entry_p - 1.0) if direction == "long" else (entry_p / exit_p - 1.0)
 
-        records.append({"entry_time": entry_t, "exit_time": exit_t,
-                        "label": int(ret > 0), "trade_return": ret})
+        records.append(
+            {"entry_time": entry_t, "exit_time": exit_t, "label": int(ret > 0), "trade_return": ret}
+        )
 
     stats = {
         "total_signals": len(all_signal_locs),
@@ -260,9 +261,9 @@ def build_all_posteriors(
     oos = full_arr[is_cutoff:]
     if len(oos) == 0:
         return is_post
-    warmup = full_arr[max(0, is_cutoff - HMM_MIN_SEQ):is_cutoff]
+    warmup = full_arr[max(0, is_cutoff - HMM_MIN_SEQ) : is_cutoff]
     combined = _canonical_posteriors(detector, np.vstack([warmup, oos]))
-    return np.vstack([is_post, combined[len(warmup):]])
+    return np.vstack([is_post, combined[len(warmup) :]])
 
 
 # ── VBT helpers ──────────────────────────────────────────────────────────────
@@ -276,11 +277,17 @@ def _run_pf(close, entries, exits, short=False) -> vbt.Portfolio:
             exits=pd.Series(False, index=close.index),
             short_entries=entries,
             short_exits=exits,
-            fees=FEES, slippage=SLIPPAGE, freq=VBT_FREQ,
+            fees=FEES,
+            slippage=SLIPPAGE,
+            freq=VBT_FREQ,
         )
     return vbt.Portfolio.from_signals(
-        close, entries=entries, exits=exits,
-        fees=FEES, slippage=SLIPPAGE, freq=VBT_FREQ,
+        close,
+        entries=entries,
+        exits=exits,
+        fees=FEES,
+        slippage=SLIPPAGE,
+        freq=VBT_FREQ,
     )
 
 
@@ -321,12 +328,10 @@ def run_pipeline_mtf(pair: str = "EUR_USD", is_frac: float = IS_FRAC) -> dict:
     is_conf = confluence.iloc[:is_cutoff_price]
 
     logger.info(
-        f"IS: {len(is_close)} bars "
-        f"({is_close.index[0].date()} - {is_close.index[-1].date()})"
+        f"IS: {len(is_close)} bars ({is_close.index[0].date()} - {is_close.index[-1].date()})"
     )
     logger.info(
-        f"OOS: {len(oos_close)} bars "
-        f"({oos_close.index[0].date()} - {oos_close.index[-1].date()})"
+        f"OOS: {len(oos_close)} bars ({oos_close.index[0].date()} - {oos_close.index[-1].date()})"
     )
 
     # ── 3. Features ───────────────────────────────────────────────────────────
@@ -352,8 +357,7 @@ def run_pipeline_mtf(pair: str = "EUR_USD", is_frac: float = IS_FRAC) -> dict:
 
     full_regimes = detector.predict_sequence(full_feat_arr)
     regime_dist = (
-        np.bincount(full_regimes[:is_cutoff_feat], minlength=N_HMM_STATES)
-        / is_cutoff_feat
+        np.bincount(full_regimes[:is_cutoff_feat], minlength=N_HMM_STATES) / is_cutoff_feat
     )
     logger.info(f"  IS regime dist: {np.round(regime_dist, 3).tolist()}")
 
@@ -374,7 +378,7 @@ def run_pipeline_mtf(pair: str = "EUR_USD", is_frac: float = IS_FRAC) -> dict:
 
     n_win = is_labels["label"].sum()
     logger.info(
-        f"  IS long trades: {len(is_labels)} | wins={n_win} ({n_win/len(is_labels):.1%}) "
+        f"  IS long trades: {len(is_labels)} | wins={n_win} ({n_win / len(is_labels):.1%}) "
         f"| mean return={is_labels['trade_return'].mean():.4f}"
     )
     logger.info(
@@ -425,8 +429,12 @@ def run_pipeline_mtf(pair: str = "EUR_USD", is_frac: float = IS_FRAC) -> dict:
     oos_short_exit = (confluence > 0).reindex(oos_close.index).fillna(False)
 
     # Raw MTF entries (level, shifted +1)
-    oos_long_raw = (confluence >= threshold).shift(1).fillna(False).reindex(oos_close.index).fillna(False)
-    oos_short_raw = (confluence <= -threshold).shift(1).fillna(False).reindex(oos_close.index).fillna(False)
+    oos_long_raw = (
+        (confluence >= threshold).shift(1).fillna(False).reindex(oos_close.index).fillna(False)
+    )
+    oos_short_raw = (
+        (confluence <= -threshold).shift(1).fillna(False).reindex(oos_close.index).fillna(False)
+    )
 
     raw_long_pf = _run_pf(oos_close, oos_long_raw, oos_long_exit)
     raw_short_pf = _run_pf(oos_close, oos_short_raw, oos_short_exit, short=True)
@@ -439,20 +447,32 @@ def run_pipeline_mtf(pair: str = "EUR_USD", is_frac: float = IS_FRAC) -> dict:
 
     # H1 alignment filter variant
     oos_labels_h1, oos_stats_h1 = label_mtf_trades(
-        oos_close, oos_conf_aligned, threshold, direction="long",
-        h1_signal=h1_sig, h1_min_score=0.0,
+        oos_close,
+        oos_conf_aligned,
+        threshold,
+        direction="long",
+        h1_signal=h1_sig,
+        h1_min_score=0.0,
     )
 
     # Exit hysteresis buffer variant
     oos_labels_buf, oos_stats_buf = label_mtf_trades(
-        oos_close, oos_conf_aligned, threshold, direction="long",
+        oos_close,
+        oos_conf_aligned,
+        threshold,
+        direction="long",
         exit_buffer=0.10,
     )
 
     # Combined: H1 filter + exit buffer
     oos_labels_combo, oos_stats_combo = label_mtf_trades(
-        oos_close, oos_conf_aligned, threshold, direction="long",
-        h1_signal=h1_sig, h1_min_score=0.0, exit_buffer=0.10,
+        oos_close,
+        oos_conf_aligned,
+        threshold,
+        direction="long",
+        h1_signal=h1_sig,
+        h1_min_score=0.0,
+        exit_buffer=0.10,
     )
 
     logger.info(
@@ -466,7 +486,9 @@ def run_pipeline_mtf(pair: str = "EUR_USD", is_frac: float = IS_FRAC) -> dict:
     )
 
     # Build H1-filter VBT portfolio directly from labelled entry times
-    def _labels_to_pf(oos_c: pd.Series, labs: pd.DataFrame, long_exit: pd.Series) -> vbt.Portfolio | None:
+    def _labels_to_pf(
+        oos_c: pd.Series, labs: pd.DataFrame, long_exit: pd.Series
+    ) -> vbt.Portfolio | None:
         if len(labs) == 0:
             return None
         entries_s = pd.Series(False, index=oos_c.index)
@@ -507,8 +529,10 @@ def run_pipeline_mtf(pair: str = "EUR_USD", is_frac: float = IS_FRAC) -> dict:
                 # Exit: same confluence-flip logic as raw MTF
                 ml_long_pf = _run_pf(oos_close, oos_long_ml_entries, oos_long_exit)
 
-    logger.info(f"  OOS crossover events: raw={n_oos_raw}, ML-approved={n_oos_ml} "
-                f"({n_oos_ml/max(n_oos_raw,1):.1%} pass rate)")
+    logger.info(
+        f"  OOS crossover events: raw={n_oos_raw}, ML-approved={n_oos_ml} "
+        f"({n_oos_ml / max(n_oos_raw, 1):.1%} pass rate)"
+    )
 
     # ── 9. Save models ─────────────────────────────────────────────────────────
     model_dir = ROOT / "models" / "ml_regime"
@@ -539,7 +563,7 @@ def run_pipeline_mtf(pair: str = "EUR_USD", is_frac: float = IS_FRAC) -> dict:
     print("=" * 75)
     print(results_df.to_string(index=False))
     print("=" * 75)
-    print(f"\n  IS trade win rate:  {n_win/len(is_labels):.2%} ({len(is_labels)} trades)")
+    print(f"\n  IS trade win rate:  {n_win / len(is_labels):.2%} ({len(is_labels)} trades)")
     print(f"  OOF AUC:           {cv.get('oof_auc')}")
     print(f"  OOF F1:            {cv.get('oof_f1', 0.0):.4f}")
     print(f"  Optimal threshold: {cv.get('optimal_threshold'):.4f}")
@@ -548,18 +572,26 @@ def run_pipeline_mtf(pair: str = "EUR_USD", is_frac: float = IS_FRAC) -> dict:
         print(f"    {feat:<22} {imp:.4f}")
 
     print("\n  Signal path-dependency (OOS):")
-    print(f"    Raw:        total={oos_stats['total_signals']}, "
-          f"blocked_in_trade={oos_stats['blocked_in_trade']}, "
-          f"entered={oos_stats['entered']}")
-    print(f"    H1 filter:  h1_filtered={oos_stats_h1['h1_filtered']}, "
-          f"entered={oos_stats_h1['entered']}")
+    print(
+        f"    Raw:        total={oos_stats['total_signals']}, "
+        f"blocked_in_trade={oos_stats['blocked_in_trade']}, "
+        f"entered={oos_stats['entered']}"
+    )
+    print(
+        f"    H1 filter:  h1_filtered={oos_stats_h1['h1_filtered']}, "
+        f"entered={oos_stats_h1['entered']}"
+    )
     print(f"    Exit buf:   entered={oos_stats_buf['entered']}")
-    print(f"    Combined:   h1_filtered={oos_stats_combo['h1_filtered']}, "
-          f"entered={oos_stats_combo['entered']}")
+    print(
+        f"    Combined:   h1_filtered={oos_stats_combo['h1_filtered']}, "
+        f"entered={oos_stats_combo['entered']}"
+    )
 
     if cv.get("oof_auc") is not None and cv["oof_auc"] < 0.52:
-        print("\n  [NOTE] OOF AUC near 0.5 -- ML adds marginal signal. "
-              "Raw MTF may be the better choice.")
+        print(
+            "\n  [NOTE] OOF AUC near 0.5 -- ML adds marginal signal. "
+            "Raw MTF may be the better choice."
+        )
 
     report_dir = ROOT / ".tmp" / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -574,9 +606,7 @@ def run_pipeline_mtf(pair: str = "EUR_USD", is_frac: float = IS_FRAC) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="ML Regime + MTF Confluence Pipeline"
-    )
+    parser = argparse.ArgumentParser(description="ML Regime + MTF Confluence Pipeline")
     parser.add_argument("--pair", default="EUR_USD")
     parser.add_argument("--is_frac", type=float, default=IS_FRAC)
     args = parser.parse_args()

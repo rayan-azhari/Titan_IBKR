@@ -41,7 +41,7 @@ SLIPPAGE = 0.0005
 
 # Malik strategy parameter grid
 SLOW_MAS = [100, 125, 150, 175, 200, 250]
-FAST_MAS = [30, 50, 75, 100]   # only used in dual_regime mode
+FAST_MAS = [30, 50, 75, 100]  # only used in dual_regime mode
 ENTRY_MODES = ["slow_only", "dual_regime"]
 MA_TYPE = "SMA"
 
@@ -111,12 +111,11 @@ def run_backtest(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="ETF Trend Stage 1: Dual-MA Parameter Sweep."
-    )
+    parser = argparse.ArgumentParser(description="ETF Trend Stage 1: Dual-MA Parameter Sweep.")
     parser.add_argument("--instrument", default="SPY", help="Symbol (default: SPY)")
     parser.add_argument(
-        "--signal-instrument", default=None,
+        "--signal-instrument",
+        default=None,
         help="Signal source instrument (e.g. QQQ for TQQQ). Defaults to --instrument.",
     )
     args = parser.parse_args()
@@ -153,10 +152,14 @@ def main() -> None:
     is_exec = exec_close_full.iloc[:split]
     oos_exec = exec_close_full.iloc[split:]
 
-    print(f"\n  IS  period: {is_close.index[0].date()} to {is_close.index[-1].date()}"
-          f" ({len(is_close)} bars)")
-    print(f"  OOS period: {oos_close.index[0].date()} to {oos_close.index[-1].date()}"
-          f" ({len(oos_close)} bars)")
+    print(
+        f"\n  IS  period: {is_close.index[0].date()} to {is_close.index[-1].date()}"
+        f" ({len(is_close)} bars)"
+    )
+    print(
+        f"  OOS period: {oos_close.index[0].date()} to {oos_close.index[-1].date()}"
+        f" ({len(oos_close)} bars)"
+    )
 
     results: list[dict] = []
     print("\n  Running combinations ...\n")
@@ -178,15 +181,17 @@ def main() -> None:
             f"  {label}  IS={is_sharpe:.3f}  OOS={oos_sharpe:.3f}  "
             f"Ret={oos_ret:.1%}  Ratio={ratio:.2f}"
         )
-        results.append({
-            "entry_mode": "slow_only",
-            "slow_ma": slow_p,
-            "fast_ma": None,
-            "is_sharpe": round(is_sharpe, 3),
-            "oos_sharpe": round(oos_sharpe, 3),
-            "oos_is_ratio": round(ratio, 3),
-            "oos_total_return": round(oos_ret, 3),
-        })
+        results.append(
+            {
+                "entry_mode": "slow_only",
+                "slow_ma": slow_p,
+                "fast_ma": None,
+                "is_sharpe": round(is_sharpe, 3),
+                "oos_sharpe": round(oos_sharpe, 3),
+                "oos_is_ratio": round(ratio, 3),
+                "oos_total_return": round(oos_ret, 3),
+            }
+        )
 
         # dual_regime mode (sweep fast_ma)
         for fast_p in FAST_MAS:
@@ -207,15 +212,17 @@ def main() -> None:
                 f"  {label}  IS={is_sharpe:.3f}  OOS={oos_sharpe:.3f}  "
                 f"Ret={oos_ret:.1%}  Ratio={ratio:.2f}"
             )
-            results.append({
-                "entry_mode": "dual_regime",
-                "slow_ma": slow_p,
-                "fast_ma": fast_p,
-                "is_sharpe": round(is_sharpe, 3),
-                "oos_sharpe": round(oos_sharpe, 3),
-                "oos_is_ratio": round(ratio, 3),
-                "oos_total_return": round(oos_ret, 3),
-            })
+            results.append(
+                {
+                    "entry_mode": "dual_regime",
+                    "slow_ma": slow_p,
+                    "fast_ma": fast_p,
+                    "is_sharpe": round(is_sharpe, 3),
+                    "oos_sharpe": round(oos_sharpe, 3),
+                    "oos_is_ratio": round(ratio, 3),
+                    "oos_total_return": round(oos_ret, 3),
+                }
+            )
 
     scoreboard = pd.DataFrame(results).sort_values("oos_total_return", ascending=False)
     scoreboard_path = REPORTS_DIR / f"etf_trend_stage1_{inst_lower}_ma_sweep.csv"

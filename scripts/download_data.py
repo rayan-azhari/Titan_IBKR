@@ -246,6 +246,18 @@ def main() -> None:
     print("\n✅ Data download complete.\n")
     app.disconnect()
 
+    # Update data manifest
+    try:
+        import subprocess
+
+        subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "scripts" / "build_data_manifest.py")],
+            check=False,
+            capture_output=True,
+        )
+    except Exception:
+        pass  # Non-critical
+
 
 if __name__ == "__main__":
     main()

@@ -23,13 +23,12 @@ from sklearn.preprocessing import StandardScaler
 
 
 class RegimeDetector:
-
     def __init__(
         self,
         n_states: int = 2,
         n_iter: int = 200,
         min_seq_len: int = 60,
-        vol_feature_idx: int = 1,   # index of volatility in feature vector
+        vol_feature_idx: int = 1,  # index of volatility in feature vector
     ):
         self.n_states = n_states
         self.n_iter = n_iter
@@ -77,9 +76,7 @@ class RegimeDetector:
         raw_states = self._model.predict(X)
         return self._to_canonical(raw_states)
 
-    def predict_current_state(
-        self, feature_window: np.ndarray
-    ) -> Tuple[int, np.ndarray]:
+    def predict_current_state(self, feature_window: np.ndarray) -> Tuple[int, np.ndarray]:
         """Predict regime for the CURRENT bar given a rolling window of history.
 
         Returns:

@@ -25,7 +25,6 @@ from .cross_validation import PurgedKFold, compute_sample_uniqueness
 
 
 class MetaLabeller:
-
     def __init__(
         self,
         n_splits: int = 5,
@@ -106,7 +105,9 @@ class MetaLabeller:
         self._cv_results = {
             "mean_auc": float(np.mean(fold_aucs)) if fold_aucs else None,
             "std_auc": float(np.std(fold_aucs)) if fold_aucs else None,
-            "oof_auc": float(roc_auc_score(y_valid, p_valid)) if len(np.unique(y_valid)) > 1 else None,
+            "oof_auc": float(roc_auc_score(y_valid, p_valid))
+            if len(np.unique(y_valid)) > 1
+            else None,
             "oof_f1": float(f1_score(y_valid, oof_preds, zero_division=0)),
             "oof_precision": float(precision_score(y_valid, oof_preds, zero_division=0)),
             "oof_recall": float(recall_score(y_valid, oof_preds, zero_division=0)),
@@ -180,7 +181,7 @@ class MetaLabeller:
             n_estimators=200,
             subsample=0.8,
             colsample_bytree=0.8,
-            min_child_weight=5,   # prevents overfitting on small financial samples
+            min_child_weight=5,  # prevents overfitting on small financial samples
             eval_metric="logloss",
             random_state=42,
             verbosity=0,

@@ -139,14 +139,14 @@ def build_combined_exit(
         (long_combined_exit, short_combined_exit) — Boolean Series pair.
     """
     invalidation = hard_invalidation_signal(deviation, inv_level)
-    time_exit    = ny_session_close_exit(index, cutoff_hour_utc)
-    base         = basket_exit | invalidation | time_exit
+    time_exit = ny_session_close_exit(index, cutoff_hour_utc)
+    base = basket_exit | invalidation | time_exit
 
     if tier1_level is not None:
-        long_exit  = base | partial_reversion_exit_long(deviation, tier1_level, reversion_pct)
+        long_exit = base | partial_reversion_exit_long(deviation, tier1_level, reversion_pct)
         short_exit = base | partial_reversion_exit_short(deviation, tier1_level, reversion_pct)
     else:
-        long_exit  = base
+        long_exit = base
         short_exit = base
 
     return long_exit, short_exit

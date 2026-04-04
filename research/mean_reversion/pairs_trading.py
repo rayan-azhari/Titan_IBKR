@@ -158,10 +158,10 @@ def build_pairs_signals(
         lower = spread.rolling(int(spread.rolling(1).count().max())).quantile(lower_pct).shift(1)
 
     short_entry = (spread > upper) & regime_gate
-    short_exit  = spread < 0
+    short_exit = spread < 0
 
-    long_entry  = (spread < lower) & regime_gate
-    long_exit   = spread > 0
+    long_entry = (spread < lower) & regime_gate
+    long_exit = spread > 0
 
     return short_entry, short_exit, long_entry, long_exit
 

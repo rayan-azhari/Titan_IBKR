@@ -103,12 +103,14 @@ def build_grid_entries(
         # Cross detection: deviation crosses DOWN through -lvl (long entry)
         long_cross = (deviation < -lvl) & (deviation.shift(1) >= -lvl.shift(1))
 
-        entries.append({
-            "tier": col,
-            "short_entry": short_cross & gate,
-            "long_entry": long_cross & gate,
-            "size": size,
-        })
+        entries.append(
+            {
+                "tier": col,
+                "short_entry": short_cross & gate,
+                "long_entry": long_cross & gate,
+                "size": size,
+            }
+        )
     return entries
 
 
@@ -148,7 +150,7 @@ def compute_basket_vwap_exit(
     close_vals = close.values
     exit_signal = np.zeros(n, dtype=bool)
 
-    for side in (["short", "long"] if direction == "both" else [direction.replace("_only", "")]):
+    for side in ["short", "long"] if direction == "both" else [direction.replace("_only", "")]:
         cum_cost = 0.0
         cum_units = 0
         basket_active = False

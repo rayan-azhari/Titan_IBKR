@@ -22,7 +22,6 @@ import pandas as pd
 
 
 class PurgedKFold:
-
     def __init__(self, n_splits: int = 5, embargo_pct: float = 0.01):
         if n_splits < 2:
             raise ValueError("n_splits must be >= 2")

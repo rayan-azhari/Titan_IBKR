@@ -43,10 +43,10 @@ CHUNK_STEP_DAYS = 365
 
 # IBKR index contract specs: symbol -> (exchange, currency)
 INDEX_SPECS: dict[str, tuple[str, str]] = {
-    "FTSE":  ("LSEETF", "GBP"),
-    "GDAXI": ("DTB",    "EUR"),
-    "SPX":   ("CBOE",   "USD"),
-    "INDU":  ("CME",    "USD"),
+    "FTSE": ("LSEETF", "GBP"),
+    "GDAXI": ("DTB", "EUR"),
+    "SPX": ("CBOE", "USD"),
+    "INDU": ("CME", "USD"),
 }
 
 
@@ -63,14 +63,16 @@ class IBKRApp(EWrapper, EClient):
         self.connected_event.set()
 
     def historicalData(self, reqId, bar):
-        self.data_store.append({
-            "timestamp": bar.date,
-            "open": float(bar.open),
-            "high": float(bar.high),
-            "low": float(bar.low),
-            "close": float(bar.close),
-            "volume": float(bar.volume),
-        })
+        self.data_store.append(
+            {
+                "timestamp": bar.date,
+                "open": float(bar.open),
+                "high": float(bar.high),
+                "low": float(bar.low),
+                "close": float(bar.close),
+                "volume": float(bar.volume),
+            }
+        )
 
     def historicalDataEnd(self, reqId, start, end):
         self.req_complete = True
@@ -136,10 +138,10 @@ def _parse_timestamp(raw: str) -> pd.Timestamp:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--symbol", required=True,
-                        help="Index symbol: FTSE, GDAXI, SPX, INDU")
-    parser.add_argument("--years", type=int, default=10,
-                        help="Years of history to fetch (default: 10)")
+    parser.add_argument("--symbol", required=True, help="Index symbol: FTSE, GDAXI, SPX, INDU")
+    parser.add_argument(
+        "--years", type=int, default=10, help="Years of history to fetch (default: 10)"
+    )
     args = parser.parse_args()
 
     symbol = args.symbol.upper()
@@ -184,11 +186,7 @@ def main() -> None:
 
     df = pd.DataFrame(all_rows)
     df["timestamp"] = df["timestamp"].apply(_parse_timestamp)
-    df = (
-        df.drop_duplicates(subset="timestamp")
-          .sort_values("timestamp")
-          .reset_index(drop=True)
-    )
+    df = df.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
     df = df[df["timestamp"] <= pd.Timestamp.now(tz="UTC")]
 
     if output_path.exists():
@@ -197,9 +195,9 @@ def main() -> None:
             existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
         df = (
             pd.concat([existing, df])
-              .drop_duplicates(subset="timestamp")
-              .sort_values("timestamp")
-              .reset_index(drop=True)
+            .drop_duplicates(subset="timestamp")
+            .sort_values("timestamp")
+            .reset_index(drop=True)
         )
 
     df.to_parquet(output_path, index=False)

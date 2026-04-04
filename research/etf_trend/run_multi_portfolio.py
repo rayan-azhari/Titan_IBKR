@@ -111,11 +111,7 @@ def compute_strategy_returns(
     ma_type = config["ma_type"]
     slow_ma_p = config["slow_ma"]
     decel_signals = config.get("decel_signals", [])
-    decel_params = {
-        k: config[k]
-        for k in ("d_pct_smooth", "rv_window", "macd_fast")
-        if k in config
-    }
+    decel_params = {k: config[k] for k in ("d_pct_smooth", "rv_window", "macd_fast") if k in config}
     entry_mode = config.get("entry_mode", "decel_positive")
     fast_reentry_ma_p = config.get("fast_reentry_ma")
     exit_mode = config["exit_mode"]
@@ -193,7 +189,9 @@ def compute_stats(rets: pd.Series) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="ETF Trend Multi-Asset Portfolio.")
     parser.add_argument(
-        "--instruments", nargs="+", default=["TQQQ", "IWB"],
+        "--instruments",
+        nargs="+",
+        default=["TQQQ", "IWB"],
         help="Instruments to combine (must have locked configs). Default: TQQQ IWB",
     )
     args = parser.parse_args()
@@ -233,8 +231,10 @@ def main() -> None:
         oos_starts.append(sig_close.index[split])
     portfolio_start = max(oos_starts)
 
-    print(f"\n  Portfolio period: {portfolio_start.date()} to "
-          f"{min(s.index[-1] for s in all_strat_rets.values()).date()}")
+    print(
+        f"\n  Portfolio period: {portfolio_start.date()} to "
+        f"{min(s.index[-1] for s in all_strat_rets.values()).date()}"
+    )
 
     # ── Slice to portfolio period and build common index ──────────────────
     common_strat: dict[str, pd.Series] = {}
@@ -254,27 +254,30 @@ def main() -> None:
 
     # ── Portfolio daily returns (equal-weight combination) ─────────────────
     port_strat_rets = sum(  # type: ignore[assignment]
-        common_strat[inst].reindex(common_idx).fillna(0) * weight
-        for inst in instruments
+        common_strat[inst].reindex(common_idx).fillna(0) * weight for inst in instruments
     )
     port_bah_rets = sum(  # type: ignore[assignment]
-        common_bah[inst].reindex(common_idx).fillna(0) * weight
-        for inst in instruments
+        common_bah[inst].reindex(common_idx).fillna(0) * weight for inst in instruments
     )
 
     # ── Per-instrument stats in common period ─────────────────────────────
-    print(f"\n  -- Per-instrument OOS stats "
-          f"({portfolio_start.date()} to {common_idx[-1].date()}) --")
+    print(
+        f"\n  -- Per-instrument OOS stats ({portfolio_start.date()} to {common_idx[-1].date()}) --"
+    )
     rows = []
     for inst in instruments:
         s_strat = compute_stats(common_strat[inst].reindex(common_idx).fillna(0))
         s_bah = compute_stats(common_bah[inst].reindex(common_idx).fillna(0))
-        print(f"  [{inst}] Strat  Ret={s_strat['total_return']:.1%}  "
-              f"Sharpe={s_strat['sharpe']:.3f}  MaxDD={s_strat['max_drawdown']:.1%}  "
-              f"Calmar={s_strat['calmar']:.3f}")
-        print(f"  [{inst}] B&H    Ret={s_bah['total_return']:.1%}  "
-              f"Sharpe={s_bah['sharpe']:.3f}  MaxDD={s_bah['max_drawdown']:.1%}  "
-              f"Calmar={s_bah['calmar']:.3f}")
+        print(
+            f"  [{inst}] Strat  Ret={s_strat['total_return']:.1%}  "
+            f"Sharpe={s_strat['sharpe']:.3f}  MaxDD={s_strat['max_drawdown']:.1%}  "
+            f"Calmar={s_strat['calmar']:.3f}"
+        )
+        print(
+            f"  [{inst}] B&H    Ret={s_bah['total_return']:.1%}  "
+            f"Sharpe={s_bah['sharpe']:.3f}  MaxDD={s_bah['max_drawdown']:.1%}  "
+            f"Calmar={s_bah['calmar']:.3f}"
+        )
         rows.append({**{"instrument": inst, "type": "strategy"}, **s_strat})
         rows.append({**{"instrument": inst, "type": "bah"}, **s_bah})
 
@@ -285,23 +288,29 @@ def main() -> None:
     rows.append({**{"instrument": "Portfolio", "type": "bah"}, **bah_stats})
 
     print("\n  -- Portfolio vs Equal-Weight B&H ---------------")
-    print(f"  Portfolio: Ret={port_stats['total_return']:.1%}  "
-          f"Sharpe={port_stats['sharpe']:.3f}  "
-          f"MaxDD={port_stats['max_drawdown']:.1%}  "
-          f"Calmar={port_stats['calmar']:.3f}")
-    print(f"  B&H {'+'.join(instruments)}: Ret={bah_stats['total_return']:.1%}  "
-          f"Sharpe={bah_stats['sharpe']:.3f}  "
-          f"MaxDD={bah_stats['max_drawdown']:.1%}  "
-          f"Calmar={bah_stats['calmar']:.3f}")
+    print(
+        f"  Portfolio: Ret={port_stats['total_return']:.1%}  "
+        f"Sharpe={port_stats['sharpe']:.3f}  "
+        f"MaxDD={port_stats['max_drawdown']:.1%}  "
+        f"Calmar={port_stats['calmar']:.3f}"
+    )
+    print(
+        f"  B&H {'+'.join(instruments)}: Ret={bah_stats['total_return']:.1%}  "
+        f"Sharpe={bah_stats['sharpe']:.3f}  "
+        f"MaxDD={bah_stats['max_drawdown']:.1%}  "
+        f"Calmar={bah_stats['calmar']:.3f}"
+    )
 
     better_sharpe = port_stats["sharpe"] >= bah_stats["sharpe"]
     better_dd = abs(port_stats["max_drawdown"]) <= abs(bah_stats["max_drawdown"])
     better_calmar = port_stats["calmar"] >= bah_stats["calmar"]
     n_better = sum([better_sharpe, better_dd, better_calmar])
-    print(f"\n  vs B&H: Sharpe {'BETTER' if better_sharpe else 'WORSE'}  "
-          f"MaxDD {'BETTER' if better_dd else 'WORSE'}  "
-          f"Calmar {'BETTER' if better_calmar else 'WORSE'}  "
-          f"-- {n_better}/3 metrics")
+    print(
+        f"\n  vs B&H: Sharpe {'BETTER' if better_sharpe else 'WORSE'}  "
+        f"MaxDD {'BETTER' if better_dd else 'WORSE'}  "
+        f"Calmar {'BETTER' if better_calmar else 'WORSE'}  "
+        f"-- {n_better}/3 metrics"
+    )
 
     # ── Save CSV ──────────────────────────────────────────────────────────
     csv_path = REPORTS_DIR / f"etf_trend_multi_portfolio_{'_'.join(instruments)}.csv"
@@ -314,7 +323,8 @@ def main() -> None:
         from plotly.subplots import make_subplots
 
         fig = make_subplots(
-            rows=2, cols=1,
+            rows=2,
+            cols=1,
             row_heights=[0.7, 0.3],
             shared_xaxes=True,
             subplot_titles=["Equity (normalised to 1.0)", "Portfolio Drawdown"],
@@ -326,36 +336,58 @@ def main() -> None:
         for i, inst in enumerate(instruments):
             eq = equity_curve(common_strat[inst].reindex(common_idx).fillna(0)) / INIT_CASH
             fig.add_trace(
-                go.Scatter(x=eq.index, y=eq.values, name=f"{inst} Strat",
-                           mode="lines", line=dict(color=COLORS[i % len(COLORS)], dash="dot")),
-                row=1, col=1,
+                go.Scatter(
+                    x=eq.index,
+                    y=eq.values,
+                    name=f"{inst} Strat",
+                    mode="lines",
+                    line=dict(color=COLORS[i % len(COLORS)], dash="dot"),
+                ),
+                row=1,
+                col=1,
             )
 
         # Portfolio strategy equity
         port_eq = equity_curve(port_strat_rets) / INIT_CASH
         fig.add_trace(
-            go.Scatter(x=port_eq.index, y=port_eq.values,
-                       name=f"Portfolio ({'+'.join(instruments)})",
-                       mode="lines", line=dict(width=3, color="black")),
-            row=1, col=1,
+            go.Scatter(
+                x=port_eq.index,
+                y=port_eq.values,
+                name=f"Portfolio ({'+'.join(instruments)})",
+                mode="lines",
+                line=dict(width=3, color="black"),
+            ),
+            row=1,
+            col=1,
         )
 
         # B&H equity
         bah_eq = equity_curve(port_bah_rets) / INIT_CASH
         fig.add_trace(
-            go.Scatter(x=bah_eq.index, y=bah_eq.values,
-                       name=f"B&H ({'+'.join(instruments)})",
-                       mode="lines", line=dict(width=2, dash="dash", color="gray")),
-            row=1, col=1,
+            go.Scatter(
+                x=bah_eq.index,
+                y=bah_eq.values,
+                name=f"B&H ({'+'.join(instruments)})",
+                mode="lines",
+                line=dict(width=2, dash="dash", color="gray"),
+            ),
+            row=1,
+            col=1,
         )
 
         # Portfolio drawdown
         port_dd = (port_eq - port_eq.cummax()) / port_eq.cummax()
         fig.add_trace(
-            go.Scatter(x=port_dd.index, y=port_dd.values, name="Portfolio DD",
-                       mode="lines", fill="tozeroy",
-                       line=dict(color="crimson", width=1)),
-            row=2, col=1,
+            go.Scatter(
+                x=port_dd.index,
+                y=port_dd.values,
+                name="Portfolio DD",
+                mode="lines",
+                fill="tozeroy",
+                line=dict(color="crimson", width=1),
+            ),
+            row=2,
+            col=1,
         )
 
         # Stats annotation
@@ -370,9 +402,15 @@ def main() -> None:
             f"Calmar={bah_stats['calmar']:.2f}"
         )
         fig.add_annotation(
-            text=annotation_text, xref="paper", yref="paper",
-            x=0.0, y=-0.12, showarrow=False, align="left",
-            font=dict(size=11), xanchor="left",
+            text=annotation_text,
+            xref="paper",
+            yref="paper",
+            x=0.0,
+            y=-0.12,
+            showarrow=False,
+            align="left",
+            font=dict(size=11),
+            xanchor="left",
         )
 
         fig.update_layout(
