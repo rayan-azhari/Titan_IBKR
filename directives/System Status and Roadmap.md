@@ -686,12 +686,53 @@ Also tested triple filter (HMM + Hurst + confluence) on EUR/USD -- HMM doesn't i
 | 1 | **AND-Gated Confluence** | **GLD H1** | `trend_mom` across H1/H4/D/W scales, AND-gate | **+1.46** | **80%** | **Ready for deployment** |
 | 2 | **MR + Confluence Regime** | **AUD/JPY H1** | VWAP deviation grid, rsi_14_dev disagreement filter | **+2.08** | **75%** | **Ready for deployment** |
 
-### 10.8 Next Steps
+### 10.8 Cross-Asset Novel Strategy Research
 
-1. **Deploy GLD AND-gated confluence** as production strategy in `titan/strategies/`
-2. **Deploy AUD/JPY MR + confluence regime** as production strategy -- replaces/augments the existing FX Carry AUD/JPY strategy
-3. **Pause MTF EUR/USD** -- edge invalidated, replace with MR FX (VWAP) which is already deployed
-4. **Expand GLD H1 data** -- only 13,283 bars (5 years). More history would allow larger IS windows and more WFO folds
+Brainstormed and tested 3 novel cross-asset strategies using existing daily data (TLT, IEF, SPY, QQQ, GLD, DXY, VIX).
+
+**Idea 1: Bond->Equity/Gold Momentum**
+- Signal: TLT/IEF log-return over lookback period predicts equity/gold returns
+- Edge: institutional constraint -- bond market prices rate expectations before equity market adjusts
+- **WFO Result: IEF->GLD LB=60, Sharpe +1.17, 68% positive folds across 37 folds (17+ years)**
+- **PASS** -- deeply validated signal, consistent across multiple regimes (2007-2026)
+
+**Idea 2: Volatility Risk Premium (VRP) Timing**
+- Signal: VIX - realized vol of SPY. Long when VRP high (complacent), reduce when VRP low (stressed)
+- VRP statistics: positive 84% of time, mean +3.5 vol pts
+- **Result: ALL negative OOS Sharpe. VRP doesn't work as timing signal.**
+- VRP is better as static context (already captured by VIX tiers in PortfolioRiskManager)
+
+**Idea 3: Cross-Asset AND-Gate Confluence**
+- Signal: when bonds/gold/dollar/equities agree on risk-on/risk-off direction (3+ of 4 must agree)
+- **57 out of 108 combos pass quality gates**
+- **Best: 60d GLD risk_off min2, OOS Sharpe +1.28, 81% time in market**
+- GLD is the dominant beneficiary -- when cross-asset signals agree on risk-off, long gold works
+
+**Research files:**
+- `research/cross_asset/run_bond_equity_momentum.py` -- bond momentum sweep (306/324 pass static IS/OOS)
+- `research/cross_asset/run_bond_equity_wfo.py` -- WFO validation (IEF->GLD +1.17, 37 folds)
+- `research/cross_asset/run_vrp_regime.py` -- VRP timing (FAIL -- all negative OOS)
+- `research/cross_asset/run_asset_class_confluence.py` -- 4-asset AND-gate (57/108 pass)
+
+### 10.9 Complete Session Discovery Summary
+
+| # | Strategy | Instrument | WFO Sharpe | % Pos Folds | Type | Status |
+|---|---|---|---|---|---|---|
+| 1 | **GLD AND-gated confluence** | GLD H1 | **+1.46** | 80% | Trend (multi-scale) | Ready |
+| 2 | **AUD/JPY MR + confluence regime** | AUD/JPY H1 | **+2.08** | 75% | Mean reversion | Ready |
+| 3 | **Bond->Gold momentum** | IEF->GLD daily | **+1.17** | 68% | Cross-asset lead-lag | Ready |
+| 4 | **Cross-asset confluence** | GLD risk_off | **+1.28** | N/A (static) | Macro AND-gate | Needs WFO |
+
+**Key insight:** Gold is the system's richest alpha source. It responds to macro factors (real rates, dollar, risk sentiment) that propagate with lags across asset classes, creating multiple independent edges.
+
+### 10.10 Next Steps
+
+1. **Deploy GLD AND-gated confluence** as production strategy
+2. **Deploy AUD/JPY MR + confluence regime** as production strategy
+3. **Deploy Bond->Gold momentum** (IEF->GLD) as production strategy
+4. **WFO validate cross-asset confluence** for GLD risk_off overlay
+5. **Pause MTF EUR/USD** -- edge invalidated
+6. **Expand GLD H1 data** -- more history for larger IS windows
 
 ---
 
@@ -707,6 +748,8 @@ Also tested triple filter (HMM + Hurst + confluence) on EUR/USD -- HMM doesn't i
 | Gold Macro | Gold Macro (cross-asset) | GLD daily | 5-10% | Deployed (Sharpe +0.60) |
 | Miners | ML PSKY | PSKY | 5-10% | Research validated |
 | **AUD/JPY MR** | **MR + confluence regime** | **AUD/JPY H1** | **5-10%** | **WFO VALIDATED (Sharpe +2.08)** |
+| **Bond->Gold** | **IEF momentum -> GLD** | **IEF/GLD daily** | **5-10%** | **WFO VALIDATED (Sharpe +1.17, 37 folds)** |
+| **Cross-Asset Overlay** | **4-asset AND-gate** | **TLT/GLD/DXY/SPY** | **Overlay** | **57/108 pass (needs WFO)** |
 | Carry | FX Carry | AUD/JPY | 5% | Deployed |
 | Intraday | ORB + Gap Fade | SPY + EUR/USD | 5-10% | LIVE / Deployed |
 | Pairs | Pairs Trading | GLD/EFA | 5% | Deployed (but inactive in recent window) |
