@@ -1,8 +1,8 @@
 # Titan-IBKR System Status and Roadmap
 
-**Last updated:** 2026-04-03
+**Last updated:** 2026-04-05
 **Author:** Architect (Claude Code)
-**Status:** Active development, 5 live strategies, 3 in validation, portfolio risk layer deployed
+**Status:** Active development, 5 live strategies, portfolio risk layer deployed, portfolio WFO framework built, multi-scale confluence research complete
 
 ---
 
@@ -72,14 +72,14 @@ Code flows one direction: `research/` discovers -> `config/` captures -> `titan/
 
 ### 2.2 MTF Confluence (FX Trend-Following)
 
-**Status:** LIVE | **Validated:** Round 4, 2026-03
+**Status:** LIVE (EDGE INVALIDATED -- see Section 10.2) | **Validated:** Round 4, 2026-03
 
 | Property | Value |
 |----------|-------|
 | Signal | Weighted MA crossover + RSI across 4 timeframes (H1/H4/D/W) |
 | Instruments | EUR/USD |
 | Timeframe | Multi (H1 primary, H4/D/W context) |
-| OOS Sharpe | +1.94 (long+short combined) |
+| OOS Sharpe | ~~+1.94~~ **INVALIDATED** (cross-TF look-ahead bias discovered April 2026) |
 | Sizing | 1% equity risk / (ATR * stop_mult) |
 | Portfolio integration | PortfolioRiskManager wired (April 2026) |
 | Config | `config/mtf_eurusd.toml` |
@@ -536,18 +536,145 @@ scale_factor = min(dd_scale, vol_scale, regime_scale)
 
 ---
 
+## 10. April 5, 2026 Session: Portfolio WFO + Multi-Scale Confluence Research
+
+### 10.1 Portfolio-Level WFO Framework (NEW)
+
+Built `research/portfolio/run_portfolio_wfo.py` -- the system's first combined portfolio backtest with walk-forward optimization. Restored and extended the archived `research/_archive/portfolio/` module.
+
+**Capabilities:**
+- Loads OOS return series from all strategies via registry (`research/portfolio/loaders/oos_returns.py`)
+- 4 weighting schemes: equal, risk-parity, ICIR-weighted, Kelly
+- Rolling IS/OOS folds with per-fold weight re-estimation
+- Full stats: Sharpe, Calmar, MaxDD, RoR (Monte Carlo + Balsara), diversification ratio, correlation matrix
+- Weight constraints: max 60% single strategy, correlation penalty at |r| > 0.70
+
+**New OOS loaders added:** Gold Macro, Pairs GLD/EFA, FX Carry AUD/JPY, MTF EUR/USD, Gap Fade (stub)
+
+**Portfolio WFO result (6 strategies, risk-parity, IS=252d OOS=63d):**
+
+| Metric | Value |
+|--------|-------|
+| Stitched Sharpe | +2.04 |
+| CAGR | +2.79% |
+| Max Drawdown | -0.85% |
+| Positive Folds | 7/7 (100%) -- but note Pairs GLD/EFA contributes 0 in this window |
+
+**Files created:**
+- `research/portfolio/run_portfolio_wfo.py` -- WFO orchestrator
+- `research/portfolio/loaders/oos_returns.py` -- extended with 5 new loaders
+- `research/fx_carry/run_backtest.py` -- FX Carry research backtest (was missing)
+
+### 10.2 MTF Confluence Look-Ahead Bias Discovery (CRITICAL)
+
+**Finding:** The reported +1.94 OOS Sharpe for MTF EUR/USD was inflated by cross-timeframe ffill look-ahead bias.
+
+**Root cause:** Daily/weekly bar values were forward-filled to earlier H1 bars via `reindex(method='ffill')`. This means H1 bars at 00:00-20:00 UTC had access to daily bar data that wouldn't actually close until 21:00 UTC.
+
+**Evidence:** When computing all indicators on a single H1 stream with scaled periods (eliminating the alignment problem), the MTF MA/RSI signal produced:
+- 5,148 parameter combinations tested (3 MA types x D/W periods x thresholds)
+- Best OOS Sharpe: **+0.44** (was +1.94 with ffill)
+- Win rate: 47-50% (coin flip)
+- Conclusion: **MTF MA/RSI confluence has zero genuine edge on EUR/USD**
+
+**Impact:** The MTF EUR/USD strategy's backtest results cannot be trusted. The live strategy may still have some edge due to the continuous-forecast + position-inertia improvements (which are not present in the backtest), but the fundamental signal has not been validated without look-ahead.
+
+### 10.3 Multi-Scale IC Feature Ranking (208 features, 9 instruments)
+
+Extended `phase1_sweep.py` with `period_scale` parameter and `build_multiscale_signals()` to compute 52 signals at 4 scales (H1, H4, D, W) on a single H1 stream = 208 features. Zero cross-TF look-ahead by construction.
+
+**IC scan results:**
+
+| Instrument | STRONG | USABLE | WEAK | Best IC | Verdict |
+|---|---|---|---|---|---|
+| **GLD** | **5** | **7** | 12 | -0.098 | **Promising** |
+| SPY | 1 | 1 | 5 | -0.060 | Marginal |
+| USD/JPY | 1 | 0 | 27 | +0.061 | Marginal |
+| QQQ | 0 | 1 | 8 | -0.057 | No edge |
+| AUD/JPY | 0 | 2 | 2 | -0.053 | No edge |
+| EUR/USD | 0 | 0 | 9 | -0.041 | No edge |
+| GBP/USD | 0 | 0 | 4 | ~0.04 | No edge |
+| AUD/USD | 0 | 0 | 5 | ~0.04 | No edge |
+| USD/CHF | 1 | 0 | 2 | ~0.05 | No edge |
+
+GLD's strong signals are concentrated at weekly scale: `W_parkinson_vol`, `W_garman_klass`, `W_cci_20`, `W_accel_bb_width`, `D_roc_20`, `W_accel_rvol20`.
+
+**However, IC feature ranking alone did NOT produce WFO-validated results.** GLD WFO with top IC-ranked features showed Sharpe ~0.08 with 33% positive folds.
+
+### 10.4 AND-Gated Multi-Scale Confluence -- NOVEL VALIDATED STRATEGY
+
+**The breakthrough:** Instead of ranking 208 features independently (IC approach), compute the **same signal** at all 4 scales and require ALL scales to agree on direction before entering. This AND-gate filter is a noise reduction mechanism that only allows trades when H1, H4, daily, and weekly scales confirm.
+
+**Method:** For each of 52 signal families:
+1. Compute at H1, H4 (×4), D (×24), W (×120) scales on single H1 stream
+2. Weighted sum: score = 10%×H1 + 5%×H4 + 55%×D + 30%×W
+3. AND-gate: zero the score when any scale disagrees on sign
+4. Z-score normalize on IS, threshold entry, shift(1) for causality
+
+**Confluence sweep (52 signals × 2 modes × 5 thresholds = 520 combos per instrument):**
+
+| Instrument | Best Signal | Mode | OOS Sharpe | Gate |
+|---|---|---|---|---|
+| **GLD** | `trend_mom` | AND-gate | **+1.46** | **PASS** |
+| GBP/USD | `ema_slope_10` | AND-gate | +0.16 | FAIL |
+| QQQ | `donchian_pos_10` | AND-gate | +0.13 | FAIL |
+| EUR/USD | `trend_mom` | AND-gate | +0.06 | FAIL |
+| USD/JPY | `ema_slope_10` | AND-gate | -0.05 | FAIL |
+| AUD/JPY | `stoch_d_dev` | AND-gate | -0.05 | FAIL |
+| SPY | `trend_mom` | AND-gate | -0.27 | FAIL |
+
+**GLD WFO validation (6 top signals × 3 thresholds = 18 combos, all positive):**
+
+| Signal | Threshold | Stitched Sharpe | CAGR | Max DD | Folds | % Positive |
+|---|---|---|---|---|---|---|
+| **`trend_mom`** | **0.75** | **+1.46** | **+21.6%** | **-12.0%** | 5 | **80%** |
+| `stoch_d_dev` | 1.50 | +1.36 | +17.5% | -8.2% | 4 | 75% |
+| `ema_slope_10` | 1.50 | +1.33 | +19.0% | -17.8% | 6 | 50% |
+| `rsi_14_dev` | 0.75 | +1.24 | +16.0% | -20.5% | 5 | 80% |
+
+**`trend_mom`** = `sign(ma_spread_5_20) × |rsi_14_dev| / 50` -- trend direction gates momentum magnitude. When all 4 scales agree gold is trending with strengthening RSI, the signal enters. This captures gold's macro-driven multi-week trends.
+
+**All 18 GLD combos had positive OOS Sharpe** -- the only instrument where this occurred. GLD is unique because gold trends persist across timeframes when driven by real rates, central bank buying, and dollar weakness.
+
+**Key insight:** AND-gate consistently outperforms weighted-sum (+0.16 Sharpe improvement on GLD on average). The confirmation filter is the critical innovation.
+
+### 10.5 Research Files Created This Session
+
+| File | Purpose |
+|---|---|
+| `research/portfolio/run_portfolio_wfo.py` | Portfolio-level WFO with rolling allocation re-estimation |
+| `research/portfolio/loaders/oos_returns.py` | Extended: 5 new OOS loaders (Gold Macro, Pairs, FX Carry, MTF, Gap Fade) |
+| `research/portfolio/run_portfolio_research.py` | Updated: --wfo flag, new default strategy set |
+| `research/fx_carry/run_backtest.py` | FX Carry research backtest (AUD/JPY, SMA filter, vol-targeting) |
+| `research/mtf/run_single_tf_backtest.py` | Single-TF MTF with scaled MAs + full parameter sweep |
+| `research/ic_analysis/phase1_sweep.py` | Extended: `period_scale`, `build_multiscale_signals()`, 7 scaled group functions |
+| `research/ic_analysis/run_multiscale_ic.py` | 208-feature IC scan with fast vectorized Spearman |
+| `research/ic_analysis/run_multiscale_wfo.py` | WFO for IC-ranked multi-scale features |
+| `research/ic_analysis/run_multiscale_confluence.py` | AND-gated confluence sweep (52 signals × 2 modes × 5 thresholds) |
+| `research/ic_analysis/run_confluence_wfo.py` | WFO validation for AND-gated confluence signals |
+
+### 10.6 Next Steps
+
+1. **Deploy GLD AND-gated confluence** as a production strategy in `titan/strategies/`. This would complement the existing Gold Macro strategy (which uses cross-asset macro factors vs. multi-scale technical confluence).
+2. **Investigate MTF EUR/USD replacement** -- the MR FX (VWAP) strategy is the validated FX approach; MTF confluence should be paused or replaced.
+3. **Expand GLD H1 data** -- only 13,283 bars (5 years). More history would allow larger IS windows and more WFO folds.
+
+---
+
 ## 11. Target Portfolio Composition
 
-| Bucket | Strategy | Instrument(s) | Expected Alloc | Correlation |
-|--------|----------|---------------|:-----------:|-------------|
-| US Equity Trend | ETF Trend + ML QQQ | QQQ (or SPY) | 25-30% | -- |
-| IC Mean-Rev | IC Equity Daily | UNH, TXN, WMT, etc. | 20-25% | Low (MR vs trend) |
-| FX Trend | MTF Confluence + ML EUR_USD | EUR/USD | 15-20% | Low (different asset) |
-| FX Mean-Rev | MR FX (VWAP) | EUR/USD M5 | 10-15% | Negative (MR vs trend) |
-| Miners | ML PSKY | PSKY | 5-10% | Low (uncorrelated) |
-| Gold/Commodity | ETF Trend GLD+DBC | GLD, DBC | 5-10% | Low (macro drivers) |
-| Carry | FX Carry (future) | AUD/JPY | 5% | Near-zero (structural) |
-| Intraday | ORB + Gap Fade (future) | SPY + EUR/USD | 5-10% | Near-zero (intraday) |
+| Bucket | Strategy | Instrument(s) | Expected Alloc | Status |
+|--------|----------|---------------|:-----------:|--------|
+| US Equity Trend | ETF Trend + ML QQQ | QQQ (or SPY) | 25-30% | LIVE |
+| IC Mean-Rev | IC Equity Daily | HWM, CB, SYK, NOC, WMT, ABNB, GL | 20-25% | LIVE |
+| FX Trend | ~~MTF Confluence~~ | ~~EUR/USD~~ | ~~15-20%~~ | **INVALIDATED** (look-ahead bias) |
+| FX Mean-Rev | MR FX (VWAP) | EUR/USD M5 | 10-15% | DEPLOYED |
+| **Gold Confluence** | **AND-gated trend_mom** | **GLD H1** | **10-15%** | **WFO VALIDATED (Sharpe +1.46)** |
+| Gold Macro | Gold Macro (cross-asset) | GLD daily | 5-10% | Deployed (Sharpe +0.60) |
+| Miners | ML PSKY | PSKY | 5-10% | Research validated |
+| Carry | FX Carry | AUD/JPY | 5% | Deployed |
+| Intraday | ORB + Gap Fade | SPY + EUR/USD | 5-10% | LIVE / Deployed |
+| Pairs | Pairs Trading | GLD/EFA | 5% | Deployed (but inactive in recent window) |
 
 Expected portfolio Sharpe: 1.5-2.5 (diversification multiplier ~1.5x on individual Sharpe ~1.0)
 

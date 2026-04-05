@@ -13,7 +13,7 @@ Titan-IBKR is a multi-strategy quantitative trading system that connects to Inte
 
 | # | Strategy | Instrument(s) | Timeframe | Style | Runner |
 |---|----------|---------------|-----------|-------|--------|
-| 1 | **MTF Confluence** | EUR/USD | H1/H4/D/W | FX trend | `run_live_mtf.py` |
+| 1 | **MTF Confluence** | EUR/USD | H1/H4/D/W | FX trend | `run_live_mtf.py` | *Edge invalidated April 2026 -- see roadmap* |
 | 2 | **ORB** | 7 US equities | 5M | Intraday breakout | `run_live_orb.py` |
 | 3 | **ETF Trend** | SPY (expandable) | D | Trend following | `run_live_etf_trend.py` |
 | 4 | **IC Equity Daily** | 7 US equities | D | Mean reversion | `run_live_ic_mtf.py` |

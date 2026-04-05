@@ -365,19 +365,233 @@ def _compute_group_g(sigs: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def build_all_signals(df: pd.DataFrame, window_1y: int) -> pd.DataFrame:
-    """Compute all 52 signals. Groups A->B->C->D, then E (uses A/B/D), F, G."""
+def build_all_signals(
+    df: pd.DataFrame,
+    window_1y: int,
+    period_scale: int = 1,
+    name_prefix: str = "",
+) -> pd.DataFrame:
+    """Compute all 52 signals. Groups A->B->C->D, then E (uses A/B/D), F, G.
+
+    When period_scale > 1, all internal indicator periods are multiplied by the
+    scale factor. This allows computing "virtual higher-TF" signals on a single
+    lower-TF data stream (e.g. daily-scale signals on H1 bars with scale=24).
+
+    When name_prefix is set, all signal names are prefixed (e.g. "D_ma_spread_5_20").
+    """
     close = df["close"]
-    a = _compute_group_a(close)
-    b = _compute_group_b(df)
-    c = _compute_group_c(close, window_1y)
-    d = _compute_group_d(df)
+    s = period_scale
+
+    if s == 1 and name_prefix == "":
+        # Original path -- no scaling, no prefix (backward compatible)
+        a = _compute_group_a(close)
+        b = _compute_group_b(df)
+        c = _compute_group_c(close, window_1y)
+        d = _compute_group_d(df)
+        base = pd.concat([a, b, c, d], axis=1)
+        e = _compute_group_e(base, close)
+        f = _compute_group_f(df)
+        all_so_far = pd.concat([base, e, f], axis=1)
+        g = _compute_group_g(all_so_far)
+        return pd.concat([all_so_far, g], axis=1)
+
+    # Scaled path -- compute each group with scaled periods
+    a = _compute_group_a_scaled(close, s, name_prefix)
+    b = _compute_group_b_scaled(df, s, name_prefix)
+    c = _compute_group_c_scaled(close, window_1y, s, name_prefix)
+    d = _compute_group_d_scaled(df, s, name_prefix)
     base = pd.concat([a, b, c, d], axis=1)
-    e = _compute_group_e(base, close)
-    f = _compute_group_f(df)
+    e = _compute_group_e_scaled(base, close, s, name_prefix)
+    f = _compute_group_f_scaled(df, s, name_prefix)
     all_so_far = pd.concat([base, e, f], axis=1)
-    g = _compute_group_g(all_so_far)
+    g = _compute_group_g_scaled(all_so_far, name_prefix)
     return pd.concat([all_so_far, g], axis=1)
+
+
+# ── Scaled group factories ────────────────────────────────────────────────────
+
+
+def _compute_group_a_scaled(close: pd.Series, s: int, p: str) -> pd.DataFrame:
+    """Group A: Trend (10 signals) -- all periods scaled by s."""
+    e5 = ema(close, 5 * s)
+    e10 = ema(close, 10 * s)
+    e12 = ema(close, 12 * s)
+    e20 = ema(close, 20 * s)
+    e26 = ema(close, 26 * s)
+    e50 = ema(close, 50 * s)
+    e100 = ema(close, 100 * s)
+    e200 = ema(close, 200 * s)
+    s20 = sma(close, 20 * s)
+    s50 = sma(close, 50 * s)
+    roll_std20 = close.rolling(20 * s).std()
+    w5 = wma(close, 5 * s)
+    w20 = wma(close, 20 * s)
+
+    out = pd.DataFrame(index=close.index)
+    out[_tag(f"{p}ma_spread_5_20", "Trend")] = (e5 - e20) / e20
+    out[_tag(f"{p}ma_spread_10_50", "Trend")] = (e10 - e50) / e50
+    out[_tag(f"{p}ma_spread_20_100", "Trend")] = (e20 - e100) / e100
+    out[_tag(f"{p}ma_spread_50_200", "Trend")] = (e50 - e200) / e200
+    out[_tag(f"{p}wma_spread_5_20", "Trend")] = (w5 - w20) / w20.replace(0, np.nan)
+    out[_tag(f"{p}price_vs_sma20", "Trend")] = (close - s20) / s20
+    out[_tag(f"{p}price_vs_sma50", "Trend")] = (close - s50) / s50
+    out[_tag(f"{p}macd_norm", "Trend")] = (e12 - e26) / roll_std20.replace(0, np.nan)
+    out[_tag(f"{p}ema_slope_10", "Trend")] = (e10 - e10.shift(5 * s)) / e10.shift(5 * s)
+    out[_tag(f"{p}ema_slope_20", "Trend")] = (e20 - e20.shift(10 * s)) / e20.shift(10 * s)
+    return out
+
+
+def _compute_group_b_scaled(df: pd.DataFrame, s: int, p: str) -> pd.DataFrame:
+    """Group B: Momentum (11 signals) -- periods scaled by s."""
+    close = df["close"]
+    log_c = np.log(close)
+    s20 = sma(close, 20 * s)
+    stoch_k_raw, stoch_d_raw = stochastic(df, k_period=14 * s, d_period=3 * s)
+    hh14 = df["high"].rolling(14 * s).max()
+    ll14 = df["low"].rolling(14 * s).min()
+    wr14 = (hh14 - close) / (hh14 - ll14).replace(0, np.nan) * -100
+    mad20 = (close - s20).abs().rolling(20 * s).mean()
+
+    out = pd.DataFrame(index=close.index)
+    out[_tag(f"{p}rsi_7_dev", "Momen")] = rsi(close, 7 * s) - 50.0
+    out[_tag(f"{p}rsi_14_dev", "Momen")] = rsi(close, 14 * s) - 50.0
+    out[_tag(f"{p}rsi_21_dev", "Momen")] = rsi(close, 21 * s) - 50.0
+    out[_tag(f"{p}stoch_k_dev", "Momen")] = stoch_k_raw - 50.0
+    out[_tag(f"{p}stoch_d_dev", "Momen")] = stoch_d_raw - 50.0
+    out[_tag(f"{p}cci_20", "Momen")] = (close - s20) / (0.015 * mad20.replace(0, np.nan))
+    out[_tag(f"{p}williams_r_dev", "Momen")] = wr14 + 50.0
+    out[_tag(f"{p}roc_3", "Momen")] = log_c - log_c.shift(3 * s)
+    out[_tag(f"{p}roc_10", "Momen")] = log_c - log_c.shift(10 * s)
+    out[_tag(f"{p}roc_20", "Momen")] = log_c - log_c.shift(20 * s)
+    out[_tag(f"{p}roc_60", "Momen")] = log_c - log_c.shift(60 * s)
+    return out
+
+
+def _compute_group_c_scaled(close: pd.Series, window_1y: int, s: int, p: str) -> pd.DataFrame:
+    """Group C: Mean Reversion (6 signals) -- windows scaled by s."""
+    out = pd.DataFrame(index=close.index)
+    for w in (20, 50):
+        sw = w * s
+        sm = sma(close, sw)
+        std = close.rolling(sw).std().replace(0, np.nan)
+        out[_tag(f"{p}bb_zscore_{w}", "MRev")] = (close - sm) / (2.0 * std)
+        out[_tag(f"{p}zscore_{w}", "MRev")] = (close - sm) / std
+    sw100 = 100 * s
+    s100 = sma(close, sw100)
+    std100 = close.rolling(sw100).std().replace(0, np.nan)
+    out[_tag(f"{p}zscore_100", "MRev")] = (close - s100) / std100
+    sw1y = window_1y * s
+    roll_mean = close.rolling(sw1y).mean()
+    roll_std = close.rolling(sw1y).std().replace(0, np.nan)
+    out[_tag(f"{p}zscore_{window_1y}", "MRev")] = (close - roll_mean) / roll_std
+    return out
+
+
+def _compute_group_d_scaled(df: pd.DataFrame, s: int, p: str) -> pd.DataFrame:
+    """Group D: Volatility State (7 signals) -- periods scaled by s."""
+    close = df["close"]
+    log_r = np.log(close).diff()
+    log_hl = np.log(df["high"] / df["low"].replace(0, np.nan))
+    log_co = np.log(close / df["open"].replace(0, np.nan))
+    gk_bar = 0.5 * log_hl**2 - (2.0 * np.log(2) - 1.0) * log_co**2
+    gk_roll = gk_bar.rolling(20 * s).mean().clip(lower=0.0) ** 0.5
+    pk_bar = log_hl**2 / (4.0 * np.log(2))
+    pk_roll = pk_bar.rolling(20 * s).mean().clip(lower=0.0) ** 0.5
+
+    out = pd.DataFrame(index=close.index)
+    out[_tag(f"{p}norm_atr_14", "Vol")] = atr(df, 14 * s) / close
+    out[_tag(f"{p}realized_vol_5", "Vol")] = log_r.rolling(5 * s).std() * np.sqrt(252)
+    out[_tag(f"{p}realized_vol_20", "Vol")] = log_r.rolling(20 * s).std() * np.sqrt(252)
+    out[_tag(f"{p}garman_klass", "Vol")] = gk_roll
+    out[_tag(f"{p}parkinson_vol", "Vol")] = pk_roll
+    out[_tag(f"{p}bb_width", "Vol")] = bollinger_bw(close, 20 * s)
+    out[_tag(f"{p}adx_14", "Vol")] = adx(df, 14 * s)
+    return out
+
+
+def _compute_group_e_scaled(sigs: pd.DataFrame, close: pd.Series, s: int, p: str) -> pd.DataFrame:
+    """Group E: Acceleration (7 signals). diff(1) stays at 1-bar for regime change detection."""
+    out = pd.DataFrame(index=sigs.index)
+    out[_tag(f"{p}accel_roc10", "Accel")] = sigs[f"{p}roc_10"].diff(1)
+    out[_tag(f"{p}accel_rsi14", "Accel")] = sigs[f"{p}rsi_14_dev"].diff(1)
+    out[_tag(f"{p}accel_macd", "Accel")] = macd_hist(close, 12 * s, 26 * s, 9 * s).diff(1)
+    out[_tag(f"{p}accel_atr", "Accel")] = sigs[f"{p}norm_atr_14"].diff(1)
+    out[_tag(f"{p}accel_bb_width", "Accel")] = sigs[f"{p}bb_width"].diff(1)
+    out[_tag(f"{p}accel_rvol20", "Accel")] = sigs[f"{p}realized_vol_20"].diff(1)
+    out[_tag(f"{p}accel_stoch_k", "Accel")] = sigs[f"{p}stoch_k_dev"].diff(1)
+    return out
+
+
+def _compute_group_f_scaled(df: pd.DataFrame, s: int, p: str) -> pd.DataFrame:
+    """Group F: Structural / Breakout (6 signals) -- periods scaled by s."""
+    close = df["close"]
+    e20 = ema(close, 20 * s)
+    atr10 = atr(df, 10 * s).replace(0, np.nan)
+
+    out = pd.DataFrame(index=close.index)
+    for w in (10, 20, 55):
+        sw = w * s
+        lo = df["low"].rolling(sw).min()
+        hi = df["high"].rolling(sw).max()
+        rng = (hi - lo).replace(0, np.nan)
+        out[_tag(f"{p}donchian_pos_{w}", "Struct")] = (close - lo) / rng - 0.5
+    out[_tag(f"{p}keltner_pos", "Struct")] = (close - e20) / (2.0 * atr10)
+    out[_tag(f"{p}price_pct_rank_20", "Struct")] = close.rolling(20 * s).rank(pct=True) - 0.5
+    out[_tag(f"{p}price_pct_rank_60", "Struct")] = close.rolling(60 * s).rank(pct=True) - 0.5
+    return out
+
+
+def _compute_group_g_scaled(sigs: pd.DataFrame, p: str) -> pd.DataFrame:
+    """Group G: Semantic Combinations (5 signals). Built from scaled inputs."""
+    atr_norm = sigs[f"{p}norm_atr_14"]
+    atr_ma60 = atr_norm.rolling(60).mean().replace(0, np.nan)
+
+    out = pd.DataFrame(index=sigs.index)
+    out[_tag(f"{p}trend_mom", "Combo")] = (
+        np.sign(sigs[f"{p}ma_spread_5_20"]) * sigs[f"{p}rsi_14_dev"].abs() / 50.0
+    )
+    out[_tag(f"{p}trend_vol_adj", "Combo")] = sigs[f"{p}ma_spread_5_20"] / (atr_norm + 1e-9)
+    out[_tag(f"{p}mom_accel_combo", "Combo")] = sigs[f"{p}rsi_14_dev"] * np.sign(
+        sigs[f"{p}accel_rsi14"]
+    )
+    out[_tag(f"{p}donchian_rsi", "Combo")] = sigs[f"{p}donchian_pos_20"] * (
+        sigs[f"{p}rsi_14_dev"] / 50.0
+    )
+    out[_tag(f"{p}vol_regime_trend", "Combo")] = sigs[f"{p}ma_spread_5_20"] * (
+        1.0 - atr_norm / atr_ma60
+    )
+    return out
+
+
+# ── Multi-scale signal builder ────────────────────────────────────────────────
+
+SCALE_MAP: dict[str, int] = {"H1": 1, "H4": 4, "D": 24, "W": 120}
+
+
+def build_multiscale_signals(
+    df: pd.DataFrame,
+    window_1y: int,
+    scales: dict[str, int] | None = None,
+) -> pd.DataFrame:
+    """Compute 52 signals at each scale, concatenated into a single DataFrame.
+
+    With default 4 scales (H1, H4, D, W), produces 208 features all on a
+    single data stream -- no cross-TF alignment or ffill needed.
+    """
+    if scales is None:
+        scales = SCALE_MAP
+    parts = []
+    for label, mult in scales.items():
+        prefix = f"{label}_" if mult > 1 else ""
+        logger.info(
+            "Computing %d-scale signals (prefix='%s', period_mult=%d)...", mult, label, mult
+        )
+        signals = build_all_signals(df, window_1y, period_scale=mult, name_prefix=prefix)
+        parts.append(signals)
+        logger.info("  -> %d signals computed", len(signals.columns))
+    result = pd.concat(parts, axis=1)
+    logger.info("Total multi-scale features: %d", len(result.columns))
+    return result
 
 
 # ── Display helpers ────────────────────────────────────────────────────────────
