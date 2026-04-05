@@ -1,0 +1,16 @@
+# gld_confluence.toml -- GLD AND-Gated Multi-Scale Confluence
+# WFO validated: Sharpe +1.46, 80% positive folds
+
+threshold = 0.75        # Z-score entry threshold
+exit_buffer = 0.10      # Exit when score crosses opposite side
+vol_target_pct = 0.10   # 10% annualized vol target
+ewma_span = 20
+max_leverage = 1.5
+warmup_bars = 5000      # W-scale needs ~3120 H1 bars warmup
+zscore_window = 5000    # Expanding z-score calibration
+
+[weights]
+H1 = 0.10
+H4 = 0.05
+D  = 0.55
+W  = 0.30

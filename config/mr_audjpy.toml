@@ -1,0 +1,24 @@
+# mr_audjpy.toml -- AUD/JPY MR + Confluence Regime Filter
+# WFO validated: Sharpe +2.08, 75% positive folds
+
+[vwap]
+anchor = 24             # Rolling VWAP anchor (H1 bars = 1 day)
+
+[signal]
+pct_window = 500        # Rolling percentile window
+tiers_pct = [0.95, 0.98, 0.99, 0.999]
+tier_sizes = [1, 2, 4, 8]
+reversion_pct = 0.50    # Exit at 50% reversion
+session_start = 7       # Entry start hour (UTC)
+session_end = 12        # Entry end hour (UTC)
+ny_close = 21           # Hard close hour (UTC)
+
+[regime]
+# Confluence disagreement: rsi_14_dev at H1/H4/D/W scales must disagree
+filter_signal = "rsi_14_dev"
+
+[risk]
+vol_target_pct = 0.08   # 8% annualized vol target
+ewma_span = 20
+max_leverage = 1.5
+warmup_bars = 1000

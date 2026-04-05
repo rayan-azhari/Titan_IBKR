@@ -1,0 +1,10 @@
+# bond_gold.toml -- Bond->Gold Cross-Asset Momentum
+# WFO validated: Sharpe +1.17, 68% positive folds, 37 folds (2007-2026)
+
+lookback = 60           # IEF momentum lookback (days)
+threshold = 0.50        # Z-score entry threshold
+hold_days = 20          # Minimum holding period
+vol_target_pct = 0.10   # 10% annualized vol target
+ewma_span = 20
+max_leverage = 1.5
+warmup_bars = 120
