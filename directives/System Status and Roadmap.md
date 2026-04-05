@@ -653,11 +653,45 @@ GLD's strong signals are concentrated at weekly scale: `W_parkinson_vol`, `W_gar
 | `research/ic_analysis/run_multiscale_confluence.py` | AND-gated confluence sweep (52 signals × 2 modes × 5 thresholds) |
 | `research/ic_analysis/run_confluence_wfo.py` | WFO validation for AND-gated confluence signals |
 
-### 10.6 Next Steps
+### 10.6 MR + Confluence Regime Filter Discovery
 
-1. **Deploy GLD AND-gated confluence** as a production strategy in `titan/strategies/`. This would complement the existing Gold Macro strategy (which uses cross-asset macro factors vs. multi-scale technical confluence).
-2. **Investigate MTF EUR/USD replacement** -- the MR FX (VWAP) strategy is the validated FX approach; MTF confluence should be paused or replaced.
-3. **Expand GLD H1 data** -- only 13,283 bars (5 years). More history would allow larger IS windows and more WFO folds.
+Tested the VWAP mean-reversion strategy with confluence disagreement as a regime filter across 9 instruments (EUR/USD, GBP/USD, USD/JPY, AUD/JPY, GLD, SPY, QQQ, DAX, FTSE).
+
+**Confluence disagreement as MR filter:** When multi-scale signals disagree on direction, the market is ranging -- ideal for mean reversion. When all scales agree, the market is trending -- block MR entries.
+
+Also tested triple filter (HMM + Hurst + confluence) on EUR/USD -- HMM doesn't improve results on H1 data.
+
+**MR + Confluence WFO Results:**
+
+| Instrument | Filter | Tiers | Sharpe | Trades | % Pos | Gate |
+|---|---|---|---|---|---|---|
+| **AUD/JPY** | **conf_rsi_14_dev** | **95/98/99/99.9** | **+2.08** | **119** | **75%** | **PASS** |
+| EUR/USD | conf_rsi_14_dev | 95/98/99/99.9 | +1.18 | 180 | 31% | FAIL |
+| GBP/USD | conf_rsi_14_dev | 90/95/98/99 | +0.30 | 211 | 75% | FAIL |
+| GLD/SPY/QQQ/DAX/FTSE | -- | -- | 0.00 | 0 | 0% | FAIL |
+
+**AUD/JPY works because:** It's a carry pair with well-defined ranging behavior during Asian/London sessions. When scales disagree on direction, AUD/JPY oscillates around VWAP. Average hold time ~8 hours (pure intraday).
+
+**Equities produce zero MR trades:** GLD, SPY, QQQ, DAX, FTSE don't generate enough VWAP deviation within the session window at conservative thresholds. These instruments trend too strongly for intraday MR.
+
+**Research files:**
+- `research/mean_reversion/run_confluence_regime_test.py` -- confluence MR sweep (52 signals × filters × thresholds)
+- `research/mean_reversion/run_confluence_regime_wfo.py` -- WFO for MR + confluence
+- `research/mean_reversion/run_triple_filter_wfo.py` -- HMM + Hurst + confluence triple filter WFO
+
+### 10.7 Session Summary: Two Novel Validated Strategies
+
+| # | Strategy | Instrument | Signal | WFO Sharpe | % Pos Folds | Status |
+|---|---|---|---|---|---|---|
+| 1 | **AND-Gated Confluence** | **GLD H1** | `trend_mom` across H1/H4/D/W scales, AND-gate | **+1.46** | **80%** | **Ready for deployment** |
+| 2 | **MR + Confluence Regime** | **AUD/JPY H1** | VWAP deviation grid, rsi_14_dev disagreement filter | **+2.08** | **75%** | **Ready for deployment** |
+
+### 10.8 Next Steps
+
+1. **Deploy GLD AND-gated confluence** as production strategy in `titan/strategies/`
+2. **Deploy AUD/JPY MR + confluence regime** as production strategy -- replaces/augments the existing FX Carry AUD/JPY strategy
+3. **Pause MTF EUR/USD** -- edge invalidated, replace with MR FX (VWAP) which is already deployed
+4. **Expand GLD H1 data** -- only 13,283 bars (5 years). More history would allow larger IS windows and more WFO folds
 
 ---
 
@@ -672,6 +706,7 @@ GLD's strong signals are concentrated at weekly scale: `W_parkinson_vol`, `W_gar
 | **Gold Confluence** | **AND-gated trend_mom** | **GLD H1** | **10-15%** | **WFO VALIDATED (Sharpe +1.46)** |
 | Gold Macro | Gold Macro (cross-asset) | GLD daily | 5-10% | Deployed (Sharpe +0.60) |
 | Miners | ML PSKY | PSKY | 5-10% | Research validated |
+| **AUD/JPY MR** | **MR + confluence regime** | **AUD/JPY H1** | **5-10%** | **WFO VALIDATED (Sharpe +2.08)** |
 | Carry | FX Carry | AUD/JPY | 5% | Deployed |
 | Intraday | ORB + Gap Fade | SPY + EUR/USD | 5-10% | LIVE / Deployed |
 | Pairs | Pairs Trading | GLD/EFA | 5% | Deployed (but inactive in recent window) |
