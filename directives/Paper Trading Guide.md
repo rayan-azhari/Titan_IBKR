@@ -1,7 +1,7 @@
 # Paper Trading Guide
 
-> Last updated: 2026-04-04
-> System: Titan-IBKR-Algo v2 -- 14 strategies, 9 live runners
+> Last updated: 2026-04-05
+> System: Titan-IBKR-Algo v3 -- 17 strategies, unified portfolio runner
 
 ---
 
@@ -11,17 +11,23 @@ Titan-IBKR is a multi-strategy quantitative trading system that connects to Inte
 
 ### Strategy Map
 
-| # | Strategy | Instrument(s) | Timeframe | Style | Runner |
-|---|----------|---------------|-----------|-------|--------|
-| 1 | **MTF Confluence** | EUR/USD | H1/H4/D/W | FX trend | `run_live_mtf.py` | *Edge invalidated April 2026 -- see roadmap* |
-| 2 | **ORB** | 7 US equities | 5M | Intraday breakout | `run_live_orb.py` |
-| 3 | **ETF Trend** | SPY (expandable) | D | Trend following | `run_live_etf_trend.py` |
-| 4 | **IC Equity Daily** | 7 US equities | D | Mean reversion | `run_live_ic_mtf.py` |
-| 5 | **ML Classifier** | EUR/USD (or others) | D/H1 | ML signal | `run_live_ml.py` |
-| 6 | **Gold Macro** | GLD | D | Cross-asset macro | `run_live_gold_macro.py` |
-| 7 | **Gap Fade** | EUR/USD | M5 | Intraday MR | `run_live_gap_fade.py` |
-| 8 | **FX Carry** | AUD/JPY | D | Carry premium | `run_live_fx_carry.py` |
-| 9 | **Pairs Trading** | GLD / EFA | D | Market-neutral | `run_live_pairs.py` |
+| # | Strategy | Instrument(s) | Timeframe | Style | Runner | WFO Sharpe |
+|---|----------|---------------|-----------|-------|--------|-----------|
+| 1 | ~~MTF Confluence~~ | ~~EUR/USD~~ | ~~H1/H4/D/W~~ | ~~FX trend~~ | `run_live_mtf.py` | **INVALIDATED** |
+| 2 | **ORB** | 7 US equities | 5M | Intraday breakout | `run_live_orb.py` | Validated |
+| 3 | **ETF Trend** | SPY (expandable) | D | Trend following | `run_live_etf_trend.py` | +0.89 |
+| 4 | **IC Equity Daily** | 7 US equities | D | Mean reversion | `run_live_ic_mtf.py` | +2.65-3.41 |
+| 5 | **ML Classifier** | EUR/USD (or others) | D/H1 | ML signal | `run_live_ml.py` | +0.55-1.58 |
+| 6 | **Gold Macro** | GLD | D | Cross-asset macro | `run_live_gold_macro.py` | +0.60 |
+| 7 | **Gap Fade** | EUR/USD | M5 | Intraday MR | `run_live_gap_fade.py` | Validated |
+| 8 | **FX Carry** | AUD/JPY | D | Carry premium | `run_live_fx_carry.py` | Validated |
+| 9 | **Pairs Trading** | GLD / EFA | D | Market-neutral | `run_live_pairs.py` | +1.14 |
+| 10 | **GLD Confluence** | GLD | H1 | Multi-scale trend | `run_live_gld_confluence.py` | **+1.46** |
+| 11 | **AUD/JPY MR** | AUD/JPY | H1 | MR + confluence regime | `run_live_mr_audjpy.py` | **+2.08** |
+| 12 | **Bond->Gold** | GLD (signal: IEF) | D | Cross-asset momentum | `run_live_bond_gold.py` | **+1.17** |
+| 13 | **MR FX** | EUR/USD | M5 | VWAP MR tiered grid | `run_live_mr_fx.py` | Validated |
+
+> **Recommended for paper trading:** Use `run_portfolio.py --strategies gold_core` (strategies 6, 10, 12) as the starting set. These have the highest WFO Sharpe and lowest correlation.
 
 ### Risk Architecture
 
@@ -102,21 +108,58 @@ ls data/EUR_USD_H1.parquet data/EUR_USD_D.parquet data/GLD_D.parquet data/EFA_D.
 
 ## 4. Running Strategies
 
-### Quick Start -- Run One Strategy
+### Quick Start -- Run the Portfolio (RECOMMENDED)
+
+The unified portfolio runner manages all strategies in a single process:
 
 ```bash
-# Start the MTF Confluence strategy (EUR/USD, the flagship)
-uv run python scripts/watchdog_mtf.py
+# Run all strategies in one process (recommended)
+uv run python scripts/run_portfolio.py --strategies all
+
+# Run only daily strategies (lower bar volume, simpler)
+uv run python scripts/run_portfolio.py --strategies daily_only
+
+# Run only gold-focused strategies
+uv run python scripts/run_portfolio.py --strategies gold_core
+
+# Run specific strategies by name
+uv run python scripts/run_portfolio.py --strategies gld_confluence bond_gold etf_trend_spy
 ```
 
-The watchdog handles IB nightly disconnects (23:45-00:05 ET) automatically.
+The portfolio runner:
+- Shares a single IBKR connection (one client ID)
+- Manages all instrument subscriptions automatically
+- PortfolioRiskManager controls portfolio-level risk (DD breaker, vol-targeting)
+- PortfolioAllocator handles cross-strategy allocation (inverse-vol weighting)
+- Press `Ctrl+C` to gracefully stop all strategies
 
-### Run All Strategies
+#### Available Strategy Sets
 
-Each strategy runs as a separate process. Open separate terminals (or use tmux):
+| Set | Strategies | Description |
+|-----|-----------|-------------|
+| `all` | etf_trend_spy, gold_macro, bond_gold, fx_carry_audjpy, gld_confluence, mr_audjpy, ic_equity_noc | Everything |
+| `daily_only` | etf_trend_spy, gold_macro, bond_gold, fx_carry_audjpy, ic_equity_noc | Daily timeframe only |
+| `gold_core` | gld_confluence, gold_macro, bond_gold | Gold-focused (highest Sharpe) |
+| `h1_only` | gld_confluence, mr_audjpy | H1 timeframe strategies |
+
+#### Available Individual Strategies
+
+| Name | Instrument | Timeframe | Signal | WFO Sharpe |
+|------|-----------|-----------|--------|-----------|
+| `etf_trend_spy` | SPY | Daily | Slow MA trend | +0.89 |
+| `gold_macro` | GLD | Daily | Cross-asset (TIP/TLT/DXY) | +0.60 |
+| `bond_gold` | GLD (signal: IEF) | Daily | Bond momentum -> gold | +1.17 |
+| `fx_carry_audjpy` | AUD/JPY | Daily | SMA trend + carry | Validated |
+| `gld_confluence` | GLD | H1 | AND-gated multi-scale trend_mom | +1.46 |
+| `mr_audjpy` | AUD/JPY | H1 | VWAP MR + confluence regime | +2.08 |
+| `ic_equity_noc` | NOC | Daily | RSI(21) mean reversion | +3.06 |
+
+### Alternative: Run Individual Strategies
+
+You can still run strategies individually in separate terminals:
 
 ```bash
-# Terminal 1: MTF Confluence (EUR/USD H1/H4/D/W)
+# Terminal 1: MTF Confluence (EUR/USD H1/H4/D/W) -- NOTE: edge invalidated, kept for reference
 uv run python scripts/watchdog_mtf.py
 
 # Terminal 2: ORB (7 US equities, 5M bars, market hours only)
@@ -146,10 +189,13 @@ uv run python scripts/run_live_ml.py
 
 ### Client ID Assignment
 
-Each strategy process needs a unique IBKR client ID. The runners use these defaults:
+**Portfolio runner** uses a single client ID (default: 1 from `.env`).
+
+**Individual runners** each need a unique client ID:
 
 | Runner | Default Client ID |
 |--------|:-:|
+| **run_portfolio.py** | **1 (from .env)** |
 | watchdog_mtf.py | 1 |
 | run_live_orb.py | 2 |
 | run_live_etf_trend.py | 3 |
@@ -159,9 +205,13 @@ Each strategy process needs a unique IBKR client ID. The runners use these defau
 | run_live_pairs.py | 11 |
 | run_live_fx_carry.py | 12 |
 | run_live_gap_fade.py | 13 |
+| **run_live_gld_confluence.py** | **14** |
+| **run_live_mr_audjpy.py** | **15** |
+| **run_live_bond_gold.py** | **16** |
+| **run_live_mr_fx.py** | **17** |
 | kill_switch.py | 98 |
 
-If running multiple strategies simultaneously, ensure no two share the same client ID. Override via `.env` or environment variable: `IBKR_CLIENT_ID=5 uv run python scripts/run_live_etf_trend.py`
+> **Important:** Do NOT run the portfolio runner and individual runners at the same time -- they will conflict on client IDs and instrument subscriptions. Use one or the other.
 
 ---
 
@@ -285,55 +335,82 @@ pkill -f "run_live_"
 
 ---
 
-## 8. Recommended Paper Testing Plan
+## 8. Recommended Paper Testing Plan (Using Portfolio Runner)
 
-### Week 1: Single Strategy
+### Week 1: Gold Core (highest Sharpe, simplest)
 
-Start with **MTF Confluence** (the most validated strategy):
+Start with the gold-focused strategies (3 strategies, all proven):
 
 ```bash
-uv run python scripts/watchdog_mtf.py
+uv run python scripts/run_portfolio.py --strategies gold_core
 ```
 
+This runs: GLD Confluence (H1), Gold Macro (daily), Bond->Gold (daily).
+
 Monitor for:
-- Clean startup with warmup data loaded
-- Confluence score printed each H1 bar
-- At least one signal generated (may take 1-3 days)
-- Watchdog restarts cleanly after IB nightly maintenance
+- Clean startup with all 3 strategies attached
+- Warmup data loaded for GLD, TIP, TLT, DXY, IEF
+- GLD Confluence: confluence score printed each H1 bar
+- Gold Macro: composite signal printed each daily bar
+- Bond->Gold: IEF momentum z-score printed each daily bar
 
 ### Week 2: Add Daily Strategies
 
-Add **ETF Trend**, **Gold Macro**, and **Pairs Trading** (all daily, low activity):
+Switch to daily_only set (adds ETF Trend, FX Carry, IC Equity):
 
 ```bash
-# In separate terminals
-uv run python scripts/run_live_etf_trend.py
-uv run python scripts/run_live_gold_macro.py
-uv run python scripts/run_live_pairs.py
+uv run python scripts/run_portfolio.py --strategies daily_only
 ```
 
-### Week 3: Add Equity Strategies
+Monitor for:
+- All 5 strategies attached and producing signals
+- ETF Trend: position changes on MA crossovers
+- FX Carry: AUD/JPY entries when price > SMA(50)
+- IC Equity: RSI-based entries on NOC
 
-Add **ORB** (intraday, US market hours) and **IC Equity** (daily):
+### Week 3: Full Portfolio
+
+Run everything:
 
 ```bash
-uv run python scripts/run_live_orb.py
-uv run python scripts/run_live_ic_mtf.py
+uv run python scripts/run_portfolio.py --strategies all
 ```
 
-### Week 4: Full Portfolio
+This adds the H1 strategies (GLD Confluence, AUD/JPY MR) to the daily set.
 
-Add remaining strategies. Test the kill switch on paper.
+Monitor for:
+- All 7 strategies producing signals
+- AUD/JPY MR: tiered entries during 07:00-12:00 UTC, hard closes at 21:00 UTC
+- Portfolio risk manager: check logs for `Scale` messages (DD/vol/regime scaling)
+- No conflicting orders on shared instruments (GLD is traded by 3 strategies)
+
+### Week 4: Stress Test
+
+Test the kill switch and recovery:
+
+```bash
+# In another terminal while portfolio is running:
+uv run python scripts/kill_switch.py --dry-run   # preview only
+uv run python scripts/kill_switch.py              # flatten everything
+```
+
+Then restart:
+```bash
+uv run python scripts/run_portfolio.py --strategies all
+```
 
 ### Success Criteria Before Live
 
-- [ ] All strategies started without `[ERROR]` lines
+- [ ] Portfolio runner starts all strategies without `[ERROR]` lines
 - [ ] At least one trade opened and closed per strategy
 - [ ] Kill switch tested -- confirmed it flattens all positions
-- [ ] No orphaned stop orders after clean shutdown
+- [ ] No orphaned stop orders after clean shutdown (`Ctrl+C`)
 - [ ] Portfolio risk manager scaling works (check logs for `Scale` messages)
-- [ ] Watchdog restarts cleanly after IB nightly maintenance
+- [ ] PortfolioAllocator rebalances monthly (check logs for weight updates)
+- [ ] No conflicting trades on shared instruments (GLD, AUD/JPY)
+- [ ] Logs clean during IBKR nightly maintenance (23:45-00:05 ET)
 - [ ] At least 30 days of continuous paper operation
+- [ ] Portfolio P&L tracked in `.tmp/logs/portfolio_live_*.log`
 
 ---
 
@@ -360,13 +437,17 @@ All strategy parameters are in `config/*.toml`. Key files:
 | File | Strategy | Key Parameters |
 |------|----------|---------------|
 | `risk.toml` | All | DD thresholds, vol-target, VIX tiers, allocator |
-| `mtf_eurusd.toml` | MTF | Timeframe weights, MA periods, RSI periods |
+| `mtf_eurusd.toml` | MTF (invalidated) | Timeframe weights, MA periods, RSI periods |
 | `orb_live.toml` | ORB | Ticker list, ORB window, ATR multiplier, RR ratio |
 | `etf_trend_spy.toml` | ETF Trend | Slow MA, deceleration mode, vol-target |
 | `gold_macro_gld.toml` | Gold Macro | SMA period, real rate window, vol target |
 | `pairs_gld_efa.toml` | Pairs | Entry/exit z, refit window, max leverage |
 | `fx_carry_audjpy.toml` | FX Carry | SMA period, vol target, VIX halve threshold |
 | `gap_fade_eurusd.toml` | Gap Fade | Gap ATR mult, TP fill %, ATR period |
+| **`gld_confluence.toml`** | **GLD Confluence** | **Threshold, exit buffer, TF weights, warmup** |
+| **`bond_gold.toml`** | **Bond->Gold** | **Lookback, threshold, hold days, vol target** |
+| **`mr_audjpy.toml`** | **AUD/JPY MR** | **Percentile tiers, tier sizes, session hours, regime filter** |
+| `mr_fx_eurusd.toml` | MR FX | Percentile window, tiers, reversion target, regime gate |
 
 **Never change parameters while a strategy is running.** Stop the strategy, edit the TOML, then restart.
 
@@ -391,8 +472,9 @@ All strategy parameters are in `config/*.toml`. Key files:
 
 ```
 scripts/
-  watchdog_mtf.py          MTF with auto-restart (recommended for 24/7)
-  run_live_mtf.py          MTF direct (no auto-restart)
+  run_portfolio.py         UNIFIED PORTFOLIO RUNNER (recommended)
+  watchdog_mtf.py          MTF with auto-restart
+  run_live_mtf.py          MTF direct (edge invalidated)
   run_live_orb.py          ORB equities
   run_live_etf_trend.py    ETF Trend
   run_live_ic_mtf.py       IC Equity Daily
@@ -401,14 +483,21 @@ scripts/
   run_live_pairs.py        Pairs Trading
   run_live_fx_carry.py     FX Carry
   run_live_gap_fade.py     Gap Fade
+  run_live_gld_confluence.py  GLD AND-gated Confluence (H1)
+  run_live_mr_audjpy.py    AUD/JPY MR + Confluence (H1)
+  run_live_bond_gold.py    Bond->Gold Momentum (daily)
+  run_live_mr_fx.py        MR FX VWAP (M5)
   kill_switch.py           Emergency stop (cancel all + flatten)
   verify_connection.py     Test IBKR connection
   check_balance.py         Show account balance
-  build_data_manifest.py   Scan data/ and write manifest.json
+  download_gld_h1.py       Download GLD/IEF H1 from IBKR
 
 config/
   risk.toml                Portfolio risk + allocation parameters
-  mtf_eurusd.toml          MTF strategy parameters
+  gld_confluence.toml      GLD Confluence parameters
+  bond_gold.toml           Bond->Gold parameters
+  mr_audjpy.toml           AUD/JPY MR parameters
+  mr_fx_eurusd.toml        MR FX parameters
   orb_live.toml            ORB strategy parameters
   etf_trend_spy.toml       ETF Trend parameters
   gold_macro_gld.toml      Gold Macro parameters
