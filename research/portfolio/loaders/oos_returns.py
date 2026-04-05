@@ -541,6 +541,260 @@ def load_mtf_oos(pair: str = "EUR_USD") -> pd.Series:
     return oos_rets
 
 
+# ── GLD AND-Gated Confluence loader ──────────────────────────────────────────
+
+
+def load_gld_confluence_oos(_arg: str | None = None) -> pd.Series:
+    """OOS daily returns for GLD AND-gated multi-scale confluence strategy.
+
+    Computes trend_mom signal at H1/H4/D/W scales on single GLD H1 stream.
+    AND-gate: only enter when all 4 scales agree on direction.
+    """
+    from research.ic_analysis.phase1_sweep import SCALE_MAP, build_all_signals
+
+    df = _load_ohlcv("GLD", "H1")
+    close = df["close"]
+    window_1y = 252 * 7  # ~7 H1 bars/day for equities × 252 days
+
+    # Compute trend_mom at each scale, apply AND-gate
+    tf_weights = {"H1": 0.10, "H4": 0.05, "D": 0.55, "W": 0.30}
+    per_scale = {}
+    for label, mult in SCALE_MAP.items():
+        prefix = f"{label}_" if mult > 1 else ""
+        sigs = build_all_signals(df, window_1y, period_scale=mult, name_prefix=prefix)
+        col = f"{prefix}trend_mom"
+        if col in sigs.columns:
+            per_scale[label] = sigs[col]
+
+    aligned = pd.concat(per_scale, axis=1).dropna()
+    if len(aligned) < 100:
+        raise ValueError("GLD confluence: insufficient data after warmup")
+
+    # Weighted sum with AND-gate
+    weighted = pd.Series(0.0, index=aligned.index)
+    for label in SCALE_MAP:
+        if label in aligned.columns:
+            weighted += aligned[label] * tf_weights.get(label, 0.25)
+
+    signs = np.sign(aligned.values)
+    agreement = (signs > 0).all(axis=1) | (signs < 0).all(axis=1)
+    confluence = weighted.where(agreement, 0.0)
+
+    # Z-score on IS (70%)
+    n = len(confluence)
+    is_n = int(n * 0.70)
+    is_mean = confluence.iloc[:is_n].mean()
+    is_std = confluence.iloc[:is_n].std()
+    if is_std < 1e-8:
+        is_std = 1.0
+    score_z = (confluence - is_mean) / is_std
+
+    # Position: shift(1), threshold=0.75, exit buffer=0.10
+    sig = score_z.shift(1).fillna(0.0).values
+    threshold = 0.75
+    exit_buf = 0.10
+    pos = np.zeros(n)
+    cur = 0.0
+    for i in range(n):
+        s = sig[i]
+        if cur == 0.0:
+            if s >= threshold:
+                cur = 1.0
+            elif s <= -threshold:
+                cur = -1.0
+        elif cur > 0 and s < -exit_buf:
+            cur = 0.0
+        elif cur < 0 and s > exit_buf:
+            cur = 0.0
+        pos[i] = cur
+
+    # Returns with costs
+    bar_rets = close.reindex(confluence.index).pct_change().fillna(0.0).values
+    transitions = np.abs(np.diff(pos, prepend=0))
+    strat_rets = bar_rets * pos - transitions * 3.0 / 10_000
+
+    # OOS: resample H1 to daily
+    oos_rets = pd.Series(strat_rets[is_n:], index=confluence.index[is_n:])
+    oos_daily = oos_rets.resample("D").sum()
+    oos_daily.index = oos_daily.index.normalize()
+    oos_daily = oos_daily[oos_daily != 0.0]
+    oos_daily.name = "gld_confluence"
+    return oos_daily
+
+
+# ── AUD/JPY MR + Confluence Regime loader ────────────────────────────────────
+
+
+def load_mr_audjpy_oos(_arg: str | None = None) -> pd.Series:
+    """OOS daily returns for AUD/JPY MR + confluence disagreement regime filter.
+
+    VWAP mean reversion with rsi_14_dev confluence disagreement as regime gate.
+    Conservative tiers (95/98/99/99.9 percentile).
+    """
+    from research.ic_analysis.phase1_sweep import SCALE_MAP, build_all_signals
+
+    df = _load_ohlcv("AUD_JPY", "H1")
+    close = df["close"]
+    window_1y = 252 * 22
+    n = len(close)
+    is_n = int(n * 0.70)
+
+    # VWAP deviation (24-bar rolling = 1 day)
+    vwap = close.rolling(24).mean()
+    deviation = (close - vwap) / vwap.clip(lower=1e-8)
+
+    # Confluence disagreement mask: rsi_14_dev at 4 scales
+    per_scale = {}
+    for label, mult in SCALE_MAP.items():
+        prefix = f"{label}_" if mult > 1 else ""
+        sigs = build_all_signals(df, window_1y, period_scale=mult, name_prefix=prefix)
+        col = f"{prefix}rsi_14_dev"
+        if col in sigs.columns:
+            per_scale[label] = sigs[col]
+
+    aligned = pd.concat(per_scale, axis=1).dropna()
+    signs = np.sign(aligned.values)
+    trending = (signs > 0).all(axis=1) | (signs < 0).all(axis=1)
+    ranging_mask = pd.Series(~trending, index=aligned.index)
+    ranging_mask = ranging_mask.reindex(close.index, fill_value=False)
+
+    # Session filter (07:00-12:00 UTC) + percentile levels
+    hours = close.index.hour
+    session_mask = (hours >= 7) & (hours < 12)
+    gate = ranging_mask & session_mask
+
+    tiers_pct = [0.95, 0.98, 0.99, 0.999]
+    tier_sizes = [1, 2, 4, 8]
+    levels = pd.DataFrame(index=close.index)
+    for p in tiers_pct:
+        levels[f"p{int(p * 1000)}"] = deviation.abs().rolling(500).quantile(p).shift(1)
+
+    # Simulate MR trades
+    close_arr = close.values
+    dev_arr = deviation.values
+    gate_arr = gate.values
+    hour_arr = hours.values
+    bar_pnl = np.zeros(n)
+    position = np.zeros(n)
+    entry_price = 0.0
+    tiers_hit = set()
+    cost = 3.0 / 10_000
+
+    for i in range(1, n):
+        px = close_arr[i]
+        dev = abs(dev_arr[i]) if not np.isnan(dev_arr[i]) else 0.0
+        prev_pos = position[i - 1]
+
+        if prev_pos != 0:
+            if hour_arr[i] >= 21:
+                ret = (px - entry_price) / entry_price * np.sign(prev_pos) - cost
+                bar_pnl[i] = ret * abs(prev_pos)
+                position[i] = 0
+                entry_price = 0.0
+                tiers_hit = set()
+                continue
+            lvl0 = levels.iloc[i, 0] if not np.isnan(levels.iloc[i, 0]) else 999
+            if dev < lvl0 * 0.5:
+                ret = (px - entry_price) / entry_price * np.sign(prev_pos) - cost
+                bar_pnl[i] = ret * abs(prev_pos)
+                position[i] = 0
+                entry_price = 0.0
+                tiers_hit = set()
+                continue
+
+        if gate_arr[i]:
+            for ti in range(len(levels.columns)):
+                if ti in tiers_hit:
+                    continue
+                lvl = levels.iloc[i, ti]
+                if np.isnan(lvl):
+                    continue
+                if dev > lvl:
+                    size = tier_sizes[ti] if ti < len(tier_sizes) else 1
+                    direction = -1.0 if dev_arr[i] > 0 else 1.0
+                    if position[i] == 0:
+                        entry_price = px
+                    else:
+                        old = abs(position[i])
+                        entry_price = (entry_price * old + px * size) / (old + size)
+                    position[i] += direction * size
+                    tiers_hit.add(ti)
+                    bar_pnl[i] -= cost * size
+
+        if position[i] == 0 and prev_pos != 0 and bar_pnl[i] == 0:
+            position[i] = prev_pos
+            bar_pnl[i] = (px - close_arr[i - 1]) / close_arr[i - 1] * prev_pos
+
+    # OOS daily
+    oos_pnl = pd.Series(bar_pnl[is_n:], index=close.index[is_n:])
+    oos_daily = oos_pnl.resample("D").sum()
+    oos_daily.index = oos_daily.index.normalize()
+    oos_daily = oos_daily[oos_daily != 0.0]
+    oos_daily.name = "mr_audjpy"
+    return oos_daily
+
+
+# ── Bond->Gold Momentum loader ──────────────────────────────────────────────
+
+
+def load_bond_gold_oos(_arg: str | None = None) -> pd.Series:
+    """OOS daily returns for Bond->Gold momentum strategy (IEF->GLD).
+
+    Signal: IEF 60-day log-return. Long GLD when IEF momentum z-score > 0.50.
+    """
+    ief = _load_ohlcv("IEF", "D")["close"]
+    gld = _load_ohlcv("GLD", "D")["close"]
+
+    # Normalize timestamps for alignment
+    ief.index = ief.index.normalize()
+    gld.index = gld.index.normalize()
+
+    # Bond momentum signal
+    lookback = 60
+    bond_mom = np.log(ief / ief.shift(lookback)).dropna()
+
+    common = bond_mom.index.intersection(gld.index)
+    bond_mom = bond_mom.reindex(common)
+    gld_close = gld.reindex(common)
+    n = len(common)
+    is_n = int(n * 0.70)
+
+    # Z-score on IS
+    is_mean = bond_mom.iloc[:is_n].mean()
+    is_std = bond_mom.iloc[:is_n].std()
+    if is_std < 1e-8:
+        is_std = 1.0
+    sig_z = ((bond_mom - is_mean) / is_std).shift(1).fillna(0.0).values
+
+    # Position with hold period
+    threshold = 0.50
+    hold_days = 20
+    pos = np.zeros(n)
+    bars_held = 0
+    for i in range(n):
+        if pos[max(0, i - 1)] != 0:
+            bars_held += 1
+        if bars_held >= hold_days and sig_z[i] <= threshold:
+            pos[i] = 0.0
+            bars_held = 0
+        elif pos[max(0, i - 1)] == 0 and sig_z[i] > threshold:
+            pos[i] = 1.0
+            bars_held = 0
+        else:
+            pos[i] = pos[max(0, i - 1)]
+
+    # Returns
+    daily_ret = gld_close.pct_change().fillna(0.0).values
+    transitions = np.abs(np.diff(pos, prepend=0))
+    strat_rets = daily_ret * pos - transitions * 5.0 / 10_000
+
+    oos_rets = pd.Series(strat_rets[is_n:], index=common[is_n:])
+    oos_rets.index = oos_rets.index.normalize()
+    oos_rets = oos_rets[oos_rets != 0.0]
+    oos_rets.name = "bond_gold"
+    return oos_rets
+
+
 # ── Gap Fade loader (stub) ───────────────────────────────────────────────────
 
 
@@ -599,6 +853,12 @@ _REGISTRY: dict[str, tuple] = {
     "fx_carry_aud_jpy": (load_fx_carry_oos, "AUD_JPY"),
     # MTF Confluence (H1 base, resampled to daily)
     "mtf_eur_usd": (load_mtf_oos, "EUR_USD"),
+    # GLD AND-Gated Confluence (H1, multi-scale trend_mom)
+    "gld_confluence": (load_gld_confluence_oos, None),
+    # AUD/JPY MR + Confluence Regime (H1, VWAP grid + disagreement filter)
+    "mr_audjpy": (load_mr_audjpy_oos, None),
+    # Bond->Gold Momentum (daily, IEF->GLD cross-asset)
+    "bond_gold": (load_bond_gold_oos, None),
     # Gap Fade (stub — intraday M5 simulation deferred)
     "gap_fade_eur_usd": (load_gap_fade_oos, "EUR_USD"),
 }
@@ -642,8 +902,14 @@ ICIR_SCORES: dict[str, float] = {
     "pairs_gld_efa": 0.55,
     # FX Carry AUD/JPY (estimated — carry premium is structural)
     "fx_carry_aud_jpy": 0.30,
-    # MTF EUR/USD (OOS Sharpe +1.94)
-    "mtf_eur_usd": 0.60,
+    # MTF EUR/USD (OOS Sharpe +1.94 -- INVALIDATED, kept for reference)
+    "mtf_eur_usd": 0.10,
+    # GLD AND-Gated Confluence (WFO Sharpe +1.46)
+    "gld_confluence": 0.55,
+    # AUD/JPY MR + Confluence (WFO Sharpe +2.08)
+    "mr_audjpy": 0.60,
+    # Bond->Gold Momentum (WFO Sharpe +1.17)
+    "bond_gold": 0.50,
 }
 
 
