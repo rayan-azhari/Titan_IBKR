@@ -17,7 +17,7 @@ def configure() -> dict:
     """
     return {
         # ─── Metadata ────────────────────────────────────────────────
-        "description": "Exp14: oos_months=3",
+        "description": "Exp32: QQQ only oos3",
 
         # ─── Strategy Selection ──────────────────────────────────────
         # Options: "xgboost", "stacking", "lstm_e2e"
@@ -25,7 +25,7 @@ def configure() -> dict:
 
         # ─── Instruments ─────────────────────────────────────────────
         # Must exist in data/ as {INSTRUMENT}_{TIMEFRAME}.parquet
-        "instruments": ["QQQ", "SPY"],
+        "instruments": ["QQQ"],
         "timeframe": "D",
 
         # ─── XGBoost Parameters ──────────────────────────────────────
