@@ -17,7 +17,7 @@ def configure() -> dict:
     """
     return {
         # ─── Metadata ────────────────────────────────────────────────
-        "description": "Exp38: IWB only oos3",
+        "description": "Exp39: IWB oos_months=2",
 
         # ─── Strategy Selection ──────────────────────────────────────
         # Options: "xgboost", "stacking", "lstm_e2e"
@@ -77,5 +77,5 @@ def configure() -> dict:
 
         # ─── WFO Configuration ───────────────────────────────────────
         "is_years": 2,     # In-sample window (years)
-        "oos_months": 3,   # Out-of-sample window (months)
+        "oos_months": 2,   # Out-of-sample window (months)
     }
