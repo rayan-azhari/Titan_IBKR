@@ -69,6 +69,7 @@ def run_bond_wfo(
 
     folds = []
     stitched = []
+    stitched_idx = []
     fold_idx = 0
     oos_start = is_days
 
@@ -122,6 +123,7 @@ def run_bond_wfo(
             }
         )
         stitched.append(oos_strat)
+        stitched_idx.append(common[oos_start:oos_end])
 
         fold_idx += 1
         oos_start += oos_days
@@ -142,6 +144,12 @@ def run_bond_wfo(
 
     fold_df = pd.DataFrame(folds)
 
+    if stitched and stitched_idx:
+        all_dates = np.concatenate([idx.values for idx in stitched_idx])
+        raw_returns = pd.Series(all_oos, index=pd.DatetimeIndex(all_dates))
+    else:
+        raw_returns = pd.Series(dtype=float)
+
     return {
         "fold_df": fold_df,
         "stitched_sharpe": round(st_sh, 3),
@@ -150,6 +158,7 @@ def run_bond_wfo(
         "n_folds": len(folds),
         "pct_positive": round((fold_df["oos_sharpe"] > 0).mean(), 3) if len(fold_df) > 0 else 0,
         "total_trades": int(fold_df["oos_trades"].sum()) if len(fold_df) > 0 else 0,
+        "stitched_returns": raw_returns,
     }
 
 

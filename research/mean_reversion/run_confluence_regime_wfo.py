@@ -155,6 +155,10 @@ def run_mr_wfo(
     pct_positive = (fold_df["oos_sharpe"] > 0).mean() if len(fold_df) > 0 else 0
     total_trades = fold_df["oos_trades"].sum() if len(fold_df) > 0 else 0
 
+    raw_returns = (
+        pd.concat(stitched_pnl) if stitched_pnl else pd.Series(dtype=float)
+    )
+
     return {
         "fold_df": fold_df,
         "stitched_sharpe": round(st_sh, 3),
@@ -162,6 +166,7 @@ def run_mr_wfo(
         "n_folds": len(folds),
         "pct_positive": round(pct_positive, 3),
         "total_trades": int(total_trades),
+        "stitched_returns": raw_returns,
     }
 
 

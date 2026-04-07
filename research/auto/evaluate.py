@@ -237,7 +237,7 @@ def generic_rolling_wfo(
 # -- 1. ML Classifier (xgboost, stacking, lstm_e2e) ---------------------------
 
 
-def run_ml_wfo(instrument: str, cfg: dict) -> dict:
+def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
     """ML classifier WFO — existing v1 logic."""
     from research.ic_analysis.phase1_sweep import _get_annual_bars, _load_ohlcv
     from research.ml.run_52signal_classifier import (
@@ -472,7 +472,7 @@ def run_ml_wfo(instrument: str, cfg: dict) -> dict:
     pct_pos = sum(1 for s in fold_sharpes if s > 0) / len(fold_sharpes)
     worst = min(fold_sharpes)
 
-    return {
+    result = {
         "sharpe": round(oos_sharpe, 4),
         "max_dd": round(max_dd, 4),
         "parity": round(parity, 4),
@@ -481,12 +481,15 @@ def run_ml_wfo(instrument: str, cfg: dict) -> dict:
         "n_trades": total_trades,
         "n_folds": len(fold_sharpes),
     }
+    if return_raw:
+        result["stitched_returns"] = stitched
+    return result
 
 
 # -- 2. Mean Reversion (VWAP + confluence regime) -----------------------------
 
 
-def run_mean_reversion_wfo(instrument: str, cfg: dict) -> dict:
+def run_mean_reversion_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
     """VWAP mean reversion with confluence regime filter."""
     from research.mean_reversion.run_confluence_regime_test import (
         build_atr_regime_mask,
@@ -544,7 +547,7 @@ def run_mean_reversion_wfo(instrument: str, cfg: dict) -> dict:
     mean_is = fold_df["is_sharpe"].mean() if "is_sharpe" in fold_df.columns else 0.0
     parity = oos_sh / mean_is if abs(mean_is) > 0.01 else 0.0
 
-    return {
+    result = {
         "sharpe": round(oos_sh, 4),
         "max_dd": round(r["stitched_dd_pct"] / 100, 4),
         "parity": round(parity, 4),
@@ -553,6 +556,9 @@ def run_mean_reversion_wfo(instrument: str, cfg: dict) -> dict:
         "n_trades": r["total_trades"],
         "n_folds": r["n_folds"],
     }
+    if return_raw:
+        result["stitched_returns"] = r.get("stitched_returns", pd.Series(dtype=float))
+    return result
 
 
 # -- 3. Trend Following (ETF trend with decel signals) ------------------------
@@ -603,7 +609,7 @@ def run_trend_following_wfo(instrument: str, cfg: dict) -> dict:
 # -- 4. Cross-Asset Momentum (bond -> equity/gold) ----------------------------
 
 
-def run_cross_asset_wfo(instrument: str, cfg: dict) -> dict:
+def run_cross_asset_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
     """Bond momentum -> target instrument WFO."""
     from research.cross_asset.run_bond_equity_wfo import load_daily, run_bond_wfo
 
@@ -635,7 +641,7 @@ def run_cross_asset_wfo(instrument: str, cfg: dict) -> dict:
     mean_is = fold_df["is_sharpe"].mean() if "is_sharpe" in fold_df.columns else 0.0
     parity = oos_sh / mean_is if abs(mean_is) > 0.01 else 0.0
 
-    return {
+    result = {
         "sharpe": round(oos_sh, 4),
         "max_dd": round(r["stitched_dd_pct"] / 100, 4),
         "parity": round(parity, 4),
@@ -644,6 +650,9 @@ def run_cross_asset_wfo(instrument: str, cfg: dict) -> dict:
         "n_trades": r["total_trades"],
         "n_folds": r["n_folds"],
     }
+    if return_raw:
+        result["stitched_returns"] = r.get("stitched_returns", pd.Series(dtype=float))
+    return result
 
 
 # -- 5. Gold Macro (3-component signal) ---------------------------------------
