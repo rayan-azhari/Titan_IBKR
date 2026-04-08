@@ -1092,9 +1092,33 @@ Key observations:
 | `research/auto/portfolio_eval.py` | Comprehensive per-strategy + portfolio stats (Sharpe, Sortino, WR, RoR, deployed%) |
 | `scripts/download_h1_fx.py` | IBKR H1 FX downloader (1Y chunks, DatetimeIndex output) |
 
-### 17.8 Next Steps
+### 17.8 Revised Portfolio: QQQ ML Removed, HYG->IWB Doubled (April 8, 2026)
 
-1. **Re-run with recommended weights** (45/25/15/10/5) to compare vs current 40/25/15/15/5.
-2. **Reduce or replace QQQ ML** — 10.5% RoR is unacceptable. Consider SPY ML or remove.
-3. **Paper-trade AUD/JPY MR** — all research complete, validate live fills.
-4. **Deploy HYG->IWB cross-asset** — strongest CAGR engine in the portfolio.
+QQQ ML (-21% DD, 10.5% RoR) removed. Its 15% weight redistributed to HYG->IWB (15% -> 30%).
+
+**New allocation: AUD/JPY MR 40% / IWB ML 25% / HYG->IWB 30% / AUD/USD MR 5%**
+
+| Metric | Old (5 strategies) | New (4 strategies) | Change |
+|--------|-------------------|-------------------|--------|
+| Sharpe | 1.978 | **2.027** | +0.05 |
+| Sortino | 2.362 | 2.061 | -0.3 (QQQ removal) |
+| CAGR | +3.49% | **+4.72%** | **+1.23pp** |
+| Max DD | -2.72% | -3.26% | -0.54pp (HYG has -10% standalone) |
+| RoR | 0.00% | **0.00%** | unchanged |
+| Win Rate | 71.1% | 69.5% | -1.6pp |
+| Profit Factor | 6.20 | 5.70 | -0.5 |
+| % In Market | 72.1% | **47.6%** | **-24.5pp less deployed** |
+
+Key improvements:
+- CAGR +1.23pp higher (+35% more return for same risk budget)
+- Max simultaneous loss still capped at exactly **1.00%** of capital
+- 47.6% in market vs 72.1% — more capital available to compound or deploy elsewhere
+- Max correlation in portfolio: **HYG->IWB ↔ IWB ML = 0.110** (excellent)
+
+Annual returns (2016–2024): **7/9 years positive**, 2019 +6.85%, 2020 +10.05%, 2023 +9.96%.
+
+### 17.9 Next Steps
+
+1. **Paper-trade AUD/JPY MR** — all research complete, validate live fills.
+2. **Deploy HYG->IWB cross-asset** — strongest CAGR engine in the portfolio (+10.4% standalone CAGR).
+3. **Live portfolio risk model** — implement `scale_to_risk` in each strategy using `current_atr × stop_mult`.

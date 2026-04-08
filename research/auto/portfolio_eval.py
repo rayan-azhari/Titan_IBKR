@@ -12,9 +12,11 @@ Computes per-strategy AND combined portfolio metrics:
 Strategies:
   1. AUD/JPY MR vwap46+donchian sp0.5 is32k oos8k  -- 40%
   2. IWB ML Stacking cbars=5                         -- 25%
-  3. HYG->IWB Cross-Asset                            -- 15%
-  4. QQQ ML Stacking cbars=5 (is_years=4)            -- 15%
-  5. AUD/USD MR vwap36+donchian sp0.5                -- 5%
+  3. HYG->IWB Cross-Asset (doubled from 15%)         -- 30%
+  4. AUD/USD MR vwap36+donchian sp0.5                -- 5%
+
+  QQQ ML removed: -21% DD, 10.5% RoR, 46% time in market — unacceptable risk.
+  HYG->IWB allocation doubled to absorb the freed weight.
 
 Usage:
     uv run python research/auto/portfolio_eval.py
@@ -78,16 +80,7 @@ STRATEGIES = [
             is_days=504, oos_days=126, spread_bps=5.0,
         ),
         "stop_mult": 1.5,
-        "target_weight": 0.15,
-    },
-    {
-        "name": "QQQ ML",
-        "instrument": "QQQ",
-        "runner": "ml",
-        # is_years=4 gives sufficient IS diversity for balanced labels
-        "cfg": dict(**ML_BASE, instruments=["QQQ"], is_years=4, oos_months=2),
-        "stop_mult": 2.0,
-        "target_weight": 0.15,
+        "target_weight": 0.30,  # increased from 0.15 — replaces QQQ ML slot
     },
     {
         "name": "AUD/USD MR",

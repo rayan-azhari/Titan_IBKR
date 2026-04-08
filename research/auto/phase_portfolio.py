@@ -1,11 +1,12 @@
 """Top-5 Diversified Portfolio with 1%-per-trade risk sizing.
 
-Combines the 5 best strategies from autoresearch v2 (420+ experiments):
+Combines the 4 best strategies from autoresearch v2 (420+ experiments):
   1. AUD/JPY MR vwap46+donchian sp0.5 is32k oos8k  (40%)
   2. IWB ML Stacking cbars=5                         (25%)
-  3. HYG->IWB Cross-Asset                            (15%)
-  4. QQQ ML Stacking cbars=5                         (15%)
-  5. AUD/USD MR vwap36+donchian sp0.5                (5%)
+  3. HYG->IWB Cross-Asset (doubled allocation)       (30%)
+  4. AUD/USD MR vwap36+donchian sp0.5                (5%)
+
+  QQQ ML removed: -21% DD, 10.5% RoR — weight redistributed to HYG->IWB.
 
 For each strategy the raw OOS return series is extracted, then scaled
 so that each strategy's per-trade risk equals 1% of its allocated sub-equity.
@@ -79,13 +80,6 @@ STRATEGIES = [
         "stop_mult": 1.5,
     },
     {
-        "name": "QQQ ML",
-        "instrument": "QQQ",
-        "runner": "ml",
-        "cfg": dict(**ML_BASE, instruments=["QQQ"]),
-        "stop_mult": 2.0,
-    },
-    {
         "name": "AUD/USD MR",
         "instrument": "AUD_USD",
         "runner": "mr",
@@ -100,10 +94,10 @@ STRATEGIES = [
 ]
 
 WEIGHT_SCENARIOS = {
-    "Target  (40/25/15/15/5)":   [0.40, 0.25, 0.15, 0.15, 0.05],
-    "Balanced(25/25/20/20/10)":  [0.25, 0.25, 0.20, 0.20, 0.10],
-    "Equal   (20ea)":            [0.20, 0.20, 0.20, 0.20, 0.20],
-    "MR-heavy(50/20/15/10/5)":   [0.50, 0.20, 0.15, 0.10, 0.05],
+    "Target  (40/25/30/5)":   [0.40, 0.25, 0.30, 0.05],
+    "HYG-heavy(35/20/40/5)":  [0.35, 0.20, 0.40, 0.05],
+    "MR-heavy (50/20/25/5)":  [0.50, 0.20, 0.25, 0.05],
+    "Equal    (25ea)":        [0.25, 0.25, 0.25, 0.25],
 }
 
 RISK_PCT = 0.01        # target risk per trade as fraction of sub-equity
