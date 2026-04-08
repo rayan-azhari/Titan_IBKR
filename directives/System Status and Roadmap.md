@@ -995,7 +995,106 @@ Per-strategy stop multipliers: MR = 1.5×, ML Stacking = 2.0×, Cross-Asset = 1.
 
 ### 16.6 Next Steps
 
-1. **Investigate QQQ ML data coverage** — why does `feat_clean` only reach 2013? Fix to enable QQQ in portfolio.
-2. **Paper-trade AUD/JPY MR champion** — validate live fills before capital allocation.
-3. **Extend overlap period** — AUD/JPY MR OOS starts 2016; running portfolio on 2016-2024 window would give 8 years of combined evaluation.
-4. **Live portfolio risk model** — the `scale_to_risk` approach slots into `ic_generic/strategy.py` as a per-trade sizing rule using `current_atr × stop_mult` in place of the vol proxy used in research.
+1. **Paper-trade AUD/JPY MR champion** — validate live fills before capital allocation.
+2. **Live portfolio risk model** — the `scale_to_risk` approach slots into `ic_generic/strategy.py` as a per-trade sizing rule using `current_atr × stop_mult` in place of the vol proxy used in research.
+
+---
+
+## 17. Full Portfolio Evaluation (April 8, 2026)
+
+### 17.1 Data Downloads
+
+Extended FX H1 data via IBKR TWS Paper (port 7497) using `scripts/download_h1_fx.py`:
+- AUD/JPY H1: 93,076 bars | 2011-04-12 -> 2026-04-08 (was 2016 start, RangeIndex)
+- AUD/USD H1: 93,067 bars | 2011-04-12 -> 2026-04-08 (was 2016 start, RangeIndex)
+
+Fixed QQQ ML fold failure: `is_years=2` produces only 7% valid folds (balanced label gate fails) — changed to `is_years=4` which gives sufficient IS diversity.
+
+### 17.2 Per-Strategy Results (risk-scaled, OOS WFO)
+
+Script: `research/auto/portfolio_eval.py`
+
+| Strategy | Alloc | Sharpe | Sortino | CAGR | Max DD | Trades | Win% | Prof.Factor | RoR | % In Market |
+|----------|-------|--------|---------|------|--------|--------|------|-------------|-----|-------------|
+| AUD/JPY MR | 40% | 1.045 | 0.610 | +2.97% | -2.09% | 117 | 69.2% | 3.30 | **0.00%** | 6.8% |
+| IWB ML | 25% | 0.833 | 0.289 | +1.45% | -2.53% | 15 | 86.7% | 188.13 | **0.00%** | 4.5% |
+| HYG->IWB | 15% | 1.572 | 1.382 | +10.41% | -10.13% | 175 | 70.3% | 3.92 | **0.00%** | 36.3% |
+| QQQ ML | 15% | 0.336 | 0.288 | +1.68% | -21.04% | 122 | 61.5% | 1.57 | 10.54% | 46.1% |
+| AUD/USD MR | 5% | 0.677 | 0.272 | +2.49% | -7.98% | 228 | 61.0% | 1.84 | 0.32% | 12.4% |
+
+> [!WARNING] QQQ ML has -21% max DD and 10.5% risk of ruin at 15% allocation — consider reducing to 5-10% or excluding until validated further.
+
+> [!IMPORTANT] IWB ML profit factor of 188 is driven by only 15 trades over 17 years — too few to be statistically meaningful. The 2 losses are near-zero (-0.14%), producing an artificially extreme ratio.
+
+### 17.3 Combined Portfolio (5 strategies, 2016-06-07 to 2024-02-05)
+
+Weights: AUD/JPY MR 40% / IWB ML 25% / HYG->IWB 15% / QQQ ML 15% / AUD/USD MR 5%
+
+| Metric | Value |
+|--------|-------|
+| Sharpe Ratio | **1.978** |
+| Sortino Ratio | **2.362** |
+| Calmar Ratio | **1.267** |
+| CAGR | +3.49% |
+| Max Drawdown | **-2.72%** |
+| Avg DD Duration | 9.1 days |
+| Win Rate | 71.1% (106W / 43L) |
+| Profit Factor | **6.20** |
+| Risk of Ruin | **0.00%** |
+| % Time in Market | 72.1% |
+| Max 1-trade capital loss | **1.00%** (all 5 hit stop simultaneously) |
+
+### 17.4 Pairwise Correlations
+
+| | AUD/JPY MR | IWB ML | HYG->IWB | QQQ ML | AUD/USD MR |
+|---|---|---|---|---|---|
+| AUD/JPY MR | 1.000 | -0.011 | -0.012 | -0.051 | **+0.264** |
+| IWB ML | -0.011 | 1.000 | +0.110 | -0.002 | -0.003 |
+| HYG->IWB | -0.012 | +0.110 | 1.000 | **+0.310** | -0.045 |
+| QQQ ML | -0.051 | -0.002 | +0.310 | 1.000 | -0.143 |
+| AUD/USD MR | **+0.264** | -0.003 | -0.045 | -0.143 | 1.000 |
+
+Key observations:
+- AUD/JPY ↔ AUD/USD: +0.264 (both AUD pairs, expected — same underlying currency)
+- HYG->IWB ↔ QQQ ML: +0.310 (both US equity, different signal — manageable)
+- All other pairs: < 0.15 — genuine independence
+
+### 17.5 Annual Returns (portfolio)
+
+| Year | Return |
+|------|--------|
+| 2016 | +0.19% |
+| 2017 | +2.55% |
+| 2018 | +0.31% |
+| 2019 | +5.27% |
+| 2020 | +6.57% |
+| 2021 | +0.82% |
+| 2022 | +5.54% |
+| 2023 | +5.98% |
+| 2024 | +0.69% |
+
+**8/9 years positive.** 2018 and 2021 near-zero (not negative). No single year below -1%.
+
+### 17.6 Key Findings
+
+1. **Portfolio RoR = 0.00%** — with 1% risk model, a 50% drawdown from random trade sequence is essentially impossible over 1000 trades.
+2. **Portfolio Sortino (2.36) > Sharpe (1.98)** — downside vol is lower than upside vol. The loss distribution is tightly controlled.
+3. **AUD/JPY MR dominates** the portfolio in a positive way: Sharpe 1.045, RoR 0.00%, only 6.8% in market (very selective entries).
+4. **HYG->IWB is the CAGR engine**: +10.41% CAGR standalone, 36.3% time in market. The portfolio's alpha engine.
+5. **QQQ ML is the weak link**: -21% DD, 10.5% RoR, 46% time in market (low selectivity). Recommend reducing to 5% or replacing.
+6. **IWB ML has too few trades** (15 in 17 years) for statistical significance. 86.7% win rate and 188 profit factor are artifacts of extreme trade scarcity.
+7. **Recommended reallocation**: AUD/JPY MR 45%, HYG->IWB 25%, IWB ML 15%, AUD/USD MR 10%, QQQ ML 5%.
+
+### 17.7 New Files
+
+| File | Description |
+|------|-------------|
+| `research/auto/portfolio_eval.py` | Comprehensive per-strategy + portfolio stats (Sharpe, Sortino, WR, RoR, deployed%) |
+| `scripts/download_h1_fx.py` | IBKR H1 FX downloader (1Y chunks, DatetimeIndex output) |
+
+### 17.8 Next Steps
+
+1. **Re-run with recommended weights** (45/25/15/10/5) to compare vs current 40/25/15/15/5.
+2. **Reduce or replace QQQ ML** — 10.5% RoR is unacceptable. Consider SPY ML or remove.
+3. **Paper-trade AUD/JPY MR** — all research complete, validate live fills.
+4. **Deploy HYG->IWB cross-asset** — strongest CAGR engine in the portfolio.
