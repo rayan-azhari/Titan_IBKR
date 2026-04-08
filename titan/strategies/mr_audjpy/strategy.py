@@ -1,21 +1,28 @@
-"""mr_audjpy/strategy.py -- AUD/JPY MR + Confluence Regime Filter.
+"""mr_audjpy/strategy.py -- AUD/JPY MR Champion Strategy.
 
 Intraday mean reversion on AUD/JPY using VWAP deviation grid entries
-with multi-scale confluence disagreement as regime filter.
+with Donchian-position multi-scale confluence as regime filter.
 
-WFO validated: Sharpe +2.08, 75% positive folds.
+Research champion config (SCORE 5.14, Sharpe +4.64, DD -9.6%):
+  vwap_anchor=46, regime_filter=conf_donchian_pos_20,
+  tier_grid=conservative, is_bars=32000, oos_bars=8000
+
+Regime filter: donchian_pos_20 at H1/H4/D/W scales must DISAGREE
+  (scales don't agree on direction = ranging = allow MR entries).
+  donchian_pos_20 = (close - 20-bar low) / (20-bar high - 20-bar low) - 0.5
+  Positive = upper half of range = trending up.
+  Negative = lower half = trending down.
 
 Signal:
-    1. Compute rolling VWAP (24-bar anchor = 1 day).
+    1. Compute rolling VWAP with 46-bar anchor (~2 trading days on H1).
     2. Track price deviation from VWAP.
-    3. Compute rolling percentile bands (95/98/99/99.9).
+    3. Compute rolling percentile bands (95/98/99/99.9 = conservative grid).
     4. Enter tiered grid [1,2,4,8] when deviation > percentile threshold.
-    5. Regime gate: rsi_14_dev computed at H1/H4/D/W scales must DISAGREE
-       (scales don't agree on direction = ranging = allow MR entries).
+    5. Regime gate: donchian_pos_20 at H1/H4/D/W scales must DISAGREE.
     6. Session filter: 07:00-12:00 UTC entries only.
     7. Exit: 50% reversion TP or 21:00 UTC hard close.
 
-April 2026. Research: research/mean_reversion/run_confluence_regime_wfo.py
+April 2026. Research: research/auto/experiment.py (Exp86 IWB cbars=5)
 """
 
 from __future__ import annotations
@@ -36,31 +43,35 @@ from nautilus_trader.trading.strategy import Strategy
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
 
-SCALE_MAP = {"H1": 1, "H4": 4, "D": 24, "W": 120}
-TIERS_PCT = [0.95, 0.98, 0.99, 0.999]
+# Donchian period at H1 scale; higher scales multiply this
+DONCHIAN_PERIOD = 20
+# H1-bar equivalents per scale (H1=1, H4=4, D=24, W=120)
+DONCHIAN_SCALES: dict[str, int] = {"H1": 1, "H4": 4, "D": 24, "W": 120}
+
+TIERS_PCT = [0.95, 0.98, 0.99, 0.999]   # conservative grid
 TIER_SIZES = [1, 2, 4, 8]
 
 
 class MRAUDJPYConfig(StrategyConfig):
-    """Configuration for AUD/JPY MR + Confluence strategy."""
+    """Configuration for AUD/JPY MR champion strategy."""
 
     instrument_id: str  # "AUD/JPY.IDEALPRO"
     bar_type_h1: str  # "AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL"
     ticker: str = "AUD_JPY"
-    vwap_anchor: int = 24  # Rolling VWAP anchor (H1 bars = 1 day)
-    pct_window: int = 500  # Rolling percentile window
-    reversion_pct: float = 0.50  # Exit at 50% reversion
-    ny_close_hour: int = 21  # Hard close at 21:00 UTC
-    entry_start_hour: int = 7  # Session entry start
-    entry_end_hour: int = 12  # Session entry end
-    vol_target_pct: float = 0.08
+    vwap_anchor: int = 46          # Champion: 46-bar rolling VWAP (~2 days H1)
+    pct_window: int = 500          # Rolling percentile window
+    reversion_pct: float = 0.50    # Exit at 50% reversion toward VWAP
+    ny_close_hour: int = 21        # Hard close at 21:00 UTC
+    entry_start_hour: int = 7      # Session entry start
+    entry_end_hour: int = 12       # Session entry end
+    vol_target_pct: float = 0.08   # Annualised vol target (8%)
     ewma_span: int = 20
-    max_leverage: float = 1.5
-    warmup_bars: int = 1000
+    max_leverage: float = 2.0      # Paper trade: 2× (scale to 7× after validation)
+    warmup_bars: int = 3000        # Enough for W-scale donchian (2400 bars)
 
 
 class MRAUDJPYStrategy(Strategy):
-    """AUD/JPY MR with confluence disagreement regime filter."""
+    """AUD/JPY MR with donchian-position multi-scale regime filter."""
 
     def __init__(self, config: MRAUDJPYConfig) -> None:
         super().__init__(config)
@@ -68,19 +79,12 @@ class MRAUDJPYStrategy(Strategy):
         self.bar_type_h1 = BarType.from_str(config.bar_type_h1)
 
         self._closes: list[float] = []
+        self._highs: list[float] = []
+        self._lows: list[float] = []
         self._prm_id: str = ""
 
-        # VWAP state
-        self._vwap_sum: float = 0.0
-        self._vwap_count: int = 0
-
         # Position state
-        self._entry_price: float = 0.0
-        self._position_size: float = 0.0
         self._tiers_hit: set[int] = set()
-
-        # Confluence state (rsi_14_dev at each scale)
-        self._rsi_devs: dict[str, float] = {}
 
     def on_start(self) -> None:
         self._prm_id = f"mr_audjpy_{self.config.ticker}"
@@ -89,16 +93,17 @@ class MRAUDJPYStrategy(Strategy):
         self._warmup()
         self.subscribe_bars(self.bar_type_h1)
         self.log.info(
-            f"MR AUD/JPY started | pct_window={self.config.pct_window}"
-            f" | reversion={self.config.reversion_pct}"
-            f" | bars={len(self._closes)}"
+            f"MR AUD/JPY champion started | vwap_anchor={self.config.vwap_anchor}"
+            f" | pct_window={self.config.pct_window}"
+            f" | max_leverage={self.config.max_leverage}x"
+            f" | warmup_bars={len(self._closes)}"
         )
 
     def _warmup(self) -> None:
         project_root = Path(__file__).resolve().parents[3]
         path = project_root / "data" / f"{self.config.ticker}_H1.parquet"
         if not path.exists():
-            self.log.warning(f"Warmup missing: {path}")
+            self.log.warning(f"Warmup data missing: {path}")
             return
         df = pd.read_parquet(path).sort_index()
         if "timestamp" in df.columns:
@@ -106,7 +111,9 @@ class MRAUDJPYStrategy(Strategy):
         tail = df.tail(self.config.warmup_bars)
         for _, row in tail.iterrows():
             self._closes.append(float(row["close"]))
-        self.log.info(f"  {self.config.ticker}: {len(self._closes)} H1 bars")
+            self._highs.append(float(row.get("high", row["close"])))
+            self._lows.append(float(row.get("low", row["close"])))
+        self.log.info(f"  {self.config.ticker}: {len(self._closes)} H1 bars loaded")
 
     def on_stop(self) -> None:
         self.cancel_all_orders(self.instrument_id)
@@ -119,14 +126,20 @@ class MRAUDJPYStrategy(Strategy):
 
         px = float(bar.close)
         self._closes.append(px)
+        self._highs.append(float(bar.high))
+        self._lows.append(float(bar.low))
+
+        # Trim buffers
         max_keep = self.config.warmup_bars + 2000
         if len(self._closes) > max_keep:
             self._closes = self._closes[-max_keep:]
+            self._highs = self._highs[-max_keep:]
+            self._lows = self._lows[-max_keep:]
 
         ts = unix_nanos_to_dt(bar.ts_event)
         hour = ts.hour
 
-        # Portfolio risk
+        # Portfolio risk check
         accounts = self.cache.accounts()
         if accounts:
             acct = accounts[0]
@@ -141,20 +154,22 @@ class MRAUDJPYStrategy(Strategy):
 
         portfolio_allocator.tick()
 
-        if len(self._closes) < self.config.pct_window + 50:
+        # Need enough bars for W-scale donchian (2400) + pct_window (500)
+        min_bars = DONCHIAN_PERIOD * DONCHIAN_SCALES["W"] + self.config.pct_window
+        if len(self._closes) < min_bars:
             return
 
-        # VWAP and deviation
+        # VWAP deviation
         anchor = self.config.vwap_anchor
-        vwap = np.mean(self._closes[-anchor:])
+        vwap = float(np.mean(self._closes[-anchor:]))
         deviation = (px - vwap) / max(abs(vwap), 1e-8)
         abs_dev = abs(deviation)
 
-        # Percentile levels
+        # Rolling percentile levels (conservative grid)
         devs = [
             abs(
-                (self._closes[i] - np.mean(self._closes[max(0, i - anchor) : i]))
-                / max(abs(np.mean(self._closes[max(0, i - anchor) : i])), 1e-8)
+                (self._closes[i] - float(np.mean(self._closes[max(0, i - anchor):i])))
+                / max(abs(float(np.mean(self._closes[max(0, i - anchor):i]))), 1e-8)
             )
             for i in range(len(self._closes) - self.config.pct_window, len(self._closes))
         ]
@@ -168,18 +183,15 @@ class MRAUDJPYStrategy(Strategy):
 
         # Exit checks
         if has_pos:
-            # Hard close at NY session
             if hour >= self.config.ny_close_hour:
                 self._flatten()
                 self.log.info(f"NY CLOSE: flatten @ {px:.5f}")
                 return
-
-            # Reversion TP: deviation < lowest tier level * reversion_pct
             if levels and abs_dev < levels[0] * (1 - self.config.reversion_pct):
                 self._flatten()
                 self.log.info(
                     f"REVERSION TP: dev={abs_dev:.6f}"
-                    f" < {levels[0] * (1 - self.config.reversion_pct):.6f}"
+                    f" < threshold={levels[0] * (1 - self.config.reversion_pct):.6f}"
                 )
                 return
 
@@ -188,8 +200,7 @@ class MRAUDJPYStrategy(Strategy):
         if not in_session:
             return
 
-        # Confluence regime gate: rsi_14_dev must disagree across scales
-        ranging = self._check_confluence_regime()
+        ranging = self._check_donchian_regime()
         if not ranging:
             return
 
@@ -215,53 +226,46 @@ class MRAUDJPYStrategy(Strategy):
                     self._tiers_hit.add(tier_idx)
                     self.log.info(
                         f"TIER {tier_idx + 1} {'SELL' if direction == OrderSide.SELL else 'BUY'}"
-                        f" {qty} @ ~{px:.5f} | dev={abs_dev:.6f} > {level:.6f}"
+                        f" {qty} @ ~{px:.5f} | dev={abs_dev:.6f} > level={level:.6f}"
                     )
 
-    def _check_confluence_regime(self) -> bool:
-        """Return True if scales DISAGREE (ranging market = allow MR)."""
-        if len(self._closes) < 120 * 21 + 100:
-            return True  # Not enough data for W-scale, allow entries
+    def _check_donchian_regime(self) -> bool:
+        """Return True if Donchian-position scales DISAGREE (ranging = allow MR).
 
+        donchian_pos_20 = (close - N-bar low) / (N-bar high - N-bar low) - 0.5
+        Compute at H1 (N=20), H4 (N=80), D (N=480), W (N=2400).
+        Block entries when all scales agree (trending).
+        """
         close_arr = np.array(self._closes)
+        high_arr = np.array(self._highs)
+        low_arr = np.array(self._lows)
+
         signs = []
-        for label, mult in SCALE_MAP.items():
-            rsi_p = 14 * mult
-            if len(close_arr) < rsi_p + 10:
+        for label, mult in DONCHIAN_SCALES.items():
+            w = DONCHIAN_PERIOD * mult
+            if len(close_arr) < w:
                 continue
-            # Fast RSI computation
-            deltas = np.diff(close_arr[-(rsi_p + 1) :])
-            gains = np.where(deltas > 0, deltas, 0.0)
-            losses = np.where(deltas < 0, -deltas, 0.0)
-            alpha = 2.0 / (rsi_p + 1)
-            avg_g = gains[0]
-            avg_l = losses[0]
-            for i in range(1, len(gains)):
-                avg_g = alpha * gains[i] + (1 - alpha) * avg_g
-                avg_l = alpha * losses[i] + (1 - alpha) * avg_l
-            if avg_l < 1e-8:
-                rsi_dev = 50.0
-            else:
-                rsi_dev = (100.0 - 100.0 / (1.0 + avg_g / avg_l)) - 50.0
-            signs.append(np.sign(rsi_dev))
+            lo = float(low_arr[-w:].min())
+            hi = float(high_arr[-w:].max())
+            rng = hi - lo
+            if rng < 1e-8:
+                continue
+            don_pos = (close_arr[-1] - lo) / rng - 0.5
+            signs.append(np.sign(don_pos))
 
         if len(signs) < 2:
-            return True
+            return True  # Insufficient data — allow entries
 
-        # Ranging = scales disagree (not all same sign)
         all_pos = all(s > 0 for s in signs)
         all_neg = all(s < 0 for s in signs)
-        return not (all_pos or all_neg)
+        return not (all_pos or all_neg)  # Disagree = ranging = allow MR
 
     def _flatten(self) -> None:
-        """Close all positions and reset state."""
         self.close_all_positions(self.instrument_id)
         self._tiers_hit = set()
-        self._entry_price = 0.0
-        self._position_size = 0.0
 
     def _compute_size(self, price: float, tier_mult: int) -> int:
-        """Vol-targeted sizing per tier."""
+        """Vol-targeted sizing per tier, capped at max_leverage."""
         if len(self._closes) < 60 or price <= 0:
             return 0
         accounts = self.cache.accounts()
@@ -287,7 +291,6 @@ class MRAUDJPYStrategy(Strategy):
         alloc = portfolio_allocator.get_weight(self._prm_id)
         notional *= alloc * portfolio_risk_manager.scale_factor
 
-        # Scale by tier multiplier
         base_units = int(notional / price)
         return max(0, base_units * tier_mult // max(sum(TIER_SIZES), 1))
 
