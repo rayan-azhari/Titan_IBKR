@@ -168,10 +168,22 @@ EXPERIMENTS: list[tuple[str, dict]] = [
     ("XA TIP->SPY lb60", c(XA_BASE, instruments=["SPY"], bond="TIP", lookback=60)),
     ("XA TIP->IWB lb60", c(XA_BASE, instruments=["IWB"], bond="TIP", lookback=60)),
     # Parameter tweaks on top candidates
-    ("XA TLT->QQQ lb10 hold10", c(XA_BASE, instruments=["QQQ"], bond="TLT", lookback=10, hold_days=10)),
-    ("XA TLT->QQQ lb10 hold40", c(XA_BASE, instruments=["QQQ"], bond="TLT", lookback=10, hold_days=40)),
-    ("XA TLT->QQQ lb10 th025", c(XA_BASE, instruments=["QQQ"], bond="TLT", lookback=10, threshold=0.25)),
-    ("XA TLT->QQQ lb10 th075", c(XA_BASE, instruments=["QQQ"], bond="TLT", lookback=10, threshold=0.75)),
+    (
+        "XA TLT->QQQ lb10 hold10",
+        c(XA_BASE, instruments=["QQQ"], bond="TLT", lookback=10, hold_days=10),
+    ),
+    (
+        "XA TLT->QQQ lb10 hold40",
+        c(XA_BASE, instruments=["QQQ"], bond="TLT", lookback=10, hold_days=40),
+    ),
+    (
+        "XA TLT->QQQ lb10 th025",
+        c(XA_BASE, instruments=["QQQ"], bond="TLT", lookback=10, threshold=0.25),
+    ),
+    (
+        "XA TLT->QQQ lb10 th075",
+        c(XA_BASE, instruments=["QQQ"], bond="TLT", lookback=10, threshold=0.75),
+    ),
     # ── Gold Macro ──────────────────────────────────────────────────────
     ("GM GLD default", c(GM_BASE, instruments=["GLD"])),
     ("GM GLD rr10", c(GM_BASE, instruments=["GLD"], real_rate_window=10)),
@@ -240,7 +252,7 @@ def run_one(desc: str, cfg: dict, timeout: int = 600) -> dict:
         for k in METRIC_KEYS:
             prefix = k + ":"
             if line.startswith(prefix):
-                val = line[len(prefix):].strip().rstrip("%")
+                val = line[len(prefix) :].strip().rstrip("%")
                 try:
                     parsed[k.lower()] = float(val)
                 except ValueError:
@@ -282,7 +294,7 @@ def main() -> None:
                 f"[{i:>2}/{len(EXPERIMENTS)}] {flag} {desc:<35} "
                 f"SCORE={score:>+6.3f}  SH={sh if isinstance(sh, str) else f'{sh:+.3f}':>7}  "
                 f"DD={dd if isinstance(dd, str) else f'{dd:+.3f}':>7}  "
-                f"{dt:>5.1f}s {'ERROR '+err if err else ''}"
+                f"{dt:>5.1f}s {'ERROR ' + err if err else ''}"
             )
             sys.stdout.flush()
 

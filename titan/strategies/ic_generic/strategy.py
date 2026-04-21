@@ -254,10 +254,7 @@ class ICGenericStrategy(Strategy):
         self._warmup_and_calibrate()
 
         self._prm_id = f"ic_generic_{cfg.ticker}"
-        if (
-            self._quote_ccy != cfg.base_ccy
-            and abs(self._fx_rate_quote_to_base - 1.0) < 1e-12
-        ):
+        if self._quote_ccy != cfg.base_ccy and abs(self._fx_rate_quote_to_base - 1.0) < 1e-12:
             raise ValueError(
                 f"ic_generic: quote_ccy={self._quote_ccy!r} != "
                 f"base_ccy={cfg.base_ccy!r} but fx_rate_quote_to_base "
@@ -609,9 +606,7 @@ class ICGenericStrategy(Strategy):
         if stop_dist == 0:
             return
 
-        fx_to_base = (
-            self._fx_rate_quote_to_base if self._quote_ccy != cfg.base_ccy else 1.0
-        )
+        fx_to_base = self._fx_rate_quote_to_base if self._quote_ccy != cfg.base_ccy else 1.0
         raw_units = (equity * cfg.risk_pct) / (stop_dist * fx_to_base)
         px = float(price)
         if px > 0:
@@ -683,11 +678,7 @@ class ICGenericStrategy(Strategy):
         if self._equity_tracker is not None:
             try:
                 pnl_quote = float(event.realized_pnl.as_double())
-                fx = (
-                    self._fx_rate_quote_to_base
-                    if self._quote_ccy != self.config.base_ccy
-                    else 1.0
-                )
+                fx = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
                 self._equity_tracker.on_position_closed(pnl_quote, fx_to_base=fx)
             except Exception as e:
                 self.log.warning(f"tracker on_position_closed failed: {e}")

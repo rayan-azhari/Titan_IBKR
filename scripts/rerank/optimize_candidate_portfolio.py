@@ -131,9 +131,7 @@ def max_dd(rets: pd.Series) -> float:
 def boot_ci(rets: pd.Series) -> tuple[float, float]:
     from titan.research.metrics import BARS_PER_YEAR, bootstrap_sharpe_ci
 
-    return bootstrap_sharpe_ci(
-        rets, periods_per_year=BARS_PER_YEAR["D"], n_resamples=1000, seed=42
-    )
+    return bootstrap_sharpe_ci(rets, periods_per_year=BARS_PER_YEAR["D"], n_resamples=1000, seed=42)
 
 
 # ── Main ───────────────────────────────────────────────────────────────
@@ -176,10 +174,12 @@ def main() -> None:
 
     # Write markdown incrementally so partial failures don't lose results.
     md: list[str] = ["# Candidate Portfolio Optimization — 2026-04-21", ""]
-    md.append("Post-remediation portfolio construction using the top gate-passers "
-              "from the re-rank sweep. Evaluates two candidate sets: the full "
-              "6-strategy set and a de-duplicated 5-strategy set that drops "
-              "HYG->QQQ (0.93-correlated with HYG->IWB).")
+    md.append(
+        "Post-remediation portfolio construction using the top gate-passers "
+        "from the re-rank sweep. Evaluates two candidate sets: the full "
+        "6-strategy set and a de-duplicated 5-strategy set that drops "
+        "HYG->QQQ (0.93-correlated with HYG->IWB)."
+    )
     md.append("")
     md.append(f"**Common window**: {common_start.date()} → {common_end.date()} ({n_days} bdays)")
     md.append("")
@@ -187,8 +187,10 @@ def main() -> None:
     # Step 3: evaluate both the full set and the deduplicated set.
     for set_name, selected in [
         ("full (6 strategies)", list(aligned.keys())),
-        ("deduplicated (5 strategies, drop HYG->QQQ)",
-         [k for k in aligned.keys() if k in DEDUPED_NAMES]),
+        (
+            "deduplicated (5 strategies, drop HYG->QQQ)",
+            [k for k in aligned.keys() if k in DEDUPED_NAMES],
+        ),
     ]:
         print("\n" + "=" * 70)
         print(f"  SET: {set_name}")
@@ -243,8 +245,7 @@ def main() -> None:
                 f"maxDD={max_dd(s) * 100:+.1f}%"
             )
             md.append(
-                f"| {c} | {sh:+.3f} | {ci_lo:+.3f} | {ci_hi:+.3f} | "
-                f"{max_dd(s) * 100:+.1f}% |"
+                f"| {c} | {sh:+.3f} | {ci_lo:+.3f} | {ci_hi:+.3f} | {max_dd(s) * 100:+.1f}% |"
             )
         md.append("")
         md.append("### Portfolio allocations — realized OOS")

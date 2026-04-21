@@ -436,9 +436,7 @@ class MTFConfluenceStrategy(Strategy):
         stop_dist = self.latest_atr * self._atr_stop_mult
         if stop_dist == 0:
             return
-        fx_to_base = (
-            self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
-        )
+        fx_to_base = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
         raw_units = risk_base / (stop_dist * fx_to_base)
         if float(price) > 0:
             max_units = (equity * self.config.leverage_cap) / (float(price) * fx_to_base)

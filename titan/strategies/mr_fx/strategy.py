@@ -403,20 +403,24 @@ class MRFXStrategy(Strategy):
         risk_base = equity * self.risk_pct * tier_fraction
         # Convert risk_base into units: stop distance is ATR in quote ccy, so
         # risk_base / (atr * fx) gives units in base currency of the pair.
-        fx_to_base = (
-            self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
-        )
+        fx_to_base = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
         raw_units = risk_base / (self._latest_atr * fx_to_base)
 
         # Leverage cap applied to notional in base ccy
         max_notional_base = equity * self.leverage_cap
-        max_units = convert_notional_to_units(
-            notional_base=max_notional_base,
-            price=price,
-            quote_ccy=self._quote_ccy,
-            base_ccy=self.config.base_ccy,
-            fx_rate_quote_to_base=(fx_to_base if self._quote_ccy != self.config.base_ccy else None),
-        ) if price > 0 else 0
+        max_units = (
+            convert_notional_to_units(
+                notional_base=max_notional_base,
+                price=price,
+                quote_ccy=self._quote_ccy,
+                base_ccy=self.config.base_ccy,
+                fx_rate_quote_to_base=(
+                    fx_to_base if self._quote_ccy != self.config.base_ccy else None
+                ),
+            )
+            if price > 0
+            else 0
+        )
         units = min(raw_units, max_units) if max_units > 0 else raw_units
 
         # Apply portfolio-level scale factor

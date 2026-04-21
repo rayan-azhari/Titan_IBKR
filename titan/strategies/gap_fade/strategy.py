@@ -250,9 +250,7 @@ class GapFadeStrategy(Strategy):
         risk_base *= alloc * portfolio_risk_manager.scale_factor
         # Convert: units = risk_base / (stop_dist * fx). For USD-quoted pairs
         # fx=1 so this collapses to the original formula.
-        fx_to_base = (
-            self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
-        )
+        fx_to_base = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
         raw_units = risk_base / (stop_dist * fx_to_base)
         units = int(raw_units)
 

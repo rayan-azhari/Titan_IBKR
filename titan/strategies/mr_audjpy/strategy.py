@@ -3,9 +3,20 @@
 Intraday mean reversion on AUD/JPY using VWAP deviation grid entries
 with Donchian-position multi-scale confluence as regime filter.
 
-Research champion config (SCORE 5.14, Sharpe +4.64, DD -9.6%):
-  vwap_anchor=46, regime_filter=conf_donchian_pos_20,
+Post-remediation champion config (April 2026 audit):
+  vwap_anchor=24, regime_filter=conf_donchian_pos_20,
   tier_grid=conservative, is_bars=32000, oos_bars=8000
+
+  Pre-fix research claimed Sharpe +4.64 at vwap_anchor=46; both numbers
+  were inflated by the sqrt(252)-on-H1 bug. On the corrected harness:
+
+    vwap_anchor=24  Sharpe +0.53  DD -38%  (OPTIMAL)
+    vwap_anchor=36  Sharpe +0.48  DD -47%
+    vwap_anchor=46  Sharpe +0.32  DD -54%  (old "champion", now 4th/6)
+    vwap_anchor=60  Sharpe +0.30  DD -61%
+    vwap_anchor=72  Sharpe +0.11  DD -63%
+
+  Full analysis: directives/Autoresearch Agent Loop 2026-04-21.md iter-5.
 
 Regime filter: donchian_pos_20 at H1/H4/D/W scales must DISAGREE
   (scales don't agree on direction = ranging = allow MR entries).
@@ -14,15 +25,13 @@ Regime filter: donchian_pos_20 at H1/H4/D/W scales must DISAGREE
   Negative = lower half = trending down.
 
 Signal:
-    1. Compute rolling VWAP with 46-bar anchor (~2 trading days on H1).
+    1. Compute rolling VWAP with 24-bar anchor (~1 trading day on H1).
     2. Track price deviation from VWAP.
     3. Compute rolling percentile bands (95/98/99/99.9 = conservative grid).
     4. Enter tiered grid [1,2,4,8] when deviation > percentile threshold.
     5. Regime gate: donchian_pos_20 at H1/H4/D/W scales must DISAGREE.
     6. Session filter: 07:00-12:00 UTC entries only.
     7. Exit: 50% reversion TP or 21:00 UTC hard close.
-
-April 2026. Research: research/auto/experiment.py (Exp86 IWB cbars=5)
 """
 
 from __future__ import annotations
@@ -64,7 +73,7 @@ class MRAUDJPYConfig(StrategyConfig):
     instrument_id: str  # "AUD/JPY.IDEALPRO"
     bar_type_h1: str  # "AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL"
     ticker: str = "AUD_JPY"
-    vwap_anchor: int = 46  # Champion: 46-bar rolling VWAP (~2 days H1)
+    vwap_anchor: int = 24  # Post-audit champion: 24-bar (~1 day H1). Beats 46 on corrected harness.
     pct_window: int = 500  # Rolling percentile window
     reversion_pct: float = 0.50  # Exit at 50% reversion toward VWAP
     ny_close_hour: int = 21  # Hard close at 21:00 UTC

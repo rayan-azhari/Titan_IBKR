@@ -57,9 +57,12 @@ def get_mr_audjpy_returns(vwap_anchor: int = 24) -> pd.Series:
     deviation = compute_vwap_deviation(close, anchor_period=vwap_anchor)
     mask = build_confluence_disagreement_mask(df, "donchian_pos_20")
     r = run_mr_wfo(
-        close, deviation, mask,
+        close,
+        deviation,
+        mask,
         [0.95, 0.98, 0.99, 0.999],
-        is_bars=32000, oos_bars=8000,
+        is_bars=32000,
+        oos_bars=8000,
     )
     s = r["stitched_returns"]
     s.name = f"mr_audjpy_anchor{vwap_anchor}"
@@ -72,8 +75,12 @@ def get_bond_equity_returns(bond: str, target: str, lookback: int) -> pd.Series:
     r = run_bond_wfo(
         load_daily(bond),
         load_daily(target),
-        lookback=lookback, hold_days=20, threshold=0.50,
-        is_days=504, oos_days=126, spread_bps=5.0,
+        lookback=lookback,
+        hold_days=20,
+        threshold=0.50,
+        is_days=504,
+        oos_days=126,
+        spread_bps=5.0,
     )
     s = r["stitched_returns"]
     s.name = f"{bond.lower()}_{target.lower()}_lb{lookback}"
@@ -89,17 +96,27 @@ def get_ml_returns(instrument: str, oos_months: int = 2) -> pd.Series:
         strategy="stacking",
         timeframe="D",
         xgb_params=dict(
-            n_estimators=300, max_depth=4, learning_rate=0.03,
-            subsample=0.8, colsample_bytree=0.6, random_state=42, verbosity=0,
+            n_estimators=300,
+            max_depth=4,
+            learning_rate=0.03,
+            subsample=0.8,
+            colsample_bytree=0.6,
+            random_state=42,
+            verbosity=0,
         ),
-        lstm_hidden=32, lookback=20, lstm_epochs=30, n_nested_folds=3,
+        lstm_hidden=32,
+        lookback=20,
+        lstm_epochs=30,
+        n_nested_folds=3,
         label_params=[
             dict(rsi_oversold=45, rsi_overbought=55, confirm_bars=5, confirm_pct=0.005),
             dict(rsi_oversold=50, rsi_overbought=50, confirm_bars=5, confirm_pct=0.003),
             dict(rsi_oversold=48, rsi_overbought=52, confirm_bars=5, confirm_pct=0.005),
         ],
-        signal_threshold=0.6, cost_bps=2.0,
-        is_years=2, oos_months=oos_months,
+        signal_threshold=0.6,
+        cost_bps=2.0,
+        is_years=2,
+        oos_months=oos_months,
     )
     r = run_ml_wfo(instrument, cfg, return_raw=True)
     s = r.get("stitched_returns", pd.Series(dtype=float))
@@ -155,9 +172,8 @@ def max_dd(rets: pd.Series) -> float:
 
 def boot_ci(rets: pd.Series) -> tuple[float, float]:
     from titan.research.metrics import BARS_PER_YEAR, bootstrap_sharpe_ci
-    return bootstrap_sharpe_ci(
-        rets, periods_per_year=BARS_PER_YEAR["D"], n_resamples=1000, seed=42
-    )
+
+    return bootstrap_sharpe_ci(rets, periods_per_year=BARS_PER_YEAR["D"], n_resamples=1000, seed=42)
 
 
 # ── Main ───────────────────────────────────────────────────────────────
@@ -181,8 +197,10 @@ def main() -> None:
             continue
         s = to_bday(s)
         series[name] = s
-        print(f"OK  bars={len(s)}  sharpe={sharpe(s):+.3f}  "
-              f"range={s.index[0].date()}→{s.index[-1].date()}")
+        print(
+            f"OK  bars={len(s)}  sharpe={sharpe(s):+.3f}  "
+            f"range={s.index[0].date()}→{s.index[-1].date()}"
+        )
 
     if len(series) < 2:
         print("\nERROR: <2 loaded")
@@ -203,7 +221,11 @@ def main() -> None:
     print(f"\n  Max |pairwise correlation|: {max_pw:.3f}")
 
     # Cluster check: pull out the three X->HYG signals.
-    hyg_cols = [c for c in df.columns if c.endswith("_hyg_lb10") or c.endswith("_hyg_lb20") or c.endswith("_hyg_lb60")]
+    hyg_cols = [
+        c
+        for c in df.columns
+        if c.endswith("_hyg_lb10") or c.endswith("_hyg_lb20") or c.endswith("_hyg_lb60")
+    ]
     print(f"\n  Bond->HYG sub-corr ({hyg_cols}):")
     print("  " + corr.loc[hyg_cols, hyg_cols].round(3).to_string().replace("\n", "\n  "))
 
@@ -228,12 +250,17 @@ def main() -> None:
     # distributed per the original plan.
     v3_proposed_weights_pct_nonml = {
         "tlt_qqq_lb10": 15,
-        "tip_hyg_lb60": 10, "lqd_hyg_lb10": 10, "tlt_hyg_lb20": 10,
-        "mr_audjpy_a24": 10, "hyg_iwb_lb10": 10, "ief_gld_lb60": 5,
+        "tip_hyg_lb60": 10,
+        "lqd_hyg_lb10": 10,
+        "tlt_hyg_lb20": 10,
+        "mr_audjpy_a24": 10,
+        "hyg_iwb_lb10": 10,
+        "ief_gld_lb60": 5,
     }
     tot_nonml = sum(v3_proposed_weights_pct_nonml.values())
-    v3_weights = {k: v / tot_nonml for k, v in v3_proposed_weights_pct_nonml.items()
-                  if k in df.columns}
+    v3_weights = {
+        k: v / tot_nonml for k, v in v3_proposed_weights_pct_nonml.items() if k in df.columns
+    }
 
     def port_rets(w: dict[str, float]) -> pd.Series:
         w_arr = np.array([w.get(c, 0.0) for c in oos_df.columns])
@@ -270,9 +297,11 @@ def main() -> None:
         w_arr = rng.dirichlet(np.ones(len(df.columns)))
         rand_sh.append(sharpe(port_rets(dict(zip(df.columns, w_arr)))))
     arr = np.array(rand_sh)
-    print(f"    p05={np.percentile(arr, 5):.2f}  "
-          f"p50={np.percentile(arr, 50):.2f}  "
-          f"p95={np.percentile(arr, 95):.2f}")
+    print(
+        f"    p05={np.percentile(arr, 5):.2f}  "
+        f"p50={np.percentile(arr, 50):.2f}  "
+        f"p95={np.percentile(arr, 95):.2f}"
+    )
 
     # Standalone OOS Sharpes.
     print("\n  Per-strategy standalone OOS Sharpe:\n")
@@ -318,10 +347,15 @@ def main() -> None:
     md.append("| Scheme | Sharpe | CI_lo | CI_hi | Max DD | Ann ret |")
     md.append("|---|---:|---:|---:|---:|---:|")
     for scheme, w, sh, ci_lo, ci_hi, dd, ann in results:
-        md.append(f"| {scheme} | {sh:+.3f} | {ci_lo:+.3f} | {ci_hi:+.3f} | {dd * 100:+.1f}% | {ann * 100:+.1f}% |")
+        md.append(
+            f"| {scheme} | {sh:+.3f} | {ci_lo:+.3f} | {ci_hi:+.3f} | "
+            f"{dd * 100:+.1f}% | {ann * 100:+.1f}% |"
+        )
     md.append("")
-    md.append(f"Random Dirichlet OOS band (n=500): p05={np.percentile(arr, 5):.2f}, "
-              f"p50={np.percentile(arr, 50):.2f}, p95={np.percentile(arr, 95):.2f}.")
+    md.append(
+        f"Random Dirichlet OOS band (n=500): p05={np.percentile(arr, 5):.2f}, "
+        f"p50={np.percentile(arr, 50):.2f}, p95={np.percentile(arr, 95):.2f}."
+    )
     REPORT.write_text("\n".join(md), encoding="utf-8")
     print(f"\n  Report: {REPORT}")
 

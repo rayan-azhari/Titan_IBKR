@@ -4,6 +4,39 @@
 **Author:** Architect (Claude Code)
 **Status:** Active development, 5+ live strategies, **portfolio-risk layer rewritten (April 21, 2026)** to use timestamped per-strategy equity + wall-clock gating + halt persistence. Champion portfolio live on paper. Multi-scale confluence + MR-FX research complete.
 
+> [!CAUTION]
+> **April 2026 quant audit remediation — revised performance numbers.**
+> All Sharpe / CAGR / DD numbers in this document dated **before the
+> April 2026 external quant audit** were computed under buggy math
+> (`sqrt(252)` applied to H1 data, same-bar look-ahead in bond-equity
+> WFO, filter-then-annualise Sharpe bias). The corrected numbers are:
+>
+> | Strategy | Pre-fix Sharpe | Post-fix Sharpe | Post-fix CI_lo |
+> |---|---:|---:|---:|
+> | MR AUD/JPY conf_donchian_pos_20 conservative | +4.64 | **+0.910** | +0.478 |
+> | MR AUD/JPY at `vwap_anchor=24` (new optimum) | — | **+0.97** | +0.47 |
+> | MR AUD/USD conf_rsi_14_dev conservative | +2.10 | **+0.374** | **-0.180** |
+> | IEF→GLD lb=60 | +1.17 | **+0.721** | +0.302 |
+> | HYG→IWB lb=10 | +1.57 | **+0.895** | +0.396 |
+>
+> * **Deprecated**: AUD/USD MR (CI_lo < 0) → see
+>   [directives/Deprecated Strategies.md](./Deprecated%20Strategies.md).
+> * **Live config change**: AUD/JPY `vwap_anchor` 46 → 24 (corrected
+>   harness shows 24 beats 46 on every metric).
+> * **New post-remediation portfolio candidates** (from re-rank and
+>   autonomous loop): TLT→QQQ lb=10 (CI_lo +0.54), TIP→HYG lb=60
+>   (CI_lo +0.43, DD -10%), LQD→HYG, TLT→HYG, ML TQQQ stacking.
+> * **Full analysis**:
+>   [Remediation Runbook April 2026.md](./Remediation%20Runbook%20April%202026.md),
+>   [Remediation Audit 2026-04-21.md](./Remediation%20Audit%202026-04-21.md),
+>   [Rerank Analysis 2026-04-21.md](./Rerank%20Analysis%202026-04-21.md),
+>   [Candidate Portfolio 2026-04-21.md](./Candidate%20Portfolio%202026-04-21.md),
+>   [Autonomous Loop 2026-04-21.md](./Autonomous%20Loop%202026-04-21.md).
+>
+> Individual line-item Sharpes below are NOT updated — use this header
+> as the source of truth; treat in-line pre-audit numbers as
+> historical only.
+
 ---
 
 ## 1. System Overview
@@ -380,7 +413,9 @@ Every strategy that was previously calling `balance_total(list(balances.keys())[
 | `mr_audjpy`, `bond_gold` | **Full tracker** | Live in `champion_portfolio`. Uses `StrategyEquityTracker` + FX-aware sizing. |
 | `gld_confluence`, `gold_macro`, `fx_carry`, `etf_trend`, `ic_equity_daily`, `ml`, `mtf`, `orb`, `gap_fade`, `mr_fx`, `pairs` | **Deterministic USD fallback** | Uses `get_base_balance(account, "USD")` + explicit `bar.ts_event` timestamp. Account-level NLV is still the equity input pending per-strategy P&L wiring. |
 
-The live `champion_portfolio` set (`mr_audjpy`, `mr_audusd`, `bond_equity_ihyu_cspx`) uses classes that are fully migrated.
+The live `champion_portfolio` set (`mr_audjpy`, `bond_equity_ihyu_cspx`) uses classes that are fully migrated.
+(`mr_audusd` was removed from the champion set 2026-04-21 — see the
+[Deprecated Strategies doc](./Deprecated%20Strategies.md).)
 
 ### 4.2 Research backtester fix (`research/auto/phase_portfolio.py`)
 
@@ -755,7 +790,7 @@ Also tested triple filter (HMM + Hurst + confluence) on EUR/USD -- HMM doesn't i
 
 | Instrument | Filter | Tiers | Sharpe | Trades | % Pos | Gate |
 |---|---|---|---|---|---|---|
-| **AUD/JPY** | **conf_rsi_14_dev** | **95/98/99/99.9** | **+2.08** | **119** | **75%** | **PASS** |
+| **AUD/JPY** | **conf_rsi_14_dev** | **95/98/99/99.9** | ~~**+2.08**~~ **+0.826** (post-audit, CI +0.314) | **119** | **75%** | **PASS** |
 | EUR/USD | conf_rsi_14_dev | 95/98/99/99.9 | +1.18 | 180 | 31% | FAIL |
 | GBP/USD | conf_rsi_14_dev | 90/95/98/99 | +0.30 | 211 | 75% | FAIL |
 | GLD/SPY/QQQ/DAX/FTSE | -- | -- | 0.00 | 0 | 0% | FAIL |
@@ -774,7 +809,7 @@ Also tested triple filter (HMM + Hurst + confluence) on EUR/USD -- HMM doesn't i
 | # | Strategy | Instrument | Signal | WFO Sharpe | % Pos Folds | Status |
 |---|---|---|---|---|---|---|
 | 1 | **AND-Gated Confluence** | **GLD H1** | `trend_mom` across H1/H4/D/W scales, AND-gate | **+1.46** | **80%** | **Ready for deployment** |
-| 2 | **MR + Confluence Regime** | **AUD/JPY H1** | VWAP deviation grid, rsi_14_dev disagreement filter | **+2.08** | **75%** | **Ready for deployment** |
+| 2 | **MR + Confluence Regime** | **AUD/JPY H1** | VWAP deviation grid, rsi_14_dev disagreement filter | ~~**+2.08**~~ **+0.826** (post-audit) | **75%** | **Deployed paper, post-audit remediated** |
 
 ### 10.8 Cross-Asset Novel Strategy Research
 
@@ -783,7 +818,7 @@ Brainstormed and tested 3 novel cross-asset strategies using existing daily data
 **Idea 1: Bond->Equity/Gold Momentum**
 - Signal: TLT/IEF log-return over lookback period predicts equity/gold returns
 - Edge: institutional constraint -- bond market prices rate expectations before equity market adjusts
-- **WFO Result: IEF->GLD LB=60, Sharpe +1.17, 68% positive folds across 37 folds (17+ years)**
+- **WFO Result: IEF->GLD LB=60, Sharpe ~~+1.17~~ **+0.721** (post-audit, CI +0.302), 55% positive folds across 38 folds (17+ years)**
 - **PASS** -- deeply validated signal, consistent across multiple regimes (2007-2026)
 
 **Idea 2: Volatility Risk Premium (VRP) Timing**
@@ -810,7 +845,7 @@ Brainstormed and tested 3 novel cross-asset strategies using existing daily data
 |---|---|---|---|---|---|---|
 | 1 | **GLD AND-gated confluence** | GLD H1 | **+1.46** | 80% | Trend (multi-scale) | Ready |
 | 2 | **AUD/JPY MR + confluence regime** | AUD/JPY H1 | **+2.08** | 75% | Mean reversion | Ready |
-| 3 | **Bond->Gold momentum** | IEF->GLD daily | **+1.17** | 68% | Cross-asset lead-lag | Ready |
+| 3 | **Bond->Gold momentum** | IEF->GLD daily | ~~**+1.17**~~ **+0.721** (post-audit) | 55% | Cross-asset lead-lag | Deployed |
 | 4 | **Cross-asset confluence** | GLD risk_off | **+1.28** | N/A (static) | Macro AND-gate | Needs WFO |
 
 **Key insight:** Gold is the system's richest alpha source. It responds to macro factors (real rates, dollar, risk sentiment) that propagate with lags across asset classes, creating multiple independent edges.
@@ -838,7 +873,7 @@ Brainstormed and tested 3 novel cross-asset strategies using existing daily data
 | Gold Macro | Gold Macro (cross-asset) | GLD daily | 5-10% | Deployed (Sharpe +0.60) |
 | Miners | ML PSKY | PSKY | 5-10% | Research validated |
 | **AUD/JPY MR** | **MR + confluence regime** | **AUD/JPY H1** | **5-10%** | **WFO VALIDATED (Sharpe +2.08)** |
-| **Bond->Gold** | **IEF momentum -> GLD** | **IEF/GLD daily** | **5-10%** | **WFO VALIDATED (Sharpe +1.17, 37 folds)** |
+| **Bond->Gold** | **IEF momentum -> GLD** | **IEF/GLD daily** | **5-10%** | **WFO VALIDATED (Sharpe ~~+1.17~~ **+0.721** post-audit, CI_lo +0.302, 38 folds)** |
 | **Cross-Asset Overlay** | **4-asset AND-gate** | **TLT/GLD/DXY/SPY** | **Overlay** | **57/108 pass (needs WFO)** |
 | Carry | FX Carry | AUD/JPY | 5% | Deployed |
 | Intraday | ORB + Gap Fade | SPY + EUR/USD | 5-10% | LIVE / Deployed |

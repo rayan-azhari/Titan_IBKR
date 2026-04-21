@@ -1,7 +1,9 @@
 """run_live_mr_audjpy.py -- Live runner for AUD/JPY MR Champion Strategy.
 
-Research champion: vwap_anchor=46, donchian_pos_20 regime filter,
-conservative tier grid, SCORE=5.14, Sharpe +4.64, DD -9.6%.
+Post-audit champion (April 2026 remediation): vwap_anchor=24,
+donchian_pos_20 regime filter, conservative tier grid. On the corrected
+harness anchor=24 scores Sharpe +0.53 vs +0.32 at the pre-fix anchor=46
+value. See directives/Autoresearch Agent Loop 2026-04-21.md.
 
 Paper trading port:  7497  (TWS paper) or 4002 (IBKR Gateway paper)
 Live trading port:   7496  (TWS live)  or 4001 (IBKR Gateway live)
@@ -135,8 +137,8 @@ def main() -> None:
         instrument_id="AUD/JPY.IDEALPRO",
         bar_type_h1="AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL",
         ticker="AUD_JPY",
-        # Champion research params
-        vwap_anchor=46,  # 46-bar rolling VWAP (~2 trading days)
+        # Post-audit champion params (April 2026 remediation)
+        vwap_anchor=24,  # 24-bar VWAP (~1 trading day); beats 46 on corrected harness
         pct_window=500,  # Rolling percentile window
         reversion_pct=0.50,  # Exit at 50% reversion
         max_leverage=2.0,  # Paper trade: 2× (scale to 7× after validation)
@@ -145,7 +147,7 @@ def main() -> None:
     strategy = MRAUDJPYStrategy(strat_config)
     node.trader.add_strategy(strategy)
     logger.info(
-        "AUD/JPY MR Champion attached | vwap_anchor=46 | donchian regime | "
+        "AUD/JPY MR Champion attached | vwap_anchor=24 | donchian regime | "
         "max_leverage=2.0x (paper)"
     )
 

@@ -231,8 +231,10 @@ def compute_portfolio_stats(
     # ── Diversification ratio (Choueifaty-Coignard) ────────────────────────
     w_arr = np.array([weights.get(k, 0.0) for k in component_returns])
     comp_vols = np.array(
-        [_ann(float(component_returns[k].std()), periods_per_year=ANNUAL_BARS)
-         for k in component_returns]
+        [
+            _ann(float(component_returns[k].std()), periods_per_year=ANNUAL_BARS)
+            for k in component_returns
+        ]
     )
     port_vol = _ann(std, periods_per_year=ANNUAL_BARS)
     dr = float(np.dot(w_arr, comp_vols) / port_vol) if port_vol > 1e-9 else 1.0

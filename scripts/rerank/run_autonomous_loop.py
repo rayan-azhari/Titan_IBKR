@@ -28,10 +28,8 @@ from __future__ import annotations
 
 import sys
 import time
-from itertools import product
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -81,9 +79,14 @@ def run_bond_equity(bond: str, target: str, lookback: int) -> dict | None:
         return None
     try:
         r = run_bond_wfo(
-            bc, tc,
-            lookback=lookback, hold_days=20, threshold=0.50,
-            is_days=504, oos_days=126, spread_bps=5.0,
+            bc,
+            tc,
+            lookback=lookback,
+            hold_days=20,
+            threshold=0.50,
+            is_days=504,
+            oos_days=126,
+            spread_bps=5.0,
         )
     except Exception:
         return None
@@ -147,24 +150,25 @@ def run_mr_confluence_full(instrument: str) -> list[dict]:
                 ("conservative", [0.95, 0.98, 0.99, 0.999]),
             ):
                 try:
-                    r = run_mr_wfo(close, deviation, mask, pcts,
-                                   is_bars=is_bars, oos_bars=oos_bars)
+                    r = run_mr_wfo(close, deviation, mask, pcts, is_bars=is_bars, oos_bars=oos_bars)
                 except Exception:
                     continue
                 if r.get("n_folds", 0) < 2:
                     continue
-                rows.append({
-                    "strategy": "mr_confluence",
-                    "instrument": instrument,
-                    "params": f"vwap{vwap_anchor}/{filt_name}/{grid_name}",
-                    "sharpe": r.get("stitched_sharpe", 0.0),
-                    "ci_lo": r.get("sharpe_ci_95_lo", 0.0),
-                    "ci_hi": r.get("sharpe_ci_95_hi", 0.0),
-                    "max_dd_pct": r.get("stitched_dd_pct", 0.0),
-                    "n_folds": r.get("n_folds", 0),
-                    "pct_positive": r.get("pct_positive", 0.0),
-                    "n_trades": r.get("total_trades", 0),
-                })
+                rows.append(
+                    {
+                        "strategy": "mr_confluence",
+                        "instrument": instrument,
+                        "params": f"vwap{vwap_anchor}/{filt_name}/{grid_name}",
+                        "sharpe": r.get("stitched_sharpe", 0.0),
+                        "ci_lo": r.get("sharpe_ci_95_lo", 0.0),
+                        "ci_hi": r.get("sharpe_ci_95_hi", 0.0),
+                        "max_dd_pct": r.get("stitched_dd_pct", 0.0),
+                        "n_folds": r.get("n_folds", 0),
+                        "pct_positive": r.get("pct_positive", 0.0),
+                        "n_trades": r.get("total_trades", 0),
+                    }
+                )
     return rows
 
 
@@ -175,17 +179,28 @@ def run_ml_stacking(instrument: str, oos_months: int = 2) -> dict | None:
     ML_CFG = dict(
         strategy="stacking",
         timeframe="D",
-        xgb_params=dict(n_estimators=300, max_depth=4, learning_rate=0.03,
-                        subsample=0.8, colsample_bytree=0.6, random_state=42,
-                        verbosity=0),
-        lstm_hidden=32, lookback=20, lstm_epochs=30, n_nested_folds=3,
+        xgb_params=dict(
+            n_estimators=300,
+            max_depth=4,
+            learning_rate=0.03,
+            subsample=0.8,
+            colsample_bytree=0.6,
+            random_state=42,
+            verbosity=0,
+        ),
+        lstm_hidden=32,
+        lookback=20,
+        lstm_epochs=30,
+        n_nested_folds=3,
         label_params=[
             dict(rsi_oversold=45, rsi_overbought=55, confirm_bars=5, confirm_pct=0.005),
             dict(rsi_oversold=50, rsi_overbought=50, confirm_bars=5, confirm_pct=0.003),
             dict(rsi_oversold=48, rsi_overbought=52, confirm_bars=5, confirm_pct=0.005),
         ],
-        signal_threshold=0.6, cost_bps=2.0,
-        is_years=2, oos_months=oos_months,
+        signal_threshold=0.6,
+        cost_bps=2.0,
+        is_years=2,
+        oos_months=oos_months,
         instruments=[instrument],
     )
     EXP = ROOT / "research/auto/experiment.py"
@@ -195,8 +210,12 @@ def run_ml_stacking(instrument: str, oos_months: int = 2) -> dict | None:
     try:
         r = subprocess.run(
             ["uv", "run", "python", str(EVAL)],
-            cwd=ROOT, capture_output=True, text=True, timeout=300,
-            encoding="utf-8", errors="replace",
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            encoding="utf-8",
+            errors="replace",
         )
     except subprocess.TimeoutExpired:
         return None
@@ -206,7 +225,7 @@ def run_ml_stacking(instrument: str, oos_months: int = 2) -> dict | None:
             pref = k + ":"
             if line.startswith(pref):
                 try:
-                    parsed[k.lower()] = float(line[len(pref):].strip().rstrip("%"))
+                    parsed[k.lower()] = float(line[len(pref) :].strip().rstrip("%"))
                 except ValueError:
                     pass
     if parsed.get("score", -99) < 0 or parsed.get("trades", 0) < 3:
@@ -231,18 +250,58 @@ def run_ml_stacking(instrument: str, oos_months: int = 2) -> dict | None:
 
 # Macro signal and target universes.
 SIGNAL_UNIVERSE = ["TLT", "IEF", "HYG", "TIP", "LQD", "UUP", "DXY"]
-TARGET_UNIVERSE = ["SPY", "QQQ", "IWB", "GLD", "DBC", "EEM", "EFA", "TQQQ", "IAU", "SLV", "GDX", "TIP", "HYG"]
+TARGET_UNIVERSE = [
+    "SPY",
+    "QQQ",
+    "IWB",
+    "GLD",
+    "DBC",
+    "EEM",
+    "EFA",
+    "TQQQ",
+    "IAU",
+    "SLV",
+    "GDX",
+    "TIP",
+    "HYG",
+]
 LOOKBACKS = [10, 20, 40, 60]
 
 # ML candidates: broad indices + leveraged + liquid sector-like ETFs.
-ML_UNIVERSE = ["SPY", "QQQ", "IWB", "TQQQ", "GLD", "EFA", "EEM", "DBC", "XLK", "XLF", "XLE", "XLV", "DIA", "IWM"]
+ML_UNIVERSE = [
+    "SPY",
+    "QQQ",
+    "IWB",
+    "TQQQ",
+    "GLD",
+    "EFA",
+    "EEM",
+    "DBC",
+    "XLK",
+    "XLF",
+    "XLE",
+    "XLV",
+    "DIA",
+    "IWM",
+]
 
 # Pairs candidates (same sector, similar market cap) from discover_daily.
 PAIRS_UNIVERSE = [
-    ("INTC", "TXN"), ("MSFT", "AAPL"), ("GOOGL", "META"), ("AMZN", "META"),
-    ("JPM", "BAC"), ("GS", "MS"), ("V", "MA"), ("XOM", "CVX"),
-    ("KO", "PEP"), ("HD", "LOW"), ("UNH", "CVS"), ("PFE", "MRK"),
-    ("SPY", "QQQ"), ("GLD", "IAU"), ("TLT", "IEF"),
+    ("INTC", "TXN"),
+    ("MSFT", "AAPL"),
+    ("GOOGL", "META"),
+    ("AMZN", "META"),
+    ("JPM", "BAC"),
+    ("GS", "MS"),
+    ("V", "MA"),
+    ("XOM", "CVX"),
+    ("KO", "PEP"),
+    ("HD", "LOW"),
+    ("UNH", "CVS"),
+    ("PFE", "MRK"),
+    ("SPY", "QQQ"),
+    ("GLD", "IAU"),
+    ("TLT", "IEF"),
 ]
 
 
@@ -265,8 +324,7 @@ def phase_A_cross_asset(rows: list[dict], daily_avail: set[str]) -> int:
                 rows.append(row)
                 if row["ci_lo"] > 0.4:
                     new_gate_passers += 1
-    print(f"  {total} combos, {new_gate_passers} ci_lo>0.4, "
-          f"{time.time() - t0:.0f}s")
+    print(f"  {total} combos, {new_gate_passers} ci_lo>0.4, {time.time() - t0:.0f}s")
     return new_gate_passers
 
 
@@ -292,8 +350,17 @@ def phase_C_mr_full(rows: list[dict], h1_avail: set[str]) -> int:
     """Expanded MR on major H1 FX pairs + top H1 equities, all vwap_anchors."""
     print("\n[Phase C] MR full sweep (vwap_anchor x filter x tier) on key H1")
     # Target the long-history instruments where MR makes sense.
-    targets = ["AUD_JPY", "AUD_USD", "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF",
-               "GLD", "QQQ", "SPY"]
+    targets = [
+        "AUD_JPY",
+        "AUD_USD",
+        "EUR_USD",
+        "GBP_USD",
+        "USD_JPY",
+        "USD_CHF",
+        "GLD",
+        "QQQ",
+        "SPY",
+    ]
     new_gate_passers = 0
     t0 = time.time()
     for inst in targets:
@@ -317,8 +384,12 @@ def phase_D_pairs(rows: list[dict], daily_avail: set[str]) -> int:
     EVAL = ROOT / "research/auto/evaluate.py"
     PT_CFG_BASE = dict(
         strategy="pairs_trading",
-        entry_z=2.0, exit_z=0.5, max_z=4.0,
-        refit_window=126, is_days=504, oos_days=126,
+        entry_z=2.0,
+        exit_z=0.5,
+        max_z=4.0,
+        refit_window=126,
+        is_days=504,
+        oos_days=126,
     )
     for a, b in PAIRS_UNIVERSE:
         if a not in daily_avail or b not in daily_avail:
@@ -328,8 +399,12 @@ def phase_D_pairs(rows: list[dict], daily_avail: set[str]) -> int:
         try:
             r = subprocess.run(
                 ["uv", "run", "python", str(EVAL)],
-                cwd=ROOT, capture_output=True, text=True, timeout=180,
-                encoding="utf-8", errors="replace",
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                encoding="utf-8",
+                errors="replace",
             )
         except subprocess.TimeoutExpired:
             continue
@@ -339,23 +414,27 @@ def phase_D_pairs(rows: list[dict], daily_avail: set[str]) -> int:
                 pref = k + ":"
                 if line.startswith(pref):
                     try:
-                        parsed[k.lower()] = float(line[len(pref):].strip().rstrip("%"))
+                        parsed[k.lower()] = float(line[len(pref) :].strip().rstrip("%"))
                     except ValueError:
                         pass
         sh = parsed.get("sharpe", -99)
         if sh <= 0:
             continue
-        rows.append({
-            "strategy": "pairs_trading",
-            "instrument": f"{a}/{b}",
-            "params": "entry_z=2.0",
-            "sharpe": sh,
-            "ci_lo": 0.0, "ci_hi": 0.0,
-            "max_dd_pct": parsed.get("max_dd", 0.0),
-            "n_folds": 0, "pct_positive": 0.0,
-            "n_trades": int(parsed.get("trades", 0)),
-            "score": parsed.get("score", 0.0),
-        })
+        rows.append(
+            {
+                "strategy": "pairs_trading",
+                "instrument": f"{a}/{b}",
+                "params": "entry_z=2.0",
+                "sharpe": sh,
+                "ci_lo": 0.0,
+                "ci_hi": 0.0,
+                "max_dd_pct": parsed.get("max_dd", 0.0),
+                "n_folds": 0,
+                "pct_positive": 0.0,
+                "n_trades": int(parsed.get("trades", 0)),
+                "score": parsed.get("score", 0.0),
+            }
+        )
         if sh > 0.4:
             new_good += 1
     print(f"  {new_good} pairs with SH>0.4, {time.time() - t0:.0f}s")
@@ -412,11 +491,16 @@ def main() -> None:
     for tag, fn in phases:
         progress = fn()
         df = write_leaderboard(rows, phase_tag=f"(after phase {tag})")
-        print(f"\n  Running leaderboard after phase {tag}: "
-              f"{len(df)} rows, gate-passers={int(df['gate_pass'].sum())}")
+        print(
+            f"\n  Running leaderboard after phase {tag}: "
+            f"{len(df)} rows, gate-passers={int(df['gate_pass'].sum())}"
+        )
         if not df.empty:
-            print(df.head(10)[["strategy", "instrument", "params",
-                                "sharpe", "ci_lo", "n_trades"]].to_string(index=False))
+            print(
+                df.head(10)[
+                    ["strategy", "instrument", "params", "sharpe", "ci_lo", "n_trades"]
+                ].to_string(index=False)
+            )
         if progress == 0:
             no_progress_streak += 1
             print(f"  No new strong finds in phase {tag}. streak={no_progress_streak}")

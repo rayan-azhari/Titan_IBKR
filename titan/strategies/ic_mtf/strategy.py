@@ -416,9 +416,7 @@ class ICMTFStrategy(Strategy):
         if stop_dist == 0:
             return
 
-        fx_to_base = (
-            self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
-        )
+        fx_to_base = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
         raw_units = (equity * self.config.risk_pct) / (stop_dist * fx_to_base)
         px = float(price)
         if px > 0:
@@ -498,11 +496,7 @@ class ICMTFStrategy(Strategy):
         if self._equity_tracker is not None:
             try:
                 pnl_quote = float(event.realized_pnl.as_double())
-                fx = (
-                    self._fx_rate_quote_to_base
-                    if self._quote_ccy != self.config.base_ccy
-                    else 1.0
-                )
+                fx = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
                 self._equity_tracker.on_position_closed(pnl_quote, fx_to_base=fx)
             except Exception as e:
                 self.log.warning(f"tracker on_position_closed failed: {e}")

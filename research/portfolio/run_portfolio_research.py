@@ -80,7 +80,9 @@ def _risk_parity_weights(
     """Inverse-volatility weighting (robust OOS, preferred over full risk parity)."""
     from titan.research.metrics import annualize_vol as _ann
 
-    vols = {k: _ann(float(component_returns[k].std()), periods_per_year=ANNUAL_BARS) for k in labels}
+    vols = {
+        k: _ann(float(component_returns[k].std()), periods_per_year=ANNUAL_BARS) for k in labels
+    }
     inv_vols = {k: 1.0 / v if v > 1e-9 else 0.0 for k, v in vols.items()}
     total = sum(inv_vols.values())
     if total < 1e-9:

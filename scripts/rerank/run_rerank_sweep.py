@@ -215,7 +215,8 @@ def write_leaderboard(rows: list[dict]) -> None:
         "",
         "## Top 40 by CI lower bound",
         "",
-        "| # | Strategy | Instrument | Params | Sharpe | CI lo | CI hi | Max DD | n_folds | Pos % | Trades |",
+        "| # | Strategy | Instrument | Params | Sharpe | CI lo | CI hi | Max DD | "
+        "n_folds | Pos % | Trades |",
         "|--:|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for i, row in df.head(40).iterrows():
@@ -228,9 +229,7 @@ def write_leaderboard(rows: list[dict]) -> None:
     md_lines.append("")
     md_lines.append("## Bottom 10 by CI lower bound")
     md_lines.append("")
-    md_lines.append(
-        "| # | Strategy | Instrument | Params | Sharpe | CI lo | CI hi |"
-    )
+    md_lines.append("| # | Strategy | Instrument | Params | Sharpe | CI lo | CI hi |")
     md_lines.append("|--:|---|---|---|---:|---:|---:|")
     for i, row in df.tail(10).iloc[::-1].iterrows():
         md_lines.append(

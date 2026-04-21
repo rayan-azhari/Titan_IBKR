@@ -272,7 +272,10 @@ STRATEGY_SETS = {
     ],
     "gold_core": ["gld_confluence", "gold_macro", "bond_gold"],
     "h1_only": ["gld_confluence", "mr_audjpy"],
-    "champion_portfolio": ["mr_audjpy", "mr_audusd", "bond_equity_ihyu_cspx"],
+    # AUD/USD MR removed 2026-04-21 after post-remediation re-validation:
+    # CI_lo = -0.180 < 0 fails the deployment gate. See directives/Deprecated
+    # Strategies.md.
+    "champion_portfolio": ["mr_audjpy", "bond_equity_ihyu_cspx"],
 }
 
 
