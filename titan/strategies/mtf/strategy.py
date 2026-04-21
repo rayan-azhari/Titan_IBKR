@@ -26,13 +26,18 @@ import pandas as pd
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import OrderSide, PriceType, TimeInForce
+from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.events import OrderFilled
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Currency, Quantity
+from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import (
+    StrategyEquityTracker,
+    report_equity_and_check,
+    split_fx_pair,
+)
 from titan.strategies.ml.features import atr, ema, rsi, sma, wma
 
 
@@ -45,6 +50,9 @@ class MTFConfluenceConfig(StrategyConfig):
     risk_pct: float = 0.01
     leverage_cap: float = 5.0
     warmup_bars: int = 1000
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
+    fx_rate_quote_to_base: float = 1.0
 
 
 class MTFConfluenceStrategy(Strategy):
@@ -92,6 +100,12 @@ class MTFConfluenceStrategy(Strategy):
         self._prev_score: float = 0.0
         self._position_inertia_pct: float = float(self.toml_cfg.get("position_inertia_pct", 0.10))
 
+        self._equity_tracker: StrategyEquityTracker | None = None
+
+        pair = split_fx_pair(config.instrument_id)
+        self._quote_ccy = pair[1] if pair else config.base_ccy
+        self._fx_rate_quote_to_base = float(config.fx_rate_quote_to_base)
+
     def _load_toml(self, path: str) -> dict:
         p = Path(path)
         if not p.exists():
@@ -111,7 +125,23 @@ class MTFConfluenceStrategy(Strategy):
 
         # Register with portfolio risk manager
         self._prm_id = "mtf_confluence"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+
+        if (
+            self._quote_ccy != self.config.base_ccy
+            and abs(self._fx_rate_quote_to_base - 1.0) < 1e-12
+        ):
+            raise ValueError(
+                f"mtf: quote_ccy={self._quote_ccy!r} != "
+                f"base_ccy={self.config.base_ccy!r} but fx_rate_quote_to_base "
+                f"is still the default 1.0."
+            )
+
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         self.log.info(
             f"Warmup complete. ATR size mult: {self._atr_stop_mult}x. Exit: signal reversal only."
@@ -214,9 +244,7 @@ class MTFConfluenceStrategy(Strategy):
             self.history[tf] = self.history[tf][-self.config.warmup_bars :]
 
         # Portfolio risk manager (deterministic USD + explicit bar ts)
-        from titan.risk.strategy_equity import report_equity_and_check as _rec
-
-        _, halted = _rec(self, self._prm_id, bar)
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
         if halted:
             self.log.warning("Portfolio kill switch active -- flattening.")
             for instrument_id in self.bar_type_map.values():
@@ -393,45 +421,27 @@ class MTFConfluenceStrategy(Strategy):
             self.log.warning("ATR not ready. Skipping trade.")
             return
 
-        accounts = self.cache.accounts()
-        if not accounts:
-            self.log.error("No account in cache. Cannot size position.")
+        if self._equity_tracker is None:
+            self.log.error("Tracker not initialised. Cannot size position.")
             return
-
-        account = accounts[0]
-        currencies = list(account.balances().keys())
-        if not currencies:
-            self.log.error("Account has no balances. Cannot size position.")
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
+            self.log.error("Tracker equity <= 0. Cannot size position.")
             return
-        from nautilus_trader.model.currency import Currency as _C
-
-        usd = _C.from_str("USD")
-        acct_ccy = usd if usd in currencies else currencies[0]
-        equity_raw = float(account.balance_total(acct_ccy).as_double())
-
-        # Convert to USD for consistent sizing; fall back to raw balance with warning.
-        equity = equity_raw
-        if str(acct_ccy) != "USD":
-            try:
-                usd = Currency.from_str("USD")
-                fx = self.portfolio.exchange_rate(acct_ccy, usd, PriceType.MID)
-                if fx and fx > 0:
-                    equity = equity_raw * fx
-                else:
-                    raise ValueError("zero rate")
-            except Exception:
-                self.log.warning(f"No {acct_ccy}/USD FX rate cached; using raw balance for sizing.")
 
         # Conviction-scaled risk: stronger signal = larger position.
-        risk_amount = equity * self.config.risk_pct * conviction
-        # Size against actual stop distance so risk% is accurate
+        risk_base = equity * self.config.risk_pct * conviction
+        # Size against actual stop distance so risk% is accurate.
+        # For non-USD quote pairs, stop_dist is in quote ccy, so divide by fx.
         stop_dist = self.latest_atr * self._atr_stop_mult
         if stop_dist == 0:
             return
-
-        raw_units = risk_amount / stop_dist
+        fx_to_base = (
+            self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
+        )
+        raw_units = risk_base / (stop_dist * fx_to_base)
         if float(price) > 0:
-            max_units = (equity * self.config.leverage_cap) / float(price)
+            max_units = (equity * self.config.leverage_cap) / (float(price) * fx_to_base)
             units = min(raw_units, max_units)
         else:
             units = 0
@@ -508,6 +518,13 @@ class MTFConfluenceStrategy(Strategy):
         )
 
     def on_position_closed(self, event) -> None:
+        if self._equity_tracker is not None:
+            try:
+                pnl_quote = float(event.realized_pnl.as_double())
+                fx = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
+                self._equity_tracker.on_position_closed(pnl_quote, fx_to_base=fx)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(
             f"POSITION CLOSED: {event.position_id} "
             f"realized_pnl={event.realized_pnl} "

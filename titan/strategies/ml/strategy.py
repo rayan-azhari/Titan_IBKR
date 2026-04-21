@@ -26,6 +26,7 @@ from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import StrategyEquityTracker, report_equity_and_check
 from titan.strategies.ml.features import build_features, load_feature_config
 
 _logger = logging.getLogger(__name__)
@@ -215,6 +216,8 @@ class MLSignalStrategyConfig(StrategyConfig):
     vol_target_pct: float = 0.01  # Daily vol contribution cap: 1%
     # Health monitor
     health_check_interval: int = 50  # Check every N bars
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
 
 
 class MLSignalStrategy(Strategy):
@@ -254,6 +257,7 @@ class MLSignalStrategy(Strategy):
 
         # Portfolio risk manager ID
         self._prm_id: str = ""
+        self._equity_tracker: StrategyEquityTracker | None = None
 
     def _load_model(self, path: str):
         """Load the trained .joblib model."""
@@ -269,7 +273,12 @@ class MLSignalStrategy(Strategy):
 
         # Register with portfolio risk manager
         self._prm_id = f"ml_{self.instrument_id.value.replace('/', '_')}"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         # Warmup History
         self._warmup_history()
@@ -343,10 +352,8 @@ class MLSignalStrategy(Strategy):
             self.log.info(f"Warming up... ({len(self.history)}/200)")
             return
 
-        # 3. Portfolio risk manager (deterministic USD + explicit bar ts)
-        from titan.risk.strategy_equity import report_equity_and_check as _rec
-
-        _, halted = _rec(self, self._prm_id, bar)
+        # 3. Portfolio risk: per-strategy tracker equity, explicit bar timestamp
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
         if halted:
             self.log.warning("Portfolio kill switch active — flattening.")
             self.close_all_positions(self.instrument_id)
@@ -438,13 +445,10 @@ class MLSignalStrategy(Strategy):
 
     def _compute_quantity(self, prob: float, price: Decimal) -> int:
         """Compute position size via FractionalKelly + portfolio scale."""
-        accounts = self.cache.accounts()
-        if not accounts:
+        if self._equity_tracker is None:
             return 0
-        from titan.risk.strategy_equity import get_base_balance as _gb
-
-        equity = _gb(accounts[0], "USD")
-        if equity is None or equity <= 0:
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
             return 0
         px = float(price)
         daily_vol = self._get_daily_vol()
@@ -481,9 +485,17 @@ class MLSignalStrategy(Strategy):
 
     def on_position_closed(self, event) -> None:
         """Track win/loss for Kelly ratio and health monitor."""
-        pnl = float(event.realized_pnl)
+        try:
+            pnl = float(event.realized_pnl.as_double())
+        except Exception:
+            pnl = float(event.realized_pnl)
         self._wl_tracker.record(pnl)
         self._health.record_outcome(pnl > 0)
+        if self._equity_tracker is not None:
+            try:
+                self._equity_tracker.on_position_closed(pnl, fx_to_base=1.0)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(
             f"Position closed: PnL={pnl:.2f}"
             f" WR={self._wl_tracker.win_rate:.1%}"

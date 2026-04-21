@@ -10,7 +10,8 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
-from titan.risk.strategy_equity import get_base_balance
+from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import StrategyEquityTracker, report_equity_and_check
 
 
 class DirectionFlag(Enum):
@@ -38,6 +39,8 @@ class TurtleConfig(StrategyConfig):
     max_units: int = 4  # Max units allowed (Classic = 4, S2 conservative = 1)
     pyramid_atr_mult: float = 0.5  # Scale in every 0.5 ATR
     use_trailing_stop: bool = True  # Classic Turtle trails Hard Stop up upon pyramiding
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
 
 
 class TurtleStrategy(Strategy):
@@ -67,9 +70,20 @@ class TurtleStrategy(Strategy):
         self._prev_atr: float = 0.0
 
         self._halted = False
+        self._prm_id: str = ""
+        self._equity_tracker: StrategyEquityTracker | None = None
 
     def on_start(self) -> None:
         self.subscribe_bars(self.bar_type)
+
+        symbol = self.instrument_id.symbol.value
+        self._prm_id = f"turtle_{symbol}"
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         # Indicators update manually to control t-1 access vs current close
         self.log.info(
@@ -79,6 +93,13 @@ class TurtleStrategy(Strategy):
 
     def on_bar(self, bar: Bar) -> None:
         if self._halted:
+            return
+
+        # Per-bar equity report to the PRM. Kill-switch flattens locally.
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
+        if halted:
+            self.log.warning("Portfolio kill switch -- flattening turtle.")
+            self._close_all("Portfolio kill switch")
             return
 
         if self.config.flat_before_earnings and self._is_imminent_earnings(bar):
@@ -156,19 +177,13 @@ class TurtleStrategy(Strategy):
 
     def _add_unit(self, direction: int, price: float) -> None:
         """Calculate single Unit size and submit market order."""
-        accounts = self.cache.accounts()
-        if not accounts:
+        if self._equity_tracker is None:
             return
 
-        # Deterministic USD balance. The previous ``balances.keys()[0]`` anti-
-        # pattern returned a non-deterministic currency on multi-ccy accounts
-        # (audit finding #2) — if USD is absent, we bail rather than silently
-        # size off EUR/JPY balance.
-        equity = get_base_balance(accounts[0], "USD")
-        if equity is None or equity <= 0:
-            self.log.warning("Turtle: no USD balance on account; skipping unit.")
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
+            self.log.warning("Turtle: tracker equity <= 0; skipping unit.")
             return
-        equity = float(equity)
 
         # 1 unit risk
         stop_dist = self._prev_atr * self.config.stop_atr_mult
@@ -254,3 +269,12 @@ class TurtleStrategy(Strategy):
         self.donch_entry.handle_bar(bar)
         self.donch_exit.handle_bar(bar)
         self.atr.handle_bar(bar)
+
+    def on_position_closed(self, event) -> None:
+        if self._equity_tracker is not None:
+            try:
+                pnl = float(event.realized_pnl.as_double())
+                self._equity_tracker.on_position_closed(pnl, fx_to_base=1.0)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
+        self.log.info(f"CLOSED: PnL={event.realized_pnl}")

@@ -34,13 +34,19 @@ import pandas as pd
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import OrderSide, PriceType, TimeInForce
+from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.events import OrderFilled
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Currency, Quantity
+from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 from scipy.stats import spearmanr
 
+from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import (
+    StrategyEquityTracker,
+    report_equity_and_check,
+    split_fx_pair,
+)
 from titan.strategies.ml.features import atr, rsi, stochastic
 
 # ---------------------------------------------------------------------------
@@ -84,6 +90,9 @@ class ICMTFConfig(StrategyConfig):
     stop_atr_mult: float = 1.5
     leverage_cap: float = 20.0
     warmup_bars: int = 1000
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
+    fx_rate_quote_to_base: float = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +147,12 @@ class ICMTFStrategy(Strategy):
         self._entry_pending: bool = False
         self._entry_order_ids: set = set()
 
+        self._prm_id: str = ""
+        self._equity_tracker: StrategyEquityTracker | None = None
+        pair = split_fx_pair(config.instrument_id)
+        self._quote_ccy = pair[1] if pair else config.base_ccy
+        self._fx_rate_quote_to_base = float(config.fx_rate_quote_to_base)
+
     # ---------------------------------------------------------------------------
     # Lifecycle
     # ---------------------------------------------------------------------------
@@ -147,6 +162,25 @@ class ICMTFStrategy(Strategy):
         for bt in self.bar_type_map:
             self.subscribe_bars(bt)
         self._warmup_and_calibrate()
+
+        symbol = self.instrument_id.value.replace("/", "_").replace(".", "_")
+        self._prm_id = f"ic_mtf_{symbol}"
+        if (
+            self._quote_ccy != self.config.base_ccy
+            and abs(self._fx_rate_quote_to_base - 1.0) < 1e-12
+        ):
+            raise ValueError(
+                f"ic_mtf: quote_ccy={self._quote_ccy!r} != "
+                f"base_ccy={self.config.base_ccy!r} but fx_rate_quote_to_base "
+                f"is still the default 1.0."
+            )
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
+
         self.log.info(
             f"Ready | threshold=±{self.config.threshold}z"
             f" | risk={self.config.risk_pct:.1%}"
@@ -245,6 +279,17 @@ class ICMTFStrategy(Strategy):
         tf = self.bar_type_map.get(bar.bar_type)
         if not tf:
             return
+
+        # Feed the PRM once per H1 bar with the tracker's per-strategy equity.
+        if tf == "H1":
+            _, halted = report_equity_and_check(
+                self, self._prm_id, bar, tracker=self._equity_tracker
+            )
+            if halted:
+                self.log.warning("Portfolio kill switch -- flattening ic_mtf.")
+                self.cancel_all_orders(self.instrument_id)
+                self.close_all_positions(self.instrument_id)
+                return
 
         self.history[tf].append(
             {
@@ -359,37 +404,25 @@ class ICMTFStrategy(Strategy):
             self.log.warning("ATR not ready — skipping entry.")
             return
 
-        accounts = self.cache.accounts()
-        if not accounts:
-            self.log.error("No account in cache.")
+        if self._equity_tracker is None:
+            self.log.error("Tracker not initialised.")
             return
-        account = accounts[0]
-        currencies = list(account.balances().keys())
-        if not currencies:
-            self.log.error("Account has no balances.")
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
+            self.log.error("Tracker equity <= 0.")
             return
-
-        acct_ccy = currencies[0]
-        equity_raw = float(account.balance_total(acct_ccy).as_double())
-        equity = equity_raw
-
-        if str(acct_ccy) != "USD":
-            try:
-                usd = Currency.from_str("USD")
-                fx = self.portfolio.exchange_rate(acct_ccy, usd, PriceType.MID)
-                if fx and fx > 0:
-                    equity = equity_raw * fx
-            except Exception:
-                self.log.warning(f"No {acct_ccy}/USD FX — using raw balance for sizing.")
 
         stop_dist = self.latest_atr * self.config.stop_atr_mult
         if stop_dist == 0:
             return
 
-        raw_units = (equity * self.config.risk_pct) / stop_dist
+        fx_to_base = (
+            self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
+        )
+        raw_units = (equity * self.config.risk_pct) / (stop_dist * fx_to_base)
         px = float(price)
         if px > 0:
-            max_units = (equity * self.config.leverage_cap) / px
+            max_units = (equity * self.config.leverage_cap) / (px * fx_to_base)
             units = min(raw_units, max_units)
         else:
             units = 0
@@ -462,6 +495,17 @@ class ICMTFStrategy(Strategy):
         )
 
     def on_position_closed(self, event) -> None:
+        if self._equity_tracker is not None:
+            try:
+                pnl_quote = float(event.realized_pnl.as_double())
+                fx = (
+                    self._fx_rate_quote_to_base
+                    if self._quote_ccy != self.config.base_ccy
+                    else 1.0
+                )
+                self._equity_tracker.on_position_closed(pnl_quote, fx_to_base=fx)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(
             f"POSITION CLOSED: {event.position_id}"
             f" realized_pnl={event.realized_pnl}"

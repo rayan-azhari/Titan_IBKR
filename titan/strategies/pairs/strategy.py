@@ -37,6 +37,7 @@ from nautilus_trader.trading.strategy import Strategy
 
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import StrategyEquityTracker, report_equity_and_check
 
 
 class PairsConfig(StrategyConfig):
@@ -58,6 +59,8 @@ class PairsConfig(StrategyConfig):
     max_leverage: float = 2.0  # Max combined notional / equity
     # Warmup
     warmup_bars: int = 504  # 2 years of daily bars
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
 
 
 class PairsStrategy(Strategy):
@@ -95,12 +98,18 @@ class PairsStrategy(Strategy):
         self._last_date_a: "pd.Timestamp | None" = None
         self._last_date_b: "pd.Timestamp | None" = None
         self._last_eval_date: "pd.Timestamp | None" = None
+        self._equity_tracker: StrategyEquityTracker | None = None
 
     # -- Lifecycle -------------------------------------------------------------
 
     def on_start(self) -> None:
         self._prm_id = f"pairs_{self.config.ticker_a}_{self.config.ticker_b}"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         self._warmup()
         self.subscribe_bars(self.bar_type_a)
@@ -178,10 +187,8 @@ class PairsStrategy(Strategy):
         if len(self._closes_b) > max_len:
             self._closes_b = self._closes_b[-max_len:]
 
-        # Portfolio risk (deterministic USD + explicit bar ts)
-        from titan.risk.strategy_equity import report_equity_and_check as _rec
-
-        _, halted = _rec(self, self._prm_id, bar)
+        # Portfolio risk: per-strategy tracker equity, explicit bar timestamp
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
         if halted:
             self.log.warning("Portfolio kill switch -- flattening pair.")
             self._close_both_legs("kill switch")
@@ -264,14 +271,11 @@ class PairsStrategy(Strategy):
         """Enter a pair trade (two simultaneous legs)."""
         if self._last_bar_a is None or self._last_bar_b is None or self._beta is None:
             return
-
-        accounts = self.cache.accounts()
-        if not accounts:
+        if self._equity_tracker is None:
             return
-        from titan.risk.strategy_equity import get_base_balance as _gb
 
-        equity = _gb(accounts[0], "USD")
-        if equity is None or equity <= 0:
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
             return
 
         # Risk budget per trade
@@ -359,6 +363,12 @@ class PairsStrategy(Strategy):
     # -- Events ----------------------------------------------------------------
 
     def on_position_closed(self, event) -> None:
+        if self._equity_tracker is not None:
+            try:
+                pnl = float(event.realized_pnl.as_double())
+                self._equity_tracker.on_position_closed(pnl, fx_to_base=1.0)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(f"LEG CLOSED: {event.instrument_id} PnL={event.realized_pnl}")
 
     def on_order_rejected(self, event) -> None:

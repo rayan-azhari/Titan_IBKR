@@ -31,6 +31,7 @@ from nautilus_trader.trading.strategy import Strategy
 from titan.research.metrics import BARS_PER_YEAR, ewm_vol_last
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import StrategyEquityTracker, report_equity_and_check
 
 # Virtual TF scale multipliers (H1 bars per TF bar)
 SCALE_MAP = {"H1": 1, "H4": 4, "D": 24, "W": 120}
@@ -50,6 +51,8 @@ class GLDConfluenceConfig(StrategyConfig):
     max_leverage: float = 1.5
     warmup_bars: int = 5000  # Need W-scale warmup (~3120 H1 bars)
     zscore_window: int = 5000  # Expanding z-score calibration window
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
 
 
 class GLDConfluenceStrategy(Strategy):
@@ -64,10 +67,16 @@ class GLDConfluenceStrategy(Strategy):
         self._prm_id: str = ""
         self._current_dir: int = 0  # +1 long, -1 short, 0 flat
         self._confluence_scores: list[float] = []
+        self._equity_tracker: StrategyEquityTracker | None = None
 
     def on_start(self) -> None:
         self._prm_id = f"gld_confluence_{self.config.ticker}"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         self._warmup()
         self.subscribe_bars(self.bar_type_h1)
@@ -107,12 +116,10 @@ class GLDConfluenceStrategy(Strategy):
         if len(self._closes) > max_keep:
             self._closes = self._closes[-max_keep:]
 
-        # Portfolio risk (deterministic USD + explicit bar timestamp)
+        # Portfolio risk: per-strategy tracker equity, explicit bar timestamp
         from nautilus_trader.core.datetime import unix_nanos_to_dt as _u
 
-        from titan.risk.strategy_equity import report_equity_and_check
-
-        _, halted = report_equity_and_check(self, self._prm_id, bar)
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
         if halted:
             self.log.warning("Portfolio kill switch -- flattening.")
             self.close_all_positions(self.instrument_id)
@@ -268,16 +275,10 @@ class GLDConfluenceStrategy(Strategy):
 
     def _compute_size(self, price: float) -> int:
         """Vol-targeted position sizing."""
-        if len(self._closes) < 60 or price <= 0:
+        if len(self._closes) < 60 or price <= 0 or self._equity_tracker is None:
             return 0
-        accounts = self.cache.accounts()
-        if not accounts:
-            return 0
-        acct = accounts[0]
-        from titan.risk.strategy_equity import get_base_balance as _gb
-
-        equity = _gb(acct, "USD")
-        if equity is None or equity <= 0:
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
             return 0
 
         rets = pd.Series(self._closes[-60:]).pct_change().dropna()
@@ -304,6 +305,12 @@ class GLDConfluenceStrategy(Strategy):
 
     def on_position_closed(self, event) -> None:
         self._current_dir = 0
+        if self._equity_tracker is not None:
+            try:
+                pnl = float(event.realized_pnl.as_double())
+                self._equity_tracker.on_position_closed(pnl, fx_to_base=1.0)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(f"CLOSED: PnL={event.realized_pnl}")
 
     def on_order_rejected(self, event) -> None:

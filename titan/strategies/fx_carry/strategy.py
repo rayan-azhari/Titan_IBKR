@@ -30,7 +30,12 @@ from nautilus_trader.trading.strategy import Strategy
 from titan.research.metrics import BARS_PER_YEAR, ewm_vol_last
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
-from titan.risk.strategy_equity import get_base_balance, report_equity_and_check
+from titan.risk.strategy_equity import (
+    StrategyEquityTracker,
+    convert_notional_to_units,
+    report_equity_and_check,
+    split_fx_pair,
+)
 
 
 class FXCarryConfig(StrategyConfig):
@@ -45,6 +50,11 @@ class FXCarryConfig(StrategyConfig):
     ewma_span: int = 20  # EWMA span for realized vol
     vix_halve_threshold: float = 25.0  # Halve size when VIX > this
     warmup_bars: int = 60  # Min bars before trading
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
+    # FX rate from instrument quote ccy to base ccy. MUST be set explicitly
+    # for non-USD quotes (e.g. AUD/JPY -> ~0.0065 for JPY->USD).
+    fx_rate_quote_to_base: float = 1.0
 
 
 class FXCarryStrategy(Strategy):
@@ -58,12 +68,34 @@ class FXCarryStrategy(Strategy):
         self._closes: list[float] = []
         self._prm_id: str = ""
         self._current_dir: int = 0  # +1 long, -1 short, 0 flat
+        self._equity_tracker: StrategyEquityTracker | None = None
+
+        pair = split_fx_pair(config.instrument_id)
+        self._quote_ccy = pair[1] if pair else config.base_ccy
+        self._fx_rate_quote_to_base = float(config.fx_rate_quote_to_base)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def on_start(self) -> None:
         self._prm_id = f"carry_{self.config.ticker}"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+
+        # Fail-fast on non-USD quote ccy with default fx_rate.
+        if (
+            self._quote_ccy != self.config.base_ccy
+            and abs(self._fx_rate_quote_to_base - 1.0) < 1e-12
+        ):
+            raise ValueError(
+                f"fx_carry: quote_ccy={self._quote_ccy!r} != "
+                f"base_ccy={self.config.base_ccy!r} but fx_rate_quote_to_base "
+                f"is still the default 1.0. Set an explicit rate in the config."
+            )
+
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         self._warmup()
         self.subscribe_bars(self.bar_type_d)
@@ -108,8 +140,8 @@ class FXCarryStrategy(Strategy):
         if len(self._closes) > self.config.warmup_bars + 100:
             self._closes = self._closes[-(self.config.warmup_bars + 100) :]
 
-        # Portfolio risk (deterministic USD balance + explicit bar timestamp)
-        _, halted = report_equity_and_check(self, self._prm_id, bar)
+        # Portfolio risk: per-strategy equity via the tracker, explicit bar ts
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
         if halted:
             self.log.warning("Portfolio kill switch — flattening.")
             self.close_all_positions(self.instrument_id)
@@ -181,14 +213,11 @@ class FXCarryStrategy(Strategy):
 
     def _compute_size(self, price: float) -> int:
         """Vol-targeted position sizing, halved if VIX > threshold."""
-        if len(self._closes) < 20 or price <= 0:
+        if len(self._closes) < 20 or price <= 0 or self._equity_tracker is None:
             return 0
 
-        accounts = self.cache.accounts()
-        if not accounts:
-            return 0
-        equity = get_base_balance(accounts[0], "USD")
-        if equity is None or equity <= 0:
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
             return 0
 
         # Realized vol (EWMA). Daily bars -> 252 per year.
@@ -218,13 +247,26 @@ class FXCarryStrategy(Strategy):
         alloc = portfolio_allocator.get_weight(self._prm_id)
         notional *= alloc * portfolio_risk_manager.scale_factor
 
-        units = int(notional / price)
-        return max(0, units)
+        fx_rate = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else None
+        return convert_notional_to_units(
+            notional_base=notional,
+            price=price,
+            quote_ccy=self._quote_ccy,
+            base_ccy=self.config.base_ccy,
+            fx_rate_quote_to_base=fx_rate,
+        )
 
     # ── Events ────────────────────────────────────────────────────────────
 
     def on_position_closed(self, event) -> None:
         self._current_dir = 0
+        if self._equity_tracker is not None:
+            try:
+                pnl_quote = float(event.realized_pnl.as_double())
+                fx = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
+                self._equity_tracker.on_position_closed(pnl_quote, fx_to_base=fx)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(f"CLOSED: PnL={event.realized_pnl}")
 
     def on_order_rejected(self, event) -> None:

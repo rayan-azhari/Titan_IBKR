@@ -35,8 +35,6 @@ import ast
 import re
 from pathlib import Path
 
-import pytest
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # Files permitted to contain bare sqrt(252) references (docstring mentions,
@@ -278,18 +276,39 @@ def test_no_nondeterministic_ccy_anti_pattern():
     )
 
 
-# ── Guard 4: balance_total( without explicit ccy ──────────────────────────
+# ── Guard 4: balance_total( outside strategy_equity.py ────────────────────
+
+# The only legitimate caller of ``account.balance_total(...)`` is
+# ``titan/risk/strategy_equity.py`` (inside ``get_base_balance``). Every live
+# strategy should read per-strategy equity from ``StrategyEquityTracker``
+# instead — this guard ensures we don't regress to raw account-balance sizing.
+_ALLOWLIST_BALANCE_TOTAL = {
+    "titan/risk/strategy_equity.py",
+}
+
+_BALANCE_TOTAL_RE = re.compile(r"\baccount[s]?\w*\s*\.\s*balance_total\s*\(")
 
 
-@pytest.mark.skip(
-    reason=(
-        "Covered structurally by guard 3 + strategy-specific reviews; full "
-        "balance_total scan has too many false positives until every strategy "
-        "migrates to get_base_balance."
-    )
-)
-def test_balance_total_has_explicit_ccy():
-    """Placeholder — deferred to follow-up PR that migrates the remaining 11
-    strategies to StrategyEquityTracker (plan item A.6). At that point the
-    check becomes: no ``balance_total(`` call outside strategy_equity.py.
+def test_balance_total_outside_strategy_equity():
+    """No ``account.balance_total(...)`` calls outside the shared helper in
+    ``titan/risk/strategy_equity.py``. Strategies must go through
+    ``StrategyEquityTracker.current_equity()``.
     """
+    offenders: list[str] = []
+    for path in _iter_py_files(PROJECT_ROOT / "titan"):
+        rel = _rel(path)
+        if rel in _ALLOWLIST_BALANCE_TOTAL:
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for i, line in enumerate(source.splitlines(), start=1):
+            if _BALANCE_TOTAL_RE.search(line):
+                offenders.append(f"  {rel}:{i}: {line.strip()}")
+    assert not offenders, (
+        "Raw ``account.balance_total(...)`` call detected outside "
+        "titan/risk/strategy_equity.py. Live strategies must use "
+        "StrategyEquityTracker.current_equity() for per-strategy equity.\n"
+        "Violations:\n" + "\n".join(offenders)
+    )

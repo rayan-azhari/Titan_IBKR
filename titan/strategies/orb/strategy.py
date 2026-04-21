@@ -21,7 +21,7 @@ import pandas as pd
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import OrderSide, OrderType, PriceType, TimeInForce
+from nautilus_trader.model.enums import OrderSide, OrderType, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.trading.strategy import Strategy
@@ -29,6 +29,7 @@ from nautilus_trader.trading.strategy import Strategy
 # Reuse indicators from the ML features module (which has SMA, RSI, ATR)
 from titan.indicators.gaussian_filter import _gaussian_channel_kernel
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import StrategyEquityTracker, report_equity_and_check
 from titan.strategies.ml.features import atr, rsi, sma
 
 ET = ZoneInfo("America/New_York")
@@ -45,6 +46,8 @@ class ORBConfig(StrategyConfig):
     leverage_cap: float = 4.0
     warmup_bars_1d: int = 60  # For SMA50 and RSI14
     warmup_bars_5m: int = 100  # For ATR14
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
 
 
 class ORBStrategy(Strategy):
@@ -111,6 +114,7 @@ class ORBStrategy(Strategy):
         self.trade_taken_today = False
         self.orb_formed = False
         self.eod_flattened = False
+        self._equity_tracker: StrategyEquityTracker | None = None
 
         # No manual bracket tracking needed — NautilusTrader manages OTO/OCO contingency.
 
@@ -144,7 +148,12 @@ class ORBStrategy(Strategy):
 
         # Register with portfolio risk manager
         self._prm_id = f"orb_{self.ticker}"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
     def _warmup_all(self):
         """Load history to pre-calculate daily indicators."""
@@ -202,11 +211,9 @@ class ORBStrategy(Strategy):
 
     def on_bar(self, bar: Bar):
         """Lifecycle: New Bar Closed."""
-        # Portfolio risk manager (deterministic USD + explicit bar ts)
+        # Portfolio risk: per-strategy tracker equity, explicit bar timestamp
         if bar.bar_type == self.bt_1d:
-            from titan.risk.strategy_equity import report_equity_and_check as _rec
-
-            _rec(self, self._prm_id, bar)
+            report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
         if portfolio_risk_manager.halt_all:
             self.log.warning("Portfolio kill switch active -- flattening.")
             self.close_all_positions(self.instrument_id)
@@ -376,6 +383,12 @@ class ORBStrategy(Strategy):
 
     def on_position_closed(self, event):
         """Fired when a position is fully closed."""
+        if self._equity_tracker is not None:
+            try:
+                pnl = float(event.realized_pnl.as_double())
+                self._equity_tracker.on_position_closed(pnl, fx_to_base=1.0)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(
             f"[{self.ticker}] POSITION CLOSED: {event.position_id} "
             f"realized_pnl={event.realized_pnl} duration={event.duration_ns // 1_000_000_000}s"
@@ -429,43 +442,14 @@ class ORBStrategy(Strategy):
                 self.log.error(f"[{self.ticker}] Cannot calculate Risk (ATR=0). Aborting trade.")
                 return
 
-        accounts = self.cache.accounts()
-        if not accounts:
-            self.log.error(f"[{self.ticker}] No account found! Cannot size position.")
+        if self._equity_tracker is None:
+            self.log.error(f"[{self.ticker}] Tracker not initialised. Cannot size position.")
             return
 
-        account = accounts[0]
-        currencies = list(account.balances().keys())
-        if not currencies:
-            self.log.error(f"[{self.ticker}] Account has no balances. Cannot size position.")
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
+            self.log.error(f"[{self.ticker}] Tracker equity <= 0. Cannot size position.")
             return
-        # Prefer USD deterministically; fall back to the first available currency
-        # only if USD truly isn't there (still reports which one was used).
-        from nautilus_trader.model.currency import Currency as _C
-
-        usd = _C.from_str("USD")
-        acct_ccy = usd if usd in currencies else currencies[0]
-        equity_raw = float(account.balance_total(acct_ccy).as_double())
-
-        # Convert account equity to USD (instrument currency) for correct sizing.
-        # If the account is GBP-denominated and no GBPUSD rate is cached, fall back
-        # to raw balance with a warning (positions will be ~20% undersized).
-        equity = equity_raw
-        if str(acct_ccy) != "USD":
-            try:
-                from nautilus_trader.model.currency import Currency
-
-                usd = Currency.from_str("USD")
-                fx = self.portfolio.exchange_rate(acct_ccy, usd, PriceType.MID)
-                if fx and fx > 0:
-                    equity = equity_raw * fx
-                else:
-                    raise ValueError("zero rate")
-            except Exception:
-                self.log.warning(
-                    f"[{self.ticker}] No {acct_ccy}/USD FX rate cached; "
-                    "using raw account balance for sizing."
-                )
 
         risk_amount = equity * self.config.risk_pct
 

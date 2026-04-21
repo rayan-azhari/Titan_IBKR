@@ -56,6 +56,7 @@ from nautilus_trader.trading.strategy import Strategy
 from scipy.stats import spearmanr
 
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import StrategyEquityTracker, report_equity_and_check
 from titan.strategies.ml.features import atr, rsi
 
 # ---------------------------------------------------------------------------
@@ -109,6 +110,8 @@ class ICEquityDailyConfig(StrategyConfig):
     tier2_offset: float = 0.25  # Tier 2 entry at threshold + 0.25
     tier3_offset: float = 0.75  # Tier 3 entry at threshold + 0.75
     atr_pct_window: int = 500  # Rolling window for ATR percentile rank
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +164,7 @@ class ICEquityDailyStrategy(Strategy):
         # Entry guard
         self._entry_pending: bool = False
         self._entry_order_ids: set = set()
+        self._equity_tracker: StrategyEquityTracker | None = None
 
     # ---------------------------------------------------------------------------
     # Lifecycle
@@ -176,8 +180,13 @@ class ICEquityDailyStrategy(Strategy):
 
         # Register with portfolio risk manager
         strategy_id = f"ic_equity_{self.config.ticker}"
-        portfolio_risk_manager.register_strategy(strategy_id, 10_000.0)
+        portfolio_risk_manager.register_strategy(strategy_id, self.config.initial_equity)
         self._prm_id = strategy_id
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         self.log.info(
             f"Ready | calibrated={self._calibrated}"
@@ -275,9 +284,7 @@ class ICEquityDailyStrategy(Strategy):
             return
 
         # Portfolio risk manager (deterministic USD + explicit bar ts)
-        from titan.risk.strategy_equity import report_equity_and_check as _rec
-
-        _, halted = _rec(self, self._prm_id, bar)
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
         if halted:
             self.log.warning("Portfolio kill switch active -- flattening.")
             self.close_all_positions(self.instrument_id)
@@ -427,21 +434,12 @@ class ICEquityDailyStrategy(Strategy):
             self.log.warning("ATR not ready — skipping entry.")
             return
 
-        accounts = self.cache.accounts()
-        if not accounts:
-            self.log.error("No account in cache.")
+        if self._equity_tracker is None:
+            self.log.error("Tracker not initialised.")
             return
-        account = accounts[0]
-        currencies = list(account.balances().keys())
-        if not currencies:
-            self.log.error("Account has no balances.")
-            return
-
-        from titan.risk.strategy_equity import get_base_balance as _gb
-
-        equity = _gb(account, "USD")
-        if equity is None or equity <= 0:
-            self.log.error("No USD balance on account.")
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
+            self.log.error("Tracker equity <= 0.")
             return
         stop_dist = self.latest_atr * self.config.stop_atr_mult
         if stop_dist == 0:
@@ -532,6 +530,12 @@ class ICEquityDailyStrategy(Strategy):
         )
 
     def on_position_closed(self, event) -> None:
+        if self._equity_tracker is not None:
+            try:
+                pnl = float(event.realized_pnl.as_double())
+                self._equity_tracker.on_position_closed(pnl, fx_to_base=1.0)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(
             f"POSITION CLOSED: {event.position_id}"
             f" realized_pnl={event.realized_pnl}"
