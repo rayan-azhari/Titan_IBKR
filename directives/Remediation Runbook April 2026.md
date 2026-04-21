@@ -94,11 +94,23 @@ In `directives/System Status and Roadmap.md`, for every performance number affec
 
 Affected sections: §2 (live strategies), §3 (ML signal map), §10 (multi-scale confluence), §15–17 (autoresearch / portfolio eval).
 
-### 6. Implement the sanctuary window
+### 6. Sanctuary window
 
-In `research/auto/evaluate.py`, add a top-level `_load_daily` / `_load_h1` guard that refuses to load data inside `SANCTUARY_START` (default: today minus 365 days). Override is allowed only via the explicit flag `--include-sanctuary` (for release-gating validation).
+**Status: implemented.** `research/auto/evaluate.py` now exposes
+`_enforce_sanctuary(df, source=...)`, applied inside `_load_daily` and
+next to every `_load_ohlcv` / `load_h1` call in the WFO runners. Bars
+within the last `SANCTUARY_DAYS` (default 365) are dropped before any
+signal / fold builder sees them.
 
-The autoresearch agent must never pass `--include-sanctuary`. That flag exists only for the human operator's final release gate.
+Opt-outs (both exist only for the human release-gate validation — the
+autoresearch agent must use neither):
+
+1. CLI flag `--include-sanctuary` on the invoking process.
+2. Env var `TITAN_INCLUDE_SANCTUARY=1`.
+
+Tests in `tests/test_sanctuary_window.py` lock in that the guard trims
+by default, respects both opt-outs, and plays nicely with empty, tz-naive,
+and non-datetime indexed frames.
 
 ### 7. 48-hour paper dry-run
 

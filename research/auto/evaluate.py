@@ -33,9 +33,11 @@ Output (stdout, parseable):
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import time
 import traceback
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -47,6 +49,82 @@ sys.path.insert(0, str(ROOT))
 DATA_DIR = ROOT / "data"
 RESULTS_FILE = Path(__file__).parent / "results.tsv"
 EXPERIMENT_FILE = Path(__file__).parent / "experiment.py"
+
+
+# ── Sanctuary window ──────────────────────────────────────────────────────
+#
+# The autoresearch agent must never see the last 12 months of data. That
+# window is reserved for the human operator's final release-gate validation
+# run. Without this holdout an agent that cycles through thousands of
+# experiments will eventually overfit to recent price action and ship a
+# strategy that backtests beautifully on exactly the days the allocator
+# will deploy against.
+#
+# ``SANCTUARY_DAYS`` — rolling lookback in calendar days. Default 365.
+# ``SANCTUARY_END`` — anchor date for the window; defaults to ``today``.
+#   Override for reproducibility (e.g. freezing a release candidate).
+#
+# The flag ``--include-sanctuary`` (or env ``TITAN_INCLUDE_SANCTUARY=1``)
+# disables the guard. It exists only for the human-run final release
+# validation. The autoresearch agent MUST NOT pass this flag.
+SANCTUARY_DAYS: int = 365
+SANCTUARY_END: datetime = datetime.now(timezone.utc)
+
+
+def _sanctuary_disabled() -> bool:
+    """Return True when the sanctuary guard should be skipped.
+
+    Two opt-outs:
+      1. CLI flag ``--include-sanctuary`` passed to the process.
+      2. Env var ``TITAN_INCLUDE_SANCTUARY=1`` (for CI release gate only).
+    """
+    if "--include-sanctuary" in sys.argv:
+        return True
+    if os.environ.get("TITAN_INCLUDE_SANCTUARY", "").strip() in ("1", "true", "TRUE"):
+        return True
+    return False
+
+
+def _sanctuary_start(end: datetime | None = None, days: int | None = None) -> pd.Timestamp:
+    """Return the start of the sanctuary window as a UTC tz-aware Timestamp.
+
+    Data with index >= this timestamp must not be visible to the
+    autoresearch agent. Equivalent to ``end - days``.
+    """
+    end_dt = end if end is not None else SANCTUARY_END
+    d = days if days is not None else SANCTUARY_DAYS
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    return pd.Timestamp(end_dt - timedelta(days=d)).tz_convert("UTC")
+
+
+def _enforce_sanctuary(df: pd.DataFrame, source: str = "") -> pd.DataFrame:
+    """Trim ``df`` to exclude the sanctuary window.
+
+    ``df`` must be indexed by a DatetimeIndex. Returns a slice strictly
+    before the sanctuary start. No-op when the opt-out flag is active.
+    """
+    if _sanctuary_disabled():
+        return df
+    if df is None or len(df) == 0:
+        return df
+    if not isinstance(df.index, pd.DatetimeIndex):
+        return df
+    sanctuary_start = _sanctuary_start()
+    idx = df.index
+    # Normalise tz for comparison.
+    if idx.tz is None:
+        sanctuary_cmp = sanctuary_start.tz_localize(None)
+    else:
+        sanctuary_cmp = sanctuary_start.tz_convert(idx.tz)
+    trimmed = df[idx < sanctuary_cmp]
+    if len(trimmed) < len(df) and source:
+        dropped = len(df) - len(trimmed)
+        print(
+            f"  [sanctuary] {source}: dropped {dropped} bars in the last "
+            f"{SANCTUARY_DAYS} days (override with --include-sanctuary)"
+        )
+    return trimmed
 
 
 # -- Composite Score (UNCHANGED from v1) --------------------------------------
@@ -112,7 +190,7 @@ EMPTY_RESULT = {
 
 
 def _load_daily(sym: str) -> pd.DataFrame:
-    """Load daily OHLCV parquet. Returns DataFrame with DatetimeIndex."""
+    """Load daily OHLCV parquet, trimmed to exclude the sanctuary window."""
     for prefix in ["", "^"]:
         path = DATA_DIR / f"{prefix}{sym}_D.parquet"
         if path.exists():
@@ -125,7 +203,7 @@ def _load_daily(sym: str) -> pd.DataFrame:
             for col in ["open", "high", "low", "close", "volume"]:
                 if col in df.columns:
                     df[col] = df[col].astype(float)
-            return df
+            return _enforce_sanctuary(df, source=f"{sym}_D")
     raise FileNotFoundError(f"No daily data for {sym}")
 
 
@@ -272,6 +350,7 @@ def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
     bars_yr = _get_annual_bars(tf)
 
     df = _load_ohlcv(instrument, tf)
+    df = _enforce_sanctuary(df, source=f"{instrument}_{tf}")
     df.attrs["instrument"] = instrument
     features = build_features(df, tf)
 
@@ -311,6 +390,7 @@ def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
 
     all_oos_rets = []
     all_is_rets = []
+    all_oos_trades: list[float] = []
     fold_sharpes = []
     total_trades = 0
 
@@ -462,6 +542,18 @@ def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
         total_trades += stats.get("n_trades", 0)
         if "returns" in stats:
             all_oos_rets.append(stats["returns"])
+            # Trade-level extraction: each contiguous block of non-zero
+            # ``pos`` is one trade; trade return = sum of fold returns over
+            # that block. Used downstream by ``scale_to_risk`` for exact
+            # "1% per trade" sizing (phase_portfolio).
+            fold_rets_arr = stats["returns"].values
+            pos_arr = np.asarray(pos)
+            if len(pos_arr) == len(fold_rets_arr) and (pos_arr != 0).any():
+                in_t = pos_arr != 0
+                block_start = np.flatnonzero(in_t & ~np.concatenate(([False], in_t[:-1])))
+                block_end = np.flatnonzero(in_t & ~np.concatenate((in_t[1:], [False])))
+                for s_i, e_i in zip(block_start, block_end):
+                    all_oos_trades.append(float(fold_rets_arr[s_i : e_i + 1].sum()))
 
         is_ret = ret_clean.iloc[is_idx]
         if strategy_type == "xgboost":
@@ -506,6 +598,7 @@ def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
     }
     if return_raw:
         result["stitched_returns"] = stitched
+        result["stitched_trades"] = all_oos_trades
     return result
 
 
@@ -528,6 +621,7 @@ def run_mean_reversion_wfo(instrument: str, cfg: dict, return_raw: bool = False)
     tf = cfg.get("timeframe", "H1")
     if tf == "H1":
         df = load_h1(instrument)
+        df = _enforce_sanctuary(df, source=f"{instrument}_{tf}")
     else:
         df = _load_daily(instrument)
 
@@ -586,6 +680,7 @@ def run_mean_reversion_wfo(instrument: str, cfg: dict, return_raw: bool = False)
     }
     if return_raw:
         result["stitched_returns"] = r.get("stitched_returns", pd.Series(dtype=float))
+        result["stitched_trades"] = r.get("stitched_trades", [])
     return result
 
 
@@ -680,6 +775,7 @@ def run_cross_asset_wfo(instrument: str, cfg: dict, return_raw: bool = False) ->
     }
     if return_raw:
         result["stitched_returns"] = r.get("stitched_returns", pd.Series(dtype=float))
+        result["stitched_trades"] = r.get("stitched_trades", [])
     return result
 
 

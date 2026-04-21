@@ -69,6 +69,7 @@ def run_bond_wfo(
     folds = []
     stitched = []
     stitched_idx = []
+    stitched_trades: list[float] = []
     fold_idx = 0
     oos_start = is_days
 
@@ -140,6 +141,18 @@ def run_bond_wfo(
         stitched.append(oos_strat)
         stitched_idx.append(common[oos_start:oos_end])
 
+        # Extract per-trade returns: each contiguous block of non-zero
+        # ``oos_pos_lagged`` is one trade; its return is the sum of
+        # ``oos_strat`` over those bars (approximates trade P&L since bar
+        # returns are small).
+        in_trade = oos_pos_lagged != 0
+        if in_trade.any():
+            # Identify block starts
+            block_start = np.flatnonzero(in_trade & ~np.concatenate(([False], in_trade[:-1])))
+            block_end = np.flatnonzero(in_trade & ~np.concatenate((in_trade[1:], [False])))
+            for s_i, e_i in zip(block_start, block_end):
+                stitched_trades.append(float(oos_strat[s_i : e_i + 1].sum()))
+
         fold_idx += 1
         oos_start += oos_days
 
@@ -190,6 +203,7 @@ def run_bond_wfo(
         "pct_positive": round((fold_df["oos_sharpe"] > 0).mean(), 3) if len(fold_df) > 0 else 0,
         "total_trades": int(fold_df["oos_trades"].sum()) if len(fold_df) > 0 else 0,
         "stitched_returns": raw_returns,
+        "stitched_trades": list(stitched_trades),
     }
 
 

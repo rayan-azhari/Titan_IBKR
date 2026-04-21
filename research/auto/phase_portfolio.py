@@ -174,15 +174,17 @@ def scale_to_risk(
     stop_mult: float,
     *,
     bars_per_year: int = BARS_PER_YEAR["D"],
+    trades: list[float] | None = None,
 ) -> pd.Series:
-    """Scale a return series so each *active-day* P&L approximates RISK_PCT.
+    """Scale a return series so each trade's P&L approximates RISK_PCT.
 
-    Explicitly an approximation — the WFO runners return stitched
-    per-business-day returns, not per-trade P&L. A full fix requires
-    plumbing trade-level P&L through each runner; the TODO below captures
-    that residual work.
+    When ``trades`` is provided (list of per-trade returns from the WFO
+    runner's ``stitched_trades`` output), scaling uses the *per-trade*
+    return vol directly: this is the exact "1% per trade" semantics the
+    remediation plan calls for. When ``trades`` is absent, falls back to
+    the per-active-day approximation using the non-zero bars in ``ret``.
 
-    The previous implementation:
+    Old behavior (pre-April-2026 remediation):
 
     * filtered ``nz = ret[ret != 0.0]`` before measuring vol, over-counting
       vol for low-frequency strategies;
@@ -190,41 +192,50 @@ def scale_to_risk(
       — an H1-like factor that made no sense for the daily-aggregated
       series every caller actually passes in.
 
-    The current implementation takes an explicit ``bars_per_year`` so the
-    caller must state the series' frequency, and sets:
+    Current behavior — trade-level when available:
 
-        scale = RISK_PCT / (stop_mult * per_period_vol)
+        scale = RISK_PCT / (stop_mult * trade_level_vol)
 
-    where ``per_period_vol`` is the std of the non-zero bars. This keeps
-    the "1% per active day" semantics without the hidden intraday multiplier.
+    Fallback (no trade list supplied):
+
+        scale = RISK_PCT / (stop_mult * per_active_period_vol)
+
+    ``bars_per_year`` is kept in the signature so callsites declare
+    series frequency explicitly even when the fallback path is used.
     """
     if len(ret) < 20:
         return ret
+
+    # Preferred path: per-trade risk vol.
+    if trades is not None and len(trades) >= 10:
+        import numpy as _np
+
+        trade_vol = float(_np.std(_np.asarray(trades, dtype=float), ddof=1))
+        stop_dist = stop_mult * trade_vol
+        if stop_dist >= 1e-9:
+            return ret * (RISK_PCT / stop_dist)
+
+    # Fallback: per-active-day vol (pre-trade-plumbing behavior).
     nz = ret[ret != 0.0]
     if len(nz) < 10:
         return ret
-    # Per-active-period vol. No pseudo-intraday compensation — callers pass
-    # bars_per_year explicitly if they want a different frequency.
     per_period_vol = float(nz.std())
     stop_dist = stop_mult * per_period_vol
     if stop_dist < 1e-9:
         return ret
-    scale = RISK_PCT / stop_dist
-    # TODO(ruled_by_audit): replace with trade-level returns when the WFO
-    # runners are refactored to emit them. At that point bars_per_year is
-    # replaced with trades_per_year and the semantics are exact. The
-    # parameter is kept in the signature now so callsites declare series
-    # frequency explicitly — that's the discipline we want locked in even
-    # before the full fix lands.
-    del bars_per_year  # documented above; currently unused
-    return ret * scale
+    del bars_per_year  # caller-declared frequency; fallback doesn't use it
+    return ret * (RISK_PCT / stop_dist)
 
 
 # ── Strategy runners ───────────────────────────────────────────────────────
 
 
-def get_returns(strat: dict) -> pd.Series | None:
-    """Run the strategy WFO with return_raw=True and return daily OOS returns."""
+def get_returns(strat: dict) -> tuple[pd.Series, list[float]] | None:
+    """Run the strategy WFO with return_raw=True and return (daily OOS
+    returns, list of per-trade returns). The trade list is used by
+    ``scale_to_risk`` for exact per-trade risk sizing; the daily series
+    drives the portfolio combination and Sharpe reporting.
+    """
     from research.auto.evaluate import (
         run_cross_asset_wfo,
         run_mean_reversion_wfo,
@@ -252,6 +263,7 @@ def get_returns(strat: dict) -> pd.Series | None:
         return None
 
     raw = r.get("stitched_returns")
+    trades = list(r.get("stitched_trades", []))
     if raw is None or len(raw) < 20:
         print(f"no raw returns (sharpe={r.get('sharpe', '?')})")
         return None
@@ -268,12 +280,13 @@ def get_returns(strat: dict) -> pd.Series | None:
     raw.index = raw.index.normalize()  # strip intraday time component
     raw = raw.resample("D").sum()  # aggregate to daily
     # Expand to full business-day calendar; non-trade days become 0.
-    # This is required so that inner-join across strategies finds a common
-    # calendar rather than the sparse intersection of trade days only.
     full_idx = pd.bdate_range(raw.index.min(), raw.index.max())
     raw = raw.reindex(full_idx, fill_value=0.0)
-    print(f"OK  sharpe={r.get('sharpe', '?'):.3f}  trade_days={int((raw != 0).sum())}")
-    return raw
+    print(
+        f"OK  sharpe={r.get('sharpe', '?'):.3f}  "
+        f"trade_days={int((raw != 0).sum())}  trades={len(trades)}"
+    )
+    return raw, trades
 
 
 # ── Portfolio combination ──────────────────────────────────────────────────
@@ -358,9 +371,14 @@ def main():
     raw_curves = []
     valid_strategies = []
     for strat in STRATEGIES:
-        ret = get_returns(strat)
-        if ret is not None:
-            scaled = scale_to_risk(ret, strat["stop_mult"])
+        result = get_returns(strat)
+        if result is not None:
+            ret, trades = result
+            scaled = scale_to_risk(
+                ret,
+                strat["stop_mult"],
+                trades=trades if trades else None,
+            )
             raw_curves.append(scaled)
             valid_strategies.append(strat)
 

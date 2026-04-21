@@ -54,6 +54,7 @@ def run_mr_wfo(
     n = len(close)
     folds = []
     stitched_pnl = []
+    stitched_trades: list[float] = []
     fold_idx = 0
     oos_start = is_bars
 
@@ -129,6 +130,8 @@ def run_mr_wfo(
 
         if oos_result["daily_pnl"] is not None:
             stitched_pnl.append(oos_result["daily_pnl"])
+        # Plumb trade-level returns up to the portfolio scaler.
+        stitched_trades.extend(oos_result.get("trade_returns", []))
 
         fold_idx += 1
         oos_start += oos_bars
@@ -176,6 +179,11 @@ def run_mr_wfo(
         "pct_positive": round(pct_positive, 3),
         "total_trades": int(total_trades),
         "stitched_returns": raw_returns,
+        # Trade-level returns across every OOS fold. Downstream sizing
+        # (scale_to_risk) prefers these over daily P&L when available
+        # because trade-level vol is the correct input for a "1% per
+        # trade" risk budget.
+        "stitched_trades": list(stitched_trades),
     }
 
 
@@ -333,6 +341,7 @@ def _fold_backtest(
         "avg_hold": round(avg_hold, 1),
         "dd_pct": round(_dd(daily_pnl) * 100, 2),
         "daily_pnl": daily_pnl,
+        "trade_returns": trade_returns,
     }
 
 
