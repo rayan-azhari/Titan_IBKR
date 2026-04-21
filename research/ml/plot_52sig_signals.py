@@ -159,7 +159,10 @@ def plot_signals(result: dict) -> str:
     drawdown = (equity - hwm) / hwm
 
     # Stats
-    sharpe = float(stitched.mean() / stitched.std() * np.sqrt(252)) if stitched.std() > 0 else 0.0
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
+    sharpe = float(_sh(stitched, periods_per_year=_BPY["D"]))
     max_dd = float(drawdown.min())
     total_ret = float(equity.iloc[-1] - 1.0)
     n_long = int(long_entry.sum())

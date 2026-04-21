@@ -78,7 +78,9 @@ def _risk_parity_weights(
     labels: list[str], component_returns: dict[str, pd.Series]
 ) -> dict[str, float]:
     """Inverse-volatility weighting (robust OOS, preferred over full risk parity)."""
-    vols = {k: float(component_returns[k].std() * np.sqrt(ANNUAL_BARS)) for k in labels}
+    from titan.research.metrics import annualize_vol as _ann
+
+    vols = {k: _ann(float(component_returns[k].std()), periods_per_year=ANNUAL_BARS) for k in labels}
     inv_vols = {k: 1.0 / v if v > 1e-9 else 0.0 for k, v in vols.items()}
     total = sum(inv_vols.values())
     if total < 1e-9:
@@ -350,10 +352,12 @@ def main() -> None:
         _print_correlation_table(stats["correlation_matrix"])
 
     # ── Per-strategy Sharpe in common window ──────────────────────────────
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
     print("\n  Per-strategy Sharpe (common OOS window):")
     for lbl, s in aligned.items():
-        sd = float(s.std())
-        sh = float(s.mean() / sd * np.sqrt(252)) if sd > 1e-9 else 0.0
+        sh = float(_sh(s, periods_per_year=_BPY["D"]))
         print(f"    {lbl:<28s}  Sharpe={sh:>+6.3f}")
 
     # ── Zero-ruin summary ──────────────────────────────────────────────────

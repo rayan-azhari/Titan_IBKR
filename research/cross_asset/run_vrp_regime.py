@@ -12,7 +12,6 @@ Usage:
 """
 
 import sys
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -46,7 +45,9 @@ def compute_vrp(vix: pd.Series, spy_close: pd.Series, rv_window: int = 20) -> pd
     VRP < 0: implied < realized, markets in stress.
     """
     log_ret = np.log(spy_close / spy_close.shift(1))
-    realized_vol = log_ret.rolling(rv_window).std() * np.sqrt(252) * 100  # in % to match VIX
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+
+    realized_vol = log_ret.rolling(rv_window).std() * np.sqrt(_BPY["D"]) * 100  # %, matches VIX
     vrp = vix - realized_vol
     return vrp.dropna()
 
@@ -119,10 +120,13 @@ def backtest_vrp_timing(
     oos_rets = pd.Series(strat_rets[is_n:])
 
     def _sharpe(r):
+        from titan.research.metrics import BARS_PER_YEAR as _BPY2
+        from titan.research.metrics import sharpe as _sh
+
         r = r[r != 0.0]
         if len(r) < 20:
             return 0.0
-        return float(r.mean() / r.std() * sqrt(252)) if r.std() > 1e-9 else 0.0
+        return float(_sh(r, periods_per_year=_BPY2["D"]))
 
     def _dd(r):
         r = r[r != 0.0]

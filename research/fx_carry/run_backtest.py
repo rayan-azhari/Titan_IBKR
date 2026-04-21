@@ -167,9 +167,13 @@ def compute_metrics(results: pd.DataFrame, label: str = "") -> dict:
     if len(rets) < 20:
         return {"label": label, "error": "insufficient data"}
 
-    ann_ret = rets.mean() * 252
-    ann_vol = rets.std() * np.sqrt(252)
-    sharpe = ann_ret / ann_vol if ann_vol > 0 else 0.0
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import annualize_vol as _ann
+    from titan.research.metrics import sharpe as _sh
+
+    ann_ret = rets.mean() * _BPY["D"]
+    ann_vol = _ann(float(rets.std()), periods_per_year=_BPY["D"])
+    sharpe = float(_sh(rets, periods_per_year=_BPY["D"]))
 
     equity = (1 + rets).cumprod()
     hwm = equity.cummax()

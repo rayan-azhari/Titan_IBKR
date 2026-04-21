@@ -207,8 +207,10 @@ class _EquityCurvePortfolio:
         return float(self._equity.iloc[-1] / INIT_CASH - 1)
 
     def sharpe_ratio(self) -> float:
-        std = self._rets.std()
-        return float(self._rets.mean() / std * self._np.sqrt(252)) if std > 1e-9 else 0.0
+        from titan.research.metrics import BARS_PER_YEAR as _BPY
+        from titan.research.metrics import sharpe as _sh
+
+        return float(_sh(self._rets, periods_per_year=_BPY["D"]))
 
     def max_drawdown(self) -> float:
         rolling_max = self._equity.cummax()

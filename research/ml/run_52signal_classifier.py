@@ -333,7 +333,9 @@ def build_features(df: pd.DataFrame, tf: str) -> pd.DataFrame:
         vix_aligned = pd.Series(vix.reindex(idx_norm).ffill().values, index=df.index)
         vix_features["vix_sma20"] = vix_aligned.rolling(20).mean()
         vix_features["vix_below_15"] = (vix_aligned < 15).astype(float)
-        rvol20 = close.pct_change().rolling(20).std() * np.sqrt(252) * 100
+        from titan.research.metrics import BARS_PER_YEAR as _BPY
+
+        rvol20 = close.pct_change().rolling(20).std() * np.sqrt(_BPY["D"]) * 100
         vix_features["vol_risk_premium"] = vix_aligned - rvol20
 
     # 5. Calendar (1 -- month was #1-3 on all instruments)

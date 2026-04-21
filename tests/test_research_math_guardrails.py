@@ -52,57 +52,14 @@ _ALLOWLIST_SQRT_252: dict[str, str] = {
     # module. Regex would false-positive on those comments.
     "titan/risk/portfolio_risk_manager.py": "only in docstrings",
     "titan/risk/portfolio_allocator.py": "only in docstrings",
-    # Migration TODO (April 2026 audit remediation). These research files
-    # still compute Sharpe inline. The critical-path files (bond_equity WFO,
-    # MR WFO, evaluate.py, phase_portfolio.py) were migrated first; the
-    # remaining legacy files are tracked in the remediation plan Part B and
-    # must be migrated before the next deployment round.
-    "research/gold_macro/run_backtest.py": "legacy — migrate in remediation Part B",
-    "research/etf_trend/run_robustness.py": "legacy — migrate",
-    "research/fx_carry/run_backtest.py": "legacy — migrate",
-    "research/etf_trend/run_multi_portfolio.py": "legacy — migrate",
-    "research/etf_trend/run_window_validation.py": "legacy — migrate",
-    "research/etf_trend/run_portfolio.py": "legacy — migrate",
-    "research/cross_asset/run_vrp_regime.py": "legacy — migrate (VRP failed validation)",
-    "research/etf_trend/run_stage2_decel.py": "legacy — migrate",
-    "research/intraday_profiles/run_eurusd_m5.py": "EDA only, no trading signal",
-    "research/ic_analysis/phase1_sweep.py": "legacy — migrate",
-    "research/ic_analysis/phase4_wfo.py": "legacy — migrate",
-    "research/ic_analysis/phase1_param_sweep.py": "legacy — migrate",
-    "research/ic_analysis/phase3_backtest.py": "legacy — migrate",
-    "research/etf_trend/run_stage3_exits.py": "legacy — migrate",
-    "research/etf_trend/run_stage4_sizing.py": "legacy — migrate",
-    "research/cross_asset/run_bond_equity_momentum.py": "legacy — migrate",
+    # Archived research — kept for historical audit trail only; never
+    # imported from the live code path.
     "research/_archive/portfolio/run_portfolio_research.py": "archived",
     "research/_archive/portfolio/run_ftse_dax_expansion.py": "archived",
     "research/_archive/portfolio/loaders/oos_returns.py": "archived",
-    "research/mean_reversion/run_eurchf.py": "legacy — migrate",
-    "research/cross_asset/run_asset_class_confluence.py": "legacy — migrate",
-    "research/ic_analysis/run_confluence_wfo.py": "legacy — migrate",
-    "research/ic_analysis/run_multiscale_confluence.py": "legacy — migrate",
-    "research/portfolio/run_portfolio_research.py": "legacy — migrate",
-    "research/mean_reversion/run_spy_h1.py": "legacy — migrate",
-    "research/mean_reversion/run_confluence_regime_test.py": "legacy — migrate",
-    "research/ic_analysis/run_multiscale_wfo.py": "legacy — migrate",
-    "research/portfolio/run_ftse_dax_expansion.py": "legacy — migrate",
-    "research/mean_reversion/run_triple_filter_wfo.py": "legacy — migrate",
-    "research/mean_reversion/run_stage3_full.py": "legacy — migrate",
-    "research/mean_reversion/run_eurusd_h1.py": "legacy — migrate",
-    "research/ic_analysis/run_multiscale_ic.py": "legacy — migrate",
-    "research/pairs_trading/run_backtest.py": "legacy — migrate",
-    "research/portfolio/loaders/oos_returns.py": "legacy — migrate",
-    "research/mtf/run_single_tf_backtest.py": "MTF invalidated — migrate before any reuse",
-    "research/ml/run_metalabeling.py": "legacy — migrate",
-    "research/ml/plot_52sig_signals.py": "plotting only, no trading signal",
-    "research/orb/run_orb_databento_optimizer.py": "legacy — migrate",
-    "research/retracement/run_retracement_validation.py": "EDA, migrate before use",
-    "research/ml/run_52signal_classifier.py": "legacy — migrate",
     # phase_portfolio.py has the docstring mention but no bare sqrt(252)
     # call; it's already routed through the metrics module.
     "research/auto/phase_portfolio.py": "docstring mention only",
-    # run_confluence_regime_test.py is the test runner (not the WFO); it
-    # uses sqrt(252) inline for a quick diagnostic Sharpe. Migrate before
-    # promoting any result from it.
 }
 
 _ALLOWLIST_FILTER_THEN_STD: dict[str, str] = {

@@ -248,10 +248,12 @@ def _signal_sharpe(meta_preds: np.ndarray, primary_vals: np.ndarray, returns: pd
         np.where(meta_preds == 1, primary_vals * returns.values, 0.0),
         index=returns.index,
     )
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
     if strat_ret.std() == 0:
         return 0.0
-    # Annualise: H1 bars × 252 trading days × 24 bars/day
-    return float(strat_ret.mean() / strat_ret.std() * np.sqrt(252 * 24))
+    return float(_sh(strat_ret, periods_per_year=_BPY["H1"]))
 
 
 # ── Main ───────────────────────────────────────────────────────────────────

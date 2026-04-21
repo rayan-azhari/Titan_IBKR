@@ -24,7 +24,6 @@ Usage:
 
 import sys
 from itertools import combinations
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -185,14 +184,19 @@ def ml_trades_from_results(r: dict) -> list[float]:
 
 
 def _sharpe(ret: pd.Series, ann: int = 252) -> float:
-    s = ret.std()
-    return float(ret.mean() / s * sqrt(ann)) if s > 1e-10 else 0.0
+    from titan.research.metrics import sharpe as _sh
+
+    return float(_sh(ret, periods_per_year=int(ann)))
 
 
 def _sortino(ret: pd.Series, ann: int = 252) -> float:
+    # Downside-only semi-std; Sortino is not in the shared metrics module yet,
+    # so we keep the inline math but annualise via BARS_PER_YEAR['D'] proxy.
+    import numpy as _np
+
     down = ret[ret < 0]
     s = down.std()
-    return float(ret.mean() / s * sqrt(ann)) if s > 1e-10 else 0.0
+    return float(ret.mean() / s * _np.sqrt(ann)) if s > 1e-10 else 0.0
 
 
 def _max_dd(ret: pd.Series) -> float:
