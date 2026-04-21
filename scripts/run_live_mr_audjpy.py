@@ -136,11 +136,11 @@ def main() -> None:
         bar_type_h1="AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL",
         ticker="AUD_JPY",
         # Champion research params
-        vwap_anchor=46,            # 46-bar rolling VWAP (~2 trading days)
-        pct_window=500,            # Rolling percentile window
-        reversion_pct=0.50,        # Exit at 50% reversion
-        max_leverage=2.0,          # Paper trade: 2× (scale to 7× after validation)
-        warmup_bars=3000,          # Enough for W-scale donchian (2400 bars)
+        vwap_anchor=46,  # 46-bar rolling VWAP (~2 trading days)
+        pct_window=500,  # Rolling percentile window
+        reversion_pct=0.50,  # Exit at 50% reversion
+        max_leverage=2.0,  # Paper trade: 2× (scale to 7× after validation)
+        warmup_bars=3000,  # Enough for W-scale donchian (2400 bars)
     )
     strategy = MRAUDJPYStrategy(strat_config)
     node.trader.add_strategy(strategy)

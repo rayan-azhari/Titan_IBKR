@@ -343,15 +343,11 @@ class MLSignalStrategy(Strategy):
             self.log.info(f"Warming up... ({len(self.history)}/200)")
             return
 
-        # 3. Portfolio risk manager: update equity + check halt
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # 3. Portfolio risk manager (deterministic USD + explicit bar ts)
+        from titan.risk.strategy_equity import report_equity_and_check as _rec
+
+        _, halted = _rec(self, self._prm_id, bar)
+        if halted:
             self.log.warning("Portfolio kill switch active — flattening.")
             self.close_all_positions(self.instrument_id)
             return
@@ -445,12 +441,11 @@ class MLSignalStrategy(Strategy):
         accounts = self.cache.accounts()
         if not accounts:
             return 0
-        acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
-            return 0
+        from titan.risk.strategy_equity import get_base_balance as _gb
 
-        equity = float(acct.balance_total(ccys[0]).as_double())
+        equity = _gb(accounts[0], "USD")
+        if equity is None or equity <= 0:
+            return 0
         px = float(price)
         daily_vol = self._get_daily_vol()
 

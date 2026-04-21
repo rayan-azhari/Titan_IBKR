@@ -148,6 +148,6 @@ def predict_lstm_classifier(
 
     n_total = X.shape[0]
     full = np.full(n_total, 0.5, dtype=np.float64)
-    full[lookback - 1:] = proba
+    full[lookback - 1 :] = proba
 
     return full

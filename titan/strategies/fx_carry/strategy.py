@@ -19,8 +19,6 @@ Tier 3 #10 (April 2026).
 
 from __future__ import annotations
 
-import math
-
 import pandas as pd
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar, BarType
@@ -29,8 +27,10 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
+from titan.research.metrics import BARS_PER_YEAR, ewm_vol_last
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import get_base_balance, report_equity_and_check
 
 
 class FXCarryConfig(StrategyConfig):
@@ -108,20 +108,16 @@ class FXCarryStrategy(Strategy):
         if len(self._closes) > self.config.warmup_bars + 100:
             self._closes = self._closes[-(self.config.warmup_bars + 100) :]
 
-        # Portfolio risk
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # Portfolio risk (deterministic USD balance + explicit bar timestamp)
+        _, halted = report_equity_and_check(self, self._prm_id, bar)
+        if halted:
             self.log.warning("Portfolio kill switch — flattening.")
             self.close_all_positions(self.instrument_id)
             return
 
-        portfolio_allocator.tick()
+        from nautilus_trader.core.datetime import unix_nanos_to_dt as _u
+
+        portfolio_allocator.tick(now=_u(bar.ts_event).date())
 
         # Need enough bars for SMA
         if len(self._closes) < self.config.sma_period:
@@ -191,19 +187,21 @@ class FXCarryStrategy(Strategy):
         accounts = self.cache.accounts()
         if not accounts:
             return 0
-        acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
+        equity = get_base_balance(accounts[0], "USD")
+        if equity is None or equity <= 0:
             return 0
-        equity = float(acct.balance_total(ccys[0]).as_double())
 
-        # Realized vol (EWMA)
+        # Realized vol (EWMA). Daily bars -> 252 per year.
         rets = pd.Series(self._closes[-60:]).pct_change().dropna()
         if len(rets) < 10:
             return 0
-        ewma_var = rets.ewm(span=self.config.ewma_span, adjust=False).var().iloc[-1]
-        ann_vol = math.sqrt(max(0.0, ewma_var) * 252)
-
+        span = self.config.ewma_span
+        rm_lambda = (span - 1.0) / (span + 1.0)
+        ann_vol = ewm_vol_last(
+            rets,
+            lam=rm_lambda,
+            periods_per_year=BARS_PER_YEAR["D"],
+        )
         if ann_vol <= 0:
             return 0
 

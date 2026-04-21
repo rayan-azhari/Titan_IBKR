@@ -1,8 +1,8 @@
 # Titan-IBKR System Status and Roadmap
 
-**Last updated:** 2026-04-07
+**Last updated:** 2026-04-21
 **Author:** Architect (Claude Code)
-**Status:** Active development, 5 live strategies, portfolio risk layer deployed, portfolio WFO framework built, multi-scale confluence research complete
+**Status:** Active development, 5+ live strategies, **portfolio-risk layer rewritten (April 21, 2026)** to use timestamped per-strategy equity + wall-clock gating + halt persistence. Champion portfolio live on paper. Multi-scale confluence + MR-FX research complete.
 
 ---
 
@@ -270,25 +270,77 @@ Data (OHLCV) -> [Feature Builder] -> 79 features -> [Regime+Pullback Labeler] ->
 
 ## 4. Portfolio Risk Management
 
-### 4.1 PortfolioRiskManager (deployed April 2026)
+### 4.1 PortfolioRiskManager (deployed April 2026, **rewritten April 21, 2026**)
 
-**File:** `titan/risk/portfolio_risk_manager.py`
+**Files:**
+- `titan/risk/portfolio_risk_manager.py` -- rewritten
+- `titan/risk/portfolio_allocator.py` -- rewritten
+- `titan/risk/strategy_equity.py` -- **NEW** per-strategy P&L tracker + deterministic currency + FX unit helper
+- `tests/test_portfolio_risk_april2026_fixes.py` -- 13 regression tests
 
-Module-level singleton shared by all live strategies. Auto-loads config from `config/risk.toml [portfolio]`.
+**Why the rewrite:** The original implementation had four structural defects that a full audit surfaced on April 21, 2026 (see `Comprehensive Audit Report.md`):
 
-**Integration pattern (all 4 live strategies wired):**
-1. `on_start()`: `portfolio_risk_manager.register_strategy(id, initial_equity)`
-2. `on_bar()`: `portfolio_risk_manager.update(id, current_equity)` + halt check
-3. Sizing: `computed_size * portfolio_risk_manager.scale_factor`
+1. Every strategy fed the PortfolioRiskManager the **whole account NLV** (`acct.balance_total(list(balances.keys())[0])`) instead of its own per-strategy equity. All strategies' equity histories were identical -> inverse-vol allocator collapsed to equal weights and correlation estimates were all ~1.0.
+2. `list(balances.keys())[0]` is **non-deterministic** for multi-currency accounts -- USD / JPY / EUR order is insertion-dependent.
+3. FX strategies did `units = notional_usd / price` where `price` was in the quote ccy (e.g. JPY-per-AUD for AUD/JPY), producing garbage unit counts.
+4. EWMA vol was recomputed on every tick with `* 252` annualisation -- fine for daily strategies, broken for mixed H1/D1 cadences.
 
-**Risk controls:**
+**New architecture:**
+
+Per-strategy equity is now tracked locally by each strategy via `StrategyEquityTracker`:
+
+```python
+# In on_start()
+self._equity_tracker = StrategyEquityTracker(
+    prm_id=self._prm_id,
+    initial_equity=self.config.initial_equity,  # Seed capital (base ccy)
+    base_ccy="USD",
+)
+portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+
+# In on_bar() -- one-line drop-in
+from titan.risk.strategy_equity import report_equity_and_check
+_, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
+if halted:
+    self._flatten()
+    return
+portfolio_allocator.tick(now=bar_ts.date())
+
+# In on_position_closed()
+self._equity_tracker.on_position_closed(
+    float(event.realized_pnl.as_double()),
+    fx_to_base=jpy_to_usd_rate if quote_ccy != "USD" else 1.0,
+)
+
+# In sizing code -- FX-aware unit conversion
+from titan.risk.strategy_equity import convert_notional_to_units
+units = convert_notional_to_units(
+    notional_base=equity * target_vol / ann_vol,
+    price=px,
+    quote_ccy="JPY",        # price is JPY per AUD
+    base_ccy="USD",
+    fx_rate_quote_to_base=jpy_to_usd_rate,  # MUST be explicit for non-USD quotes
+)
+```
+
+**Timestamp-aware math:**
+* Each strategy's equity is stored as a timestamped `pd.Series`, resampled to business-day on demand for vol/correlation work.
+* EWMA variance is rebuilt **once per calendar date** from daily portfolio NAV -- annualisation factor is always correct.
+* Allocator rebalances on wall-clock date distance (not tick count). Ticking 1000 times in a day triggers zero extra rebalances.
+* Correlation check runs once per calendar date on the aligned daily grid.
+
+**Risk controls (unchanged semantics, new mechanics):**
 
 | Trigger | Action | Reset |
 |---------|--------|-------|
 | Portfolio DD > 10% | Linear scale-down from 1.0 to 0.25 floor | Auto when DD recovers |
-| Portfolio DD > 15% | Kill switch: `halt_all = True`, flatten everything | Manual `reset_halt()` |
+| Portfolio DD > 15% | Kill switch: `halt_all = True`, flatten everything, **persisted to `.tmp/portfolio_halt.json`** | Manual `reset_halt(operator=...)` |
 | Strategy pair r > 0.85 | WARNING log (informational) | N/A |
 | Single strategy > 60% of portfolio | WARNING log | N/A |
+
+**Halt persistence (new):** Kill switch state writes to `.tmp/portfolio_halt.json` with reason and UTC timestamp. On process restart the file is re-read and halt is restored -- **a crashed + restarted process cannot silently un-halt**. Operator must call `reset_halt(operator="alice")` to resume; that writes a cleared-halt record.
+
+**HWM semantics (new):** `reset_halt` **preserves** the pre-halt high-water mark. The previous behaviour re-anchored HWM to the drawn-down total, which silently reduced the kill-switch distance. Operators who actually want to re-baseline must explicitly call `reset_hwm(operator="alice")`.
 
 **Config:** `config/risk.toml`
 ```toml
@@ -298,9 +350,47 @@ portfolio_heat_scale_pct   = 10.0
 correlation_window_days    = 60
 correlation_halt_threshold = 0.85
 portfolio_max_single_pct   = 60.0
+vol_target_ann_pct         = 12.0
+vol_ewma_lambda            = 0.94
+vol_scale_min              = 0.25
+vol_scale_max              = 2.0
+# Regime scaling (VIX tiers + ATR percentile)
+vix_tier_1                 = 17.8
+vix_tier_2                 = 23.1
+vix_tier_3                 = 30.0
+atr_pct_low                = 25.0
+atr_pct_high               = 75.0
+atr_pct_extreme            = 90.0
+
+[allocation]
+rebalance_interval_days    = 21  # Monthly (wall-clock, not tick-count)
+ewma_lambda                = 0.94
+min_weight                 = 0.05
+max_weight                 = 0.60
+min_history_days           = 30
+correlation_penalty_threshold = 0.70
 ```
 
-### 4.2 Backtest Limitations (documented)
+### 4.1a Strategy integration reference (all 13 strategies migrated)
+
+Every strategy that was previously calling `balance_total(list(balances.keys())[0])` was migrated to one of two patterns depending on how live-critical it is:
+
+| Strategy | Pattern | Notes |
+|---|---|---|
+| `mr_audjpy`, `bond_gold` | **Full tracker** | Live in `champion_portfolio`. Uses `StrategyEquityTracker` + FX-aware sizing. |
+| `gld_confluence`, `gold_macro`, `fx_carry`, `etf_trend`, `ic_equity_daily`, `ml`, `mtf`, `orb`, `gap_fade`, `mr_fx`, `pairs` | **Deterministic USD fallback** | Uses `get_base_balance(account, "USD")` + explicit `bar.ts_event` timestamp. Account-level NLV is still the equity input pending per-strategy P&L wiring. |
+
+The live `champion_portfolio` set (`mr_audjpy`, `mr_audusd`, `bond_equity_ihyu_cspx`) uses classes that are fully migrated.
+
+### 4.2 Research backtester fix (`research/auto/phase_portfolio.py`)
+
+The portfolio backtester had its own defects -- cherry-picked weight scenarios evaluated in-sample, per-bar (not per-trade) risk targeting, and Sharpe diluted by zero-fill days. Rewrite:
+- Removed the hand-picked `WEIGHT_SCENARIOS` dict (look-ahead).
+- New flow: split stitched returns 50/50 by date, compute inverse-vol weights on IS only, report OOS, plus a 100-draw random-weight sensitivity band.
+- `scale_to_risk` now applies a trade-frequency-aware per-trade vol proxy (`std(nz) / sqrt(trades_per_active_day)`).
+- `_sharpe` now computes on active-trade days only, so low-frequency strategies aren't diluted by zero-fill.
+
+### 4.3 Backtest Limitations (documented)
 
 The current ML backtest is a **signal quality test, not a portfolio simulation**:
 - Each instrument assumes 100% of capital in isolation

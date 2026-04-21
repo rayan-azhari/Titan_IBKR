@@ -88,8 +88,13 @@ class PairsStrategy(Strategy):
         self._prm_id: str = ""
         self._last_bar_a: float | None = None
         self._last_bar_b: float | None = None
-        self._bars_a_seen: int = 0
-        self._bars_b_seen: int = 0
+        # Bar synchronisation by date — the previous ``_bars_{a,b}_seen``
+        # counters permanently de-synced the strategy if one leg had a
+        # missing bar (holiday, data gap). Tracking by date lets both legs
+        # fall out of sync for a day and then rejoin on the next common date.
+        self._last_date_a: "pd.Timestamp | None" = None
+        self._last_date_b: "pd.Timestamp | None" = None
+        self._last_eval_date: "pd.Timestamp | None" = None
 
     # -- Lifecycle -------------------------------------------------------------
 
@@ -137,21 +142,32 @@ class PairsStrategy(Strategy):
     # -- Bar handler -----------------------------------------------------------
 
     def on_bar(self, bar: Bar) -> None:
+        from nautilus_trader.core.datetime import unix_nanos_to_dt as _u
+
+        bar_date = _u(bar.ts_event).date()
+
         # Track which leg this bar belongs to
         if bar.bar_type == self.bar_type_a:
             self._last_bar_a = float(bar.close)
             self._closes_a.append(float(bar.close))
-            self._bars_a_seen += 1
+            self._last_date_a = bar_date
         elif bar.bar_type == self.bar_type_b:
             self._last_bar_b = float(bar.close)
             self._closes_b.append(float(bar.close))
-            self._bars_b_seen += 1
+            self._last_date_b = bar_date
         else:
             return
 
-        # Only evaluate when both legs have new data
-        if self._bars_a_seen != self._bars_b_seen:
+        # Evaluate only when both legs have delivered for this same date. If
+        # one leg missed a session (holiday, data gap), we skip this date
+        # and resume when both legs align again — rather than permanently
+        # losing sync as the old counter-based gate did.
+        if self._last_date_a != bar_date or self._last_date_b != bar_date:
             return
+        if self._last_eval_date == bar_date:
+            # Idempotent: a re-emitted bar must not double-evaluate.
+            return
+        self._last_eval_date = bar_date
 
         self._bar_count += 1
 
@@ -162,20 +178,16 @@ class PairsStrategy(Strategy):
         if len(self._closes_b) > max_len:
             self._closes_b = self._closes_b[-max_len:]
 
-        # Portfolio risk
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # Portfolio risk (deterministic USD + explicit bar ts)
+        from titan.risk.strategy_equity import report_equity_and_check as _rec
+
+        _, halted = _rec(self, self._prm_id, bar)
+        if halted:
             self.log.warning("Portfolio kill switch -- flattening pair.")
             self._close_both_legs("kill switch")
             return
 
-        portfolio_allocator.tick()
+        portfolio_allocator.tick(now=_u(bar.ts_event).date())
 
         # Need enough data
         if len(self._closes_a) < 60 or len(self._closes_b) < 60:
@@ -256,11 +268,11 @@ class PairsStrategy(Strategy):
         accounts = self.cache.accounts()
         if not accounts:
             return
-        acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
+        from titan.risk.strategy_equity import get_base_balance as _gb
+
+        equity = _gb(accounts[0], "USD")
+        if equity is None or equity <= 0:
             return
-        equity = float(acct.balance_total(ccys[0]).as_double())
 
         # Risk budget per trade
         risk_notional = equity * self.config.risk_pct

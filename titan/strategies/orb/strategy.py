@@ -202,15 +202,11 @@ class ORBStrategy(Strategy):
 
     def on_bar(self, bar: Bar):
         """Lifecycle: New Bar Closed."""
-        # Portfolio risk manager: update equity on daily bars + check halt
+        # Portfolio risk manager (deterministic USD + explicit bar ts)
         if bar.bar_type == self.bt_1d:
-            accounts = self.cache.accounts()
-            if accounts:
-                acct = accounts[0]
-                ccys = list(acct.balances().keys())
-                if ccys:
-                    equity = float(acct.balance_total(ccys[0]).as_double())
-                    portfolio_risk_manager.update(self._prm_id, equity)
+            from titan.risk.strategy_equity import report_equity_and_check as _rec
+
+            _rec(self, self._prm_id, bar)
         if portfolio_risk_manager.halt_all:
             self.log.warning("Portfolio kill switch active -- flattening.")
             self.close_all_positions(self.instrument_id)
@@ -443,7 +439,12 @@ class ORBStrategy(Strategy):
         if not currencies:
             self.log.error(f"[{self.ticker}] Account has no balances. Cannot size position.")
             return
-        acct_ccy = currencies[0]
+        # Prefer USD deterministically; fall back to the first available currency
+        # only if USD truly isn't there (still reports which one was used).
+        from nautilus_trader.model.currency import Currency as _C
+
+        usd = _C.from_str("USD")
+        acct_ccy = usd if usd in currencies else currencies[0]
         equity_raw = float(account.balance_total(acct_ccy).as_double())
 
         # Convert account equity to USD (instrument currency) for correct sizing.
@@ -495,14 +496,10 @@ class ORBStrategy(Strategy):
         instrument = self.cache.instrument(self.instrument_id)
         precision = instrument.price_precision if instrument else 2
 
-        # 3. Mark trade taken BEFORE submitting — prevents re-entry on the next bar
-        #    if the order is still pending or the bar closes above/below the OR again.
-        self.trade_taken_today = True
-
-        # 4. Submit as a linked bracket via order_factory.bracket().
-        #    NautilusTrader wires OTO (entry triggers TP+SL) and OCO (TP/SL cancel each
-        #    other) automatically — no manual _bracket_pairs tracking needed.
-        #    entry_order_type=MARKET uses TimeInForce.DAY (the only valid TIF for MKT on IB).
+        # 3. Build bracket. NautilusTrader wires OTO (entry triggers TP+SL) and OCO
+        #    (TP/SL cancel each other) automatically — no manual _bracket_pairs
+        #    tracking needed. entry_order_type=MARKET uses TimeInForce.DAY (the only
+        #    valid TIF for MKT on IB).
         bracket = self.order_factory.bracket(
             instrument_id=self.instrument_id,
             order_side=side,
@@ -515,7 +512,15 @@ class ORBStrategy(Strategy):
             tp_time_in_force=TimeInForce.GTC,
             sl_time_in_force=TimeInForce.GTC,
         )
+
+        # 4. Submit first, then flip the re-entry guard. If submit_order_list raises
+        #    (bracket validation, connection issue) the flag stays False and the
+        #    next bar may retry. If IB rejects the entry asynchronously,
+        #    on_order_rejected clears the flag. This avoids the old race where a
+        #    pre-set flag + exception during submission locked out re-entry for
+        #    the whole session.
         self.submit_order_list(bracket)
+        self.trade_taken_today = True
 
         self.log.info(f"[{self.ticker}] Bracket submitted -> {side} {units} @ ~{price_f:.2f}")
         self.log.info(

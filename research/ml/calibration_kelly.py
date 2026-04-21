@@ -20,7 +20,6 @@ Calibration:
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 
 
@@ -35,12 +34,8 @@ class CalibratedKellySizer:
         """
         self.kelly_fraction = kelly_fraction
         self.min_edge = min_edge
-        self.calibrator_long = IsotonicRegression(
-            y_min=0.0, y_max=1.0, out_of_bounds="clip"
-        )
-        self.calibrator_short = IsotonicRegression(
-            y_min=0.0, y_max=1.0, out_of_bounds="clip"
-        )
+        self.calibrator_long = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
+        self.calibrator_short = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
         self._fitted = False
 
     def fit(

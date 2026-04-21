@@ -274,15 +274,11 @@ class ICEquityDailyStrategy(Strategy):
         if not self._calibrated:
             return
 
-        # Portfolio risk manager: update equity + check halt
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # Portfolio risk manager (deterministic USD + explicit bar ts)
+        from titan.risk.strategy_equity import report_equity_and_check as _rec
+
+        _, halted = _rec(self, self._prm_id, bar)
+        if halted:
             self.log.warning("Portfolio kill switch active -- flattening.")
             self.close_all_positions(self.instrument_id)
             return
@@ -441,7 +437,12 @@ class ICEquityDailyStrategy(Strategy):
             self.log.error("Account has no balances.")
             return
 
-        equity = float(account.balance_total(currencies[0]).as_double())
+        from titan.risk.strategy_equity import get_base_balance as _gb
+
+        equity = _gb(account, "USD")
+        if equity is None or equity <= 0:
+            self.log.error("No USD balance on account.")
+            return
         stop_dist = self.latest_atr * self.config.stop_atr_mult
         if stop_dist == 0:
             return

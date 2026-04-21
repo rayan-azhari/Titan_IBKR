@@ -10,6 +10,8 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
+from titan.risk.strategy_equity import get_base_balance
+
 
 class DirectionFlag(Enum):
     LONG_ONLY = "long_only"
@@ -158,9 +160,15 @@ class TurtleStrategy(Strategy):
         if not accounts:
             return
 
-        equity = float(
-            accounts[0].balance_total(list(accounts[0].balances().keys())[0]).as_double()
-        )
+        # Deterministic USD balance. The previous ``balances.keys()[0]`` anti-
+        # pattern returned a non-deterministic currency on multi-ccy accounts
+        # (audit finding #2) — if USD is absent, we bail rather than silently
+        # size off EUR/JPY balance.
+        equity = get_base_balance(accounts[0], "USD")
+        if equity is None or equity <= 0:
+            self.log.warning("Turtle: no USD balance on account; skipping unit.")
+            return
+        equity = float(equity)
 
         # 1 unit risk
         stop_dist = self._prev_atr * self.config.stop_atr_mult

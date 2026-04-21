@@ -30,7 +30,9 @@ from torch.utils.data import DataLoader, TensorDataset
 class LSTMFeatureExtractor(nn.Module):
     """2-layer LSTM for temporal feature extraction."""
 
-    def __init__(self, input_dim: int, hidden_dim: int = 64, n_layers: int = 2, dropout: float = 0.2):
+    def __init__(
+        self, input_dim: int, hidden_dim: int = 64, n_layers: int = 2, dropout: float = 0.2
+    ):
         super().__init__()
         self.lstm = nn.LSTM(
             input_size=input_dim,
@@ -75,11 +77,11 @@ def build_sequences(
 
     sequences = np.zeros((n - lookback + 1, lookback, d), dtype=np.float32)
     for i in range(n - lookback + 1):
-        sequences[i] = X[i:i + lookback]
+        sequences[i] = X[i : i + lookback]
 
     labels = None
     if y is not None:
-        labels = y[lookback - 1:]
+        labels = y[lookback - 1 :]
 
     return sequences, labels
 
@@ -172,12 +174,11 @@ def extract_lstm_features(
     hidden = model.extract_features(X_tensor)  # (n_seqs, hidden_dim)
 
     n_total = X.shape[0]
-    n_seqs = hidden.shape[0]
     hidden_dim = hidden.shape[1]
 
     # Pad with NaN for warmup bars
     full = np.full((n_total, hidden_dim), np.nan, dtype=np.float32)
-    full[lookback - 1:] = hidden
+    full[lookback - 1 :] = hidden
 
     cols = [f"lstm_h_{i}" for i in range(hidden_dim)]
     return pd.DataFrame(full, columns=cols)

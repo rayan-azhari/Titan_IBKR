@@ -137,21 +137,16 @@ class GapFadeStrategy(Strategy):
             self._lows = self._lows[-max_len:]
             self._closes = self._closes[-max_len:]
 
-        # Portfolio risk manager update
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # Portfolio risk manager update (deterministic USD + explicit bar ts)
+        from titan.risk.strategy_equity import report_equity_and_check as _rec
+
+        _, halted = _rec(self, self._prm_id, bar)
+        if halted:
             self.log.warning("Portfolio kill switch — flattening.")
             self.close_all_positions(self.instrument_id)
             return
 
-        # Tick the allocator
-        portfolio_allocator.tick()
+        portfolio_allocator.tick(now=bar_utc.date())
 
         # ── Track NY close (21:00 UTC) ────────────────────────────────────
         if bar_utc.hour == 21 and bar_utc.minute == 0:
@@ -211,12 +206,11 @@ class GapFadeStrategy(Strategy):
         accounts = self.cache.accounts()
         if not accounts:
             return
-        acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
-            return
+        from titan.risk.strategy_equity import get_base_balance as _gb
 
-        equity = float(acct.balance_total(ccys[0]).as_double())
+        equity = _gb(accounts[0], "USD")
+        if equity is None or equity <= 0:
+            return
         stop_dist = self.config.stop_atr_mult * atr
         if stop_dist <= 0:
             return
@@ -239,13 +233,16 @@ class GapFadeStrategy(Strategy):
         else:
             sl_price = px - stop_dist
 
-        # Submit bracket order
+        # Submit bracket. TIF=DAY (not FOK) so a thin book at London open does
+        # not silently reject the fade and lock us out for the rest of the
+        # session. FOK previously combined with the pre-submission flag flip
+        # meant any open-book rejection killed the day with no retry.
         bracket = self.order_factory.bracket(
             instrument_id=self.instrument_id,
             order_side=side,
             quantity=Quantity.from_int(units),
             entry_order_type=OrderType.MARKET,
-            time_in_force=TimeInForce.FOK,
+            time_in_force=TimeInForce.DAY,
             tp_price=Price.from_str(f"{tp_price:.{self._precision}f}"),
             sl_trigger_price=Price.from_str(f"{sl_price:.{self._precision}f}"),
             tp_post_only=False,
@@ -253,6 +250,9 @@ class GapFadeStrategy(Strategy):
             sl_time_in_force=TimeInForce.GTC,
         )
         self.submit_order_list(bracket)
+        # Flip only after submit returns. If submit raises, the flag stays
+        # False and the next M5 bar may re-evaluate. If IB rejects the entry
+        # asynchronously, on_order_rejected resets the flag.
         self._entered_today = True
 
         self.log.info(
@@ -300,3 +300,6 @@ class GapFadeStrategy(Strategy):
 
     def on_order_rejected(self, event) -> None:
         self.log.error(f"REJECTED: {event.client_order_id} — {event.reason}")
+        # Allow re-entry if IB rejects the fade — otherwise a thin-book reject
+        # at London open silently blocks the whole session.
+        self._entered_today = False

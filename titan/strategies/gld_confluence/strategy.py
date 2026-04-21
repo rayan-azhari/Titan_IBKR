@@ -17,7 +17,6 @@ April 2026. Research: research/ic_analysis/run_confluence_wfo.py
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +28,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
+from titan.research.metrics import BARS_PER_YEAR, ewm_vol_last
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
 
@@ -107,20 +107,18 @@ class GLDConfluenceStrategy(Strategy):
         if len(self._closes) > max_keep:
             self._closes = self._closes[-max_keep:]
 
-        # Portfolio risk
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # Portfolio risk (deterministic USD + explicit bar timestamp)
+        from nautilus_trader.core.datetime import unix_nanos_to_dt as _u
+
+        from titan.risk.strategy_equity import report_equity_and_check
+
+        _, halted = report_equity_and_check(self, self._prm_id, bar)
+        if halted:
             self.log.warning("Portfolio kill switch -- flattening.")
             self.close_all_positions(self.instrument_id)
             return
 
-        portfolio_allocator.tick()
+        portfolio_allocator.tick(now=_u(bar.ts_event).date())
 
         # Need enough bars for W-scale computation
         min_bars = 120 * 200 + 100  # W slow_ma(200) * W_scale(120)
@@ -276,16 +274,23 @@ class GLDConfluenceStrategy(Strategy):
         if not accounts:
             return 0
         acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
+        from titan.risk.strategy_equity import get_base_balance as _gb
+
+        equity = _gb(acct, "USD")
+        if equity is None or equity <= 0:
             return 0
-        equity = float(acct.balance_total(ccys[0]).as_double())
 
         rets = pd.Series(self._closes[-60:]).pct_change().dropna()
         if len(rets) < 10:
             return 0
-        ewma_var = rets.ewm(span=self.config.ewma_span, adjust=False).var().iloc[-1]
-        ann_vol = math.sqrt(max(0.0, ewma_var) * 252)
+        # H1 bars -> annualisation factor 252 * 24.
+        span = self.config.ewma_span
+        rm_lambda = (span - 1.0) / (span + 1.0)
+        ann_vol = ewm_vol_last(
+            rets,
+            lam=rm_lambda,
+            periods_per_year=BARS_PER_YEAR["H1"],
+        )
         if ann_vol <= 0:
             return 0
 

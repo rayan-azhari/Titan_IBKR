@@ -22,7 +22,6 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from research.ml.lstm_features import build_sequences
 
-
 HORIZONS = [1, 5, 20]
 HORIZON_WEIGHTS = [0.5, 0.3, 0.2]
 
@@ -93,7 +92,7 @@ def train_multi_horizon_lstm(
     # Align all targets to sequence indices
     seq_targets = []
     for t in targets:
-        seq_targets.append(t[lookback - 1:])
+        seq_targets.append(t[lookback - 1 :])
 
     # Valid mask: all horizons must have valid targets
     n_seq = len(seqs)
@@ -139,10 +138,7 @@ def train_multi_horizon_lstm(
             xb = batch[0]
             ybs = batch[1:]
             preds = model(xb)
-            loss = sum(
-                w * nn.functional.mse_loss(p, y)
-                for w, p, y in zip(weights, preds, ybs)
-            )
+            loss = sum(w * nn.functional.mse_loss(p, y) for w, p, y in zip(weights, preds, ybs))
             optimizer.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -153,8 +149,7 @@ def train_multi_horizon_lstm(
         with torch.no_grad():
             val_preds = model(X_val)
             val_loss = sum(
-                w * nn.functional.mse_loss(p, y)
-                for w, p, y in zip(weights, val_preds, y_val)
+                w * nn.functional.mse_loss(p, y) for w, p, y in zip(weights, val_preds, y_val)
             ).item()
 
         if val_loss < best_val_loss - 1e-6:
@@ -192,6 +187,6 @@ def predict_multi_horizon(
 
     n_total = X.shape[0]
     full = np.zeros(n_total, dtype=np.float64)
-    full[lookback - 1:] = pred_1bar
+    full[lookback - 1 :] = pred_1bar
 
     return full

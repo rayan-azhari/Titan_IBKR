@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -28,7 +27,6 @@ sys.path.insert(0, str(ROOT))
 from research.ic_analysis.phase1_sweep import (  # noqa: E402
     _get_annual_bars,
     _load_ohlcv,
-    build_all_signals,
 )
 from research.ml.run_52signal_classifier import (  # noqa: E402
     COST_BPS,
@@ -56,12 +54,9 @@ TEST_INSTRUMENTS = ["GLD", "SPY", "EUR_USD", "QQQ"]
 
 # Label sweep (same as main pipeline, trimmed for speed)
 LABEL_SWEEP = [
-    {"rsi_oversold": 45, "rsi_overbought": 55,
-     "confirm_bars": 10, "confirm_pct": 0.005},
-    {"rsi_oversold": 50, "rsi_overbought": 50,
-     "confirm_bars": 10, "confirm_pct": 0.003},
-    {"rsi_oversold": 48, "rsi_overbought": 52,
-     "confirm_bars": 10, "confirm_pct": 0.005},
+    {"rsi_oversold": 45, "rsi_overbought": 55, "confirm_bars": 10, "confirm_pct": 0.005},
+    {"rsi_oversold": 50, "rsi_overbought": 50, "confirm_bars": 10, "confirm_pct": 0.003},
+    {"rsi_oversold": 48, "rsi_overbought": 52, "confirm_bars": 10, "confirm_pct": 0.005},
 ]
 
 
@@ -202,7 +197,7 @@ def run_lift_test(instrument: str) -> dict:
     print("\n  Running WFO: BASELINE ...")
     baseline = _run_wfo(base_features, df, tf, asset_type, "baseline")
 
-    print(f"\n  Running WFO: BASELINE + FIBONACCI ...")
+    print("\n  Running WFO: BASELINE + FIBONACCI ...")
     augmented = _run_wfo(augmented_features, df, tf, asset_type, "baseline+fib")
 
     delta = augmented["sharpe"] - baseline["sharpe"]
@@ -233,7 +228,9 @@ def run_lift_test(instrument: str) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Phase 0B: Fibonacci Feature Lift Test")
-    parser.add_argument("--instrument", default=None, help="Single instrument (default: 4 test set)")
+    parser.add_argument(
+        "--instrument", default=None, help="Single instrument (default: 4 test set)"
+    )
     args = parser.parse_args()
 
     instruments = [args.instrument] if args.instrument else TEST_INSTRUMENTS

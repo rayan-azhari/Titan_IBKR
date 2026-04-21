@@ -174,6 +174,68 @@ STRATEGY_REGISTRY = {
             "instrument_id": "AUD/JPY.IDEALPRO",
             "bar_type_h1": "AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL",
             "ticker": "AUD_JPY",
+            # Explicit JPY -> USD rate. The strategy now refuses to start with
+            # the old default 1.0 when quote_ccy != base_ccy. Operator must
+            # keep this value current (~0.0065 at 2026-04; monitor and update
+            # when JPY/USD moves >5% to avoid sizing drift).
+            "fx_rate_quote_to_base": 0.0065,
+        },
+    },
+    "mr_audusd": {
+        # Reuses generic MRAUDJPYStrategy class with AUD/USD config.
+        # Class name is legacy; logic is asset-agnostic FX H1 MR + Donchian regime.
+        "module": "titan.strategies.mr_audjpy.strategy",
+        "config_cls": "MRAUDJPYConfig",
+        "strategy_cls": "MRAUDJPYStrategy",
+        "contracts": [
+            IBContract(secType="CASH", symbol="AUD", exchange="IDEALPRO", currency="USD"),
+        ],
+        "config_kwargs": {
+            "instrument_id": "AUD/USD.IDEALPRO",
+            "bar_type_h1": "AUD/USD.IDEALPRO-1-HOUR-MID-EXTERNAL",
+            "ticker": "AUD_USD",  # loads data/AUD_USD_H1.parquet
+            "vwap_anchor": 36,  # AUD/USD research champion (NOT 46 like AUD/JPY)
+            "max_leverage": 2.0,  # Paper: 2x; ramp post-validation
+        },
+    },
+    "bond_equity_ihyu_cspx": {
+        # IHYU.LSEETF -> CSPX.LSEETF cross-asset (UCITS substitute for HYG -> IWB).
+        # Original HYG/IWB blocked by EU/UK PRIIPs (no KID for US-domiciled ETFs).
+        # WFO validated: Sharpe +1.638, 84% positive folds (25 folds 2013-2026).
+        # Reuses generic BondGoldStrategy class; ticker_gld/ticker_ief vars are legacy names.
+        "module": "titan.strategies.bond_gold.strategy",
+        "config_cls": "BondGoldConfig",
+        "strategy_cls": "BondGoldStrategy",
+        "contracts": [
+            IBContract(
+                secType="STK",
+                symbol="CSPX",
+                exchange="SMART",
+                primaryExchange="LSEETF",
+                currency="USD",
+            ),
+            IBContract(
+                secType="STK",
+                symbol="IHYU",
+                exchange="SMART",
+                primaryExchange="LSEETF",
+                currency="USD",
+            ),
+        ],
+        "config_kwargs": {
+            # Note: contract uses exchange="SMART" + primaryExchange="LSEETF" so IBKR
+            # smart-routes the order, but the instrument_id NautilusTrader registers
+            # is built from primaryExchange = LSEETF.
+            "instrument_id": "CSPX.LSEETF",
+            "signal_instrument_id": "IHYU.LSEETF",
+            "bar_type_d": "CSPX.LSEETF-1-DAY-LAST-EXTERNAL",
+            "signal_bar_type_d": "IHYU.LSEETF-1-DAY-LAST-EXTERNAL",
+            "ticker_gld": "CSPX",  # warmup reads data/CSPX_D.parquet (legacy var name)
+            "ticker_ief": "IHYU",  # warmup reads data/IHYU_D.parquet (legacy var name)
+            "lookback": 10,  # research champion: 10d (NOT bond_gold's 60d)
+            "threshold": 0.50,
+            "hold_days": 10,  # research champion: 10d (NOT bond_gold's 20d)
+            "max_leverage": 2.0,
         },
     },
     # IC Equity (example -- add more as needed)
@@ -210,6 +272,7 @@ STRATEGY_SETS = {
     ],
     "gold_core": ["gld_confluence", "gold_macro", "bond_gold"],
     "h1_only": ["gld_confluence", "mr_audjpy"],
+    "champion_portfolio": ["mr_audjpy", "mr_audusd", "bond_equity_ihyu_cspx"],
 }
 
 

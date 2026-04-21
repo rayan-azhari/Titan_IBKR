@@ -39,8 +39,9 @@ class CausalConv1d(nn.Module):
 class TemporalBlock(nn.Module):
     """Residual block: 2x (CausalConv -> BatchNorm -> ReLU -> Dropout)."""
 
-    def __init__(self, in_ch: int, out_ch: int, kernel_size: int,
-                 dilation: int, dropout: float = 0.2):
+    def __init__(
+        self, in_ch: int, out_ch: int, kernel_size: int, dilation: int, dropout: float = 0.2
+    ):
         super().__init__()
         self.conv1 = CausalConv1d(in_ch, out_ch, kernel_size, dilation)
         self.bn1 = nn.BatchNorm1d(out_ch)
@@ -75,12 +76,12 @@ class TCNClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Input: (batch, lookback, features). Output: (batch,) logits."""
-        x = self.layer_norm(x)              # (B, T, F)
-        x = x.transpose(1, 2)              # (B, F, T) for Conv1d
-        x = self.blocks(x)                 # (B, hidden, T)
-        x = x[:, :, -1]                    # take last timestep (B, hidden)
+        x = self.layer_norm(x)  # (B, T, F)
+        x = x.transpose(1, 2)  # (B, F, T) for Conv1d
+        x = self.blocks(x)  # (B, hidden, T)
+        x = x[:, :, -1]  # take last timestep (B, hidden)
         x = self.dropout(x)
-        return self.head(x).squeeze(-1)     # (B,)
+        return self.head(x).squeeze(-1)  # (B,)
 
 
 def train_tcn_classifier(
@@ -182,6 +183,6 @@ def predict_tcn_classifier(
 
     n_total = X.shape[0]
     full = np.full(n_total, 0.5, dtype=np.float64)
-    full[lookback - 1:] = proba
+    full[lookback - 1 :] = proba
 
     return full

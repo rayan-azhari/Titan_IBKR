@@ -27,7 +27,6 @@ April 2026. Research: research/auto/experiment.py (Exp86 IWB cbars=5)
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import numpy as np
@@ -40,15 +39,22 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
+from titan.research.metrics import BARS_PER_YEAR, ewm_vol_last
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import (
+    StrategyEquityTracker,
+    convert_notional_to_units,
+    report_equity_and_check,
+    split_fx_pair,
+)
 
 # Donchian period at H1 scale; higher scales multiply this
 DONCHIAN_PERIOD = 20
 # H1-bar equivalents per scale (H1=1, H4=4, D=24, W=120)
 DONCHIAN_SCALES: dict[str, int] = {"H1": 1, "H4": 4, "D": 24, "W": 120}
 
-TIERS_PCT = [0.95, 0.98, 0.99, 0.999]   # conservative grid
+TIERS_PCT = [0.95, 0.98, 0.99, 0.999]  # conservative grid
 TIER_SIZES = [1, 2, 4, 8]
 
 
@@ -58,16 +64,23 @@ class MRAUDJPYConfig(StrategyConfig):
     instrument_id: str  # "AUD/JPY.IDEALPRO"
     bar_type_h1: str  # "AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL"
     ticker: str = "AUD_JPY"
-    vwap_anchor: int = 46          # Champion: 46-bar rolling VWAP (~2 days H1)
-    pct_window: int = 500          # Rolling percentile window
-    reversion_pct: float = 0.50    # Exit at 50% reversion toward VWAP
-    ny_close_hour: int = 21        # Hard close at 21:00 UTC
-    entry_start_hour: int = 7      # Session entry start
-    entry_end_hour: int = 12       # Session entry end
-    vol_target_pct: float = 0.08   # Annualised vol target (8%)
+    vwap_anchor: int = 46  # Champion: 46-bar rolling VWAP (~2 days H1)
+    pct_window: int = 500  # Rolling percentile window
+    reversion_pct: float = 0.50  # Exit at 50% reversion toward VWAP
+    ny_close_hour: int = 21  # Hard close at 21:00 UTC
+    entry_start_hour: int = 7  # Session entry start
+    entry_end_hour: int = 12  # Session entry end
+    vol_target_pct: float = 0.08  # Annualised vol target (8%)
     ewma_span: int = 20
-    max_leverage: float = 2.0      # Paper trade: 2× (scale to 7× after validation)
-    warmup_bars: int = 3000        # Enough for W-scale donchian (2400 bars)
+    max_leverage: float = 2.0  # Paper trade: 2× (scale to 7× after validation)
+    warmup_bars: int = 3000  # Enough for W-scale donchian (2400 bars)
+    initial_equity: float = 10_000.0  # Seed capital for this strategy (base ccy)
+    base_ccy: str = "USD"  # Portfolio accounting currency
+    # FX rate from the instrument's quote ccy to base ccy. For AUD/JPY the
+    # quote is JPY, so this is JPY->USD (~0.0067). For AUD/USD it's 1.0.
+    # MUST be updated in config or overridden at runtime for non-USD quotes.
+    fx_rate_quote_to_base: float = 1.0
+    quote_ccy: str = "USD"  # Overridden at runtime for FX pairs
 
 
 class MRAUDJPYStrategy(Strategy):
@@ -82,13 +95,41 @@ class MRAUDJPYStrategy(Strategy):
         self._highs: list[float] = []
         self._lows: list[float] = []
         self._prm_id: str = ""
+        self._equity_tracker: StrategyEquityTracker | None = None
+
+        # Resolve quote currency from the instrument symbol (AUD/JPY -> JPY).
+        pair = split_fx_pair(config.instrument_id)
+        self._base_unit_ccy = pair[0] if pair else None  # trading units (AUD)
+        self._quote_ccy = pair[1] if pair else config.quote_ccy  # JPY or USD
+        self._fx_rate_quote_to_base = float(config.fx_rate_quote_to_base)
 
         # Position state
         self._tiers_hit: set[int] = set()
 
     def on_start(self) -> None:
         self._prm_id = f"mr_audjpy_{self.config.ticker}"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+
+        # Fail fast: for a non-USD-quoted pair (e.g. AUD/JPY where quote is JPY),
+        # the config default ``fx_rate_quote_to_base = 1.0`` would silently size
+        # as if JPY == USD. Require an explicit override or refuse to start.
+        if (
+            self._quote_ccy != self.config.base_ccy
+            and abs(self._fx_rate_quote_to_base - 1.0) < 1e-12
+        ):
+            raise ValueError(
+                f"mr_audjpy: quote_ccy={self._quote_ccy!r} != "
+                f"base_ccy={self.config.base_ccy!r} but fx_rate_quote_to_base "
+                f"is still the default 1.0. Set an explicit rate in the config "
+                f"(e.g. fx_rate_quote_to_base=0.0067 for JPY->USD) — refusing "
+                f"to silently assume parity."
+            )
+
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         self._warmup()
         self.subscribe_bars(self.bar_type_h1)
@@ -139,20 +180,14 @@ class MRAUDJPYStrategy(Strategy):
         ts = unix_nanos_to_dt(bar.ts_event)
         hour = ts.hour
 
-        # Portfolio risk check
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # Portfolio risk check (per-strategy equity + explicit timestamp)
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
+        if halted:
             self.log.warning("Portfolio kill switch -- flattening.")
             self._flatten()
             return
 
-        portfolio_allocator.tick()
+        portfolio_allocator.tick(now=ts.date())
 
         # Need enough bars for W-scale donchian (2400) + pct_window (500)
         min_bars = DONCHIAN_PERIOD * DONCHIAN_SCALES["W"] + self.config.pct_window
@@ -168,8 +203,8 @@ class MRAUDJPYStrategy(Strategy):
         # Rolling percentile levels (conservative grid)
         devs = [
             abs(
-                (self._closes[i] - float(np.mean(self._closes[max(0, i - anchor):i])))
-                / max(abs(float(np.mean(self._closes[max(0, i - anchor):i]))), 1e-8)
+                (self._closes[i] - float(np.mean(self._closes[max(0, i - anchor) : i])))
+                / max(abs(float(np.mean(self._closes[max(0, i - anchor) : i]))), 1e-8)
             )
             for i in range(len(self._closes) - self.config.pct_window, len(self._closes))
         ]
@@ -265,23 +300,33 @@ class MRAUDJPYStrategy(Strategy):
         self._tiers_hit = set()
 
     def _compute_size(self, price: float, tier_mult: int) -> int:
-        """Vol-targeted sizing per tier, capped at max_leverage."""
+        """Vol-targeted sizing per tier, capped at max_leverage.
+
+        Bars are H1, so annualisation is ``252 * 24``. Goes through the
+        shared ``titan.research.metrics.ewm_vol_last`` so the same math is
+        used in backtest and live (no drift).
+        """
         if len(self._closes) < 60 or price <= 0:
             return 0
-        accounts = self.cache.accounts()
-        if not accounts:
+        if self._equity_tracker is None:
             return 0
-        acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
+
+        # Use *this strategy's* equity, not whole-account NLV.
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
             return 0
-        equity = float(acct.balance_total(ccys[0]).as_double())
 
         rets = pd.Series(self._closes[-60:]).pct_change().dropna()
         if len(rets) < 10:
             return 0
-        ewma_var = rets.ewm(span=self.config.ewma_span, adjust=False).var().iloc[-1]
-        ann_vol = math.sqrt(max(0.0, ewma_var) * 252)
+        # span -> RiskMetrics lambda:  alpha = 2/(span+1),  lambda = 1-alpha
+        span = self.config.ewma_span
+        rm_lambda = (span - 1.0) / (span + 1.0)
+        ann_vol = ewm_vol_last(
+            rets,
+            lam=rm_lambda,
+            periods_per_year=BARS_PER_YEAR["H1"],
+        )
         if ann_vol <= 0:
             return 0
 
@@ -291,11 +336,28 @@ class MRAUDJPYStrategy(Strategy):
         alloc = portfolio_allocator.get_weight(self._prm_id)
         notional *= alloc * portfolio_risk_manager.scale_factor
 
-        base_units = int(notional / price)
+        # FX-aware unit conversion -- AUD/JPY price is JPY-per-AUD so we must
+        # convert a USD notional into AUD units via an explicit JPY->USD rate.
+        fx_rate = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else None
+        base_units = convert_notional_to_units(
+            notional_base=notional,
+            price=price,
+            quote_ccy=self._quote_ccy,
+            base_ccy=self.config.base_ccy,
+            fx_rate_quote_to_base=fx_rate,
+        )
         return max(0, base_units * tier_mult // max(sum(TIER_SIZES), 1))
 
     def on_position_closed(self, event) -> None:
         self._tiers_hit = set()
+        if self._equity_tracker is not None:
+            try:
+                # realized_pnl is in the instrument's quote ccy (JPY for AUD/JPY)
+                pnl_quote = float(event.realized_pnl.as_double())
+                fx = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
+                self._equity_tracker.on_position_closed(pnl_quote, fx_to_base=fx)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(f"CLOSED: PnL={event.realized_pnl}")
 
     def on_order_rejected(self, event) -> None:

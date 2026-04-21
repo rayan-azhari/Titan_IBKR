@@ -1,55 +1,38 @@
-"""Portfolio Allocator — Inverse-Volatility Capital Allocation.
+"""Portfolio Allocator -- Inverse-Volatility Capital Allocation.
 
-Computes per-strategy allocation weights using inverse-volatility weighting,
-rebalanced monthly. Each strategy queries its weight and multiplies it into
-position sizing.
+Computes per-strategy allocation weights using inverse-volatility weighting
+on a **daily, timestamp-aligned** equity series. Rebalances by wall-clock
+date (not by tick counter, which the previous implementation used and which
+caused the "monthly" rebalance to fire every ~1 day when H1 strategies were
+in the portfolio).
 
-Architecture
-------------
-Singleton: ``portfolio_allocator`` is imported by all live strategies.
-It reads per-strategy equity histories from ``portfolio_risk_manager``.
+Reads equity histories via ``portfolio_risk_manager.get_equity_histories()``
+(public accessor added in the April 2026 rewrite) instead of reaching into
+the private ``_strategies`` dict.
 
-    from titan.risk.portfolio_allocator import portfolio_allocator
-
-    # In strategy on_bar(), after portfolio_risk_manager.update():
-    alloc = portfolio_allocator.get_weight(self._prm_id)
-    adjusted_size = raw_size * alloc * portfolio_risk_manager.scale_factor
-
-Rebalancing
------------
-Weights are recomputed every ``rebalance_interval_days`` (default 21 ~ monthly).
-Between rebalances the weights are frozen. This avoids high-frequency churn.
-
-Method: Inverse-Volatility
---------------------------
-    sigma_i = EWMA(lambda=0.94) annualized vol of strategy i's equity returns
-    w_i = (1 / sigma_i) / SUM(1 / sigma_j)
+Method
+------
+    sigma_i = sqrt(EWMA(lambda=0.94) var of daily returns of strategy i) * sqrt(252)
+    w_i    = (1 / sigma_i) / SUM(1 / sigma_j)
 
 Constraints (applied post-computation):
     - max_weight: 0.60 (no strategy > 60%)
     - min_weight: 0.05 (every strategy gets at least 5%)
-    - correlation_penalty: when |r_ij| > 0.70, reduce combined weight by 10%
-
-Configuration (config/risk.toml [allocation] section)
------------------------------------------------------
-    rebalance_interval_days   int    Rebalance period in trading days (default 21)
-    ewma_lambda               float  EWMA decay for per-strategy vol (default 0.94)
-    min_weight                float  Floor per strategy (default 0.05)
-    max_weight                float  Ceiling per strategy (default 0.60)
-    min_history_days          int    Min equity observations before allocating (default 30)
-    correlation_penalty_threshold  float  Penalise pairs with |r| above this (default 0.70)
+    - correlation_penalty: when |r_ij| > 0.70 on the daily-aligned grid,
+      reduce both weights by 10%
 """
 
 from __future__ import annotations
 
 import logging
-import math
+from datetime import date
+from pathlib import Path
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
+from titan.research.metrics import BARS_PER_YEAR, annualize_vol
 
-# ── Defaults ──────────────────────────────────────────────────────────────────
+logger = logging.getLogger(__name__)
 
 _DEFAULT_ALLOC_CONFIG: dict = {
     "rebalance_interval_days": 21,
@@ -62,20 +45,15 @@ _DEFAULT_ALLOC_CONFIG: dict = {
 
 
 class PortfolioAllocator:
-    """Inverse-volatility capital allocator.
-
-    Reads equity histories from PortfolioRiskManager._strategies and
-    computes per-strategy allocation weights.
-    """
+    """Inverse-volatility capital allocator (timestamp-aware, wall-clock gated)."""
 
     def __init__(self, config: dict | None = None) -> None:
         self._config: dict = {**_DEFAULT_ALLOC_CONFIG, **(config or {})}
-        self._weights: dict[str, float] = {}  # strategy_id -> allocation weight
-        self._update_counter: int = 0
-        self._rebalance_due: bool = True
+        self._weights: dict[str, float] = {}
+        self._last_rebalance_date: date | None = None
+        self._force_next: bool = False
 
     def load_config(self, config: dict) -> None:
-        """Update configuration at runtime."""
         self._config = {**_DEFAULT_ALLOC_CONFIG, **config}
         logger.info(
             "[Allocator] Config loaded: rebal=%dd min=%.0f%% max=%.0f%%",
@@ -84,47 +62,46 @@ class PortfolioAllocator:
             self._config["max_weight"] * 100,
         )
 
-    def tick(self) -> None:
-        """Call once per bar (from any strategy). Triggers rebalance when due.
+    def tick(self, now: date | None = None) -> None:
+        """Wall-clock gated rebalance trigger.
 
-        Reads strategy equity histories from the portfolio_risk_manager
-        singleton. Must be called AFTER portfolio_risk_manager.update().
+        Safe to call from every bar of every strategy -- the actual
+        rebalance only fires when the calendar distance from the last
+        rebalance exceeds ``rebalance_interval_days`` business days.
         """
+        today = now or date.today()
         interval = int(self._config["rebalance_interval_days"])
-        self._update_counter += 1
 
-        if self._update_counter >= interval or self._rebalance_due:
-            self._rebalance()
-            self._update_counter = 0
-            self._rebalance_due = False
+        due = (
+            self._force_next
+            or self._last_rebalance_date is None
+            or ((today - self._last_rebalance_date).days >= interval)
+        )
+        if not due:
+            return
+        self._rebalance()
+        self._last_rebalance_date = today
+        self._force_next = False
 
     def get_weight(self, strategy_id: str) -> float:
-        """Get the current allocation weight for a strategy.
-
-        Returns 1.0 / N (equal weight) if not yet computed or strategy unknown.
-        """
         if not self._weights:
             return 1.0
         return self._weights.get(strategy_id, 1.0 / max(1, len(self._weights)))
 
     def get_all_weights(self) -> dict[str, float]:
-        """Snapshot of all current allocation weights."""
         return dict(self._weights)
 
     def force_rebalance(self) -> None:
-        """Force a rebalance on the next tick()."""
-        self._rebalance_due = True
+        self._force_next = True
 
     # ── Internal ──────────────────────────────────────────────────────────
 
     def _rebalance(self) -> None:
-        """Compute inverse-vol weights from equity histories."""
         from titan.risk.portfolio_risk_manager import portfolio_risk_manager
 
-        strategies = portfolio_risk_manager._strategies
-        if len(strategies) < 2:
-            # Single strategy or none — equal weight
-            for sid in strategies:
+        histories = portfolio_risk_manager.get_equity_histories()
+        if len(histories) < 2:
+            for sid in histories:
                 self._weights[sid] = 1.0
             return
 
@@ -134,62 +111,58 @@ class PortfolioAllocator:
         max_w = float(self._config["max_weight"])
         corr_threshold = float(self._config["correlation_penalty_threshold"])
 
-        # Compute per-strategy annualized vol from equity histories
+        # Build aligned daily-return DataFrame once and reuse for vol + corr.
+        rets_map: dict[str, pd.Series] = {}
+        for sid, eq in histories.items():
+            if len(eq) < min_hist:
+                continue
+            r = eq.pct_change().dropna()
+            if len(r) < 10:
+                continue
+            rets_map[sid] = r
+
+        if len(rets_map) < 2:
+            return
+
+        df = pd.DataFrame(rets_map)
+        df = df.fillna(0.0)  # non-trade days contribute zero return
+
         vols: dict[str, float] = {}
-        return_series: dict[str, pd.Series] = {}
-
-        for sid, state in strategies.items():
-            hist = list(state.equity_history)
-            if len(hist) < min_hist:
-                continue
-
-            eq = pd.Series(hist, dtype=float)
-            rets = eq.pct_change().dropna()
-            if len(rets) < 10:
-                continue
-
-            # EWMA variance
-            ewma_var = rets.ewm(alpha=1.0 - lam, adjust=False).var().iloc[-1]
-            ann_vol = math.sqrt(max(0.0, ewma_var) * 252)
-
+        for sid in df.columns:
+            ewma_var = df[sid].ewm(alpha=1.0 - lam, adjust=False).var().iloc[-1]
+            per_day_std = max(0.0, float(ewma_var)) ** 0.5
+            # Per-strategy equity histories are resampled to business-day in
+            # PortfolioRiskManager.get_equity_histories, so factor is 252.
+            ann_vol = annualize_vol(per_day_std, periods_per_year=BARS_PER_YEAR["D"])
             if ann_vol > 0:
                 vols[sid] = ann_vol
-                return_series[sid] = rets
 
         if not vols:
             return
 
-        # Inverse-vol raw weights
         inv_vols = {sid: 1.0 / v for sid, v in vols.items()}
         total_inv = sum(inv_vols.values())
         raw_weights = {sid: iv / total_inv for sid, iv in inv_vols.items()}
 
-        # Correlation penalty: if |r_ij| > threshold, reduce both by 10%
-        if len(return_series) >= 2:
-            sids = list(return_series.keys())
-            df = pd.DataFrame(return_series).dropna()
-            if len(df) >= 20:
-                corr = df.corr()
-                for i, a in enumerate(sids):
-                    for b in sids[i + 1 :]:
-                        if a in corr.index and b in corr.columns:
-                            r = abs(float(corr.loc[a, b]))
-                            if r > corr_threshold:
-                                raw_weights[a] *= 0.90
-                                raw_weights[b] *= 0.90
-                                logger.info(
-                                    "[Allocator] Correlation penalty: %s <-> %s"
-                                    " r=%.2f — both reduced 10%%",
-                                    a,
-                                    b,
-                                    r,
-                                )
+        # Correlation penalty on the aligned grid.
+        if len(df) >= 20:
+            corr = df.corr()
+            sids = list(df.columns)
+            for i, a in enumerate(sids):
+                for b in sids[i + 1 :]:
+                    r = abs(float(corr.loc[a, b]))
+                    if r > corr_threshold and a in raw_weights and b in raw_weights:
+                        raw_weights[a] *= 0.90
+                        raw_weights[b] *= 0.90
+                        logger.info(
+                            "[Allocator] Correlation penalty: %s <-> %s r=%.2f -- -10%% each",
+                            a,
+                            b,
+                            r,
+                        )
 
-        # Apply min/max constraints and re-normalise
-        constrained = {}
-        for sid, w in raw_weights.items():
-            constrained[sid] = max(min_w, min(max_w, w))
-
+        # Constraints + renormalise.
+        constrained = {sid: max(min_w, min(max_w, w)) for sid, w in raw_weights.items()}
         total_c = sum(constrained.values())
         if total_c > 0:
             self._weights = {sid: w / total_c for sid, w in constrained.items()}
@@ -197,15 +170,12 @@ class PortfolioAllocator:
             n = len(constrained)
             self._weights = {sid: 1.0 / n for sid in constrained}
 
-        # Include strategies that didn't have enough history (equal share of remainder)
-        all_sids = set(strategies.keys())
-        allocated_sids = set(self._weights.keys())
-        missing = all_sids - allocated_sids
+        # Strategies with insufficient history get floor + renormalise.
+        all_sids = set(histories.keys())
+        missing = all_sids - set(self._weights.keys())
         if missing:
-            equal_share = min_w
             for sid in missing:
-                self._weights[sid] = equal_share
-            # Re-normalise
+                self._weights[sid] = min_w
             total_w = sum(self._weights.values())
             if total_w > 0:
                 self._weights = {s: w / total_w for s, w in self._weights.items()}
@@ -216,13 +186,8 @@ class PortfolioAllocator:
         )
 
 
-# ── Module-level singleton ────────────────────────────────────────────────────
-
-
 def _load_alloc_config() -> dict:
-    """Load [allocation] section from config/risk.toml if it exists."""
     import tomllib
-    from pathlib import Path
 
     risk_toml = Path(__file__).resolve().parents[2] / "config" / "risk.toml"
     if not risk_toml.exists():
@@ -236,15 +201,3 @@ def _load_alloc_config() -> dict:
 
 
 portfolio_allocator: PortfolioAllocator = PortfolioAllocator(config=_load_alloc_config())
-"""Module-level singleton imported by all live strategies.
-
-Auto-loads config from config/risk.toml [allocation] section on import.
-
-Usage:
-    from titan.risk.portfolio_allocator import portfolio_allocator
-
-    # In strategy on_bar(), after portfolio_risk_manager.update():
-    portfolio_allocator.tick()
-    alloc = portfolio_allocator.get_weight("ic_equity_UNH")
-    adjusted_size = raw_size * alloc * portfolio_risk_manager.scale_factor
-"""

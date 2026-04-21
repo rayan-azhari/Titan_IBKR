@@ -34,8 +34,7 @@ def write_exp(cfg: dict, desc: str):
 
 def git_commit(msg):
     subprocess.run(["git", "add", str(EXP)], cwd=ROOT, check=True)
-    subprocess.run(["git", "commit", "-m", f"exp: {msg}"], cwd=ROOT,
-                   capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-m", f"exp: {msg}"], cwd=ROOT, capture_output=True, text=True)
 
 
 def git_reset():
@@ -43,8 +42,9 @@ def git_reset():
 
 
 def evaluate():
-    r = subprocess.run(["uv", "run", "python", str(EVAL)], cwd=ROOT,
-                       capture_output=True, text=True, timeout=300)
+    r = subprocess.run(
+        ["uv", "run", "python", str(EVAL)], cwd=ROOT, capture_output=True, text=True, timeout=300
+    )
     m = {}
     for line in (r.stdout + r.stderr).splitlines():
         for k in ["SCORE", "SHARPE", "MAX_DD", "PARITY", "TRADES", "WORST_FOLD"]:
@@ -64,9 +64,11 @@ def run_exp(desc, cfg):
     improved = score > BEST[0] + MIN_IMPROVEMENT
     status = "KEEP ***" if improved else "DISCARD"
     print(f"[{desc}]")
-    print(f"  SCORE={score:.4f}  SH={m.get('SHARPE', '?')}  "
-          f"DD={m.get('MAX_DD', '?')}  PAR={m.get('PARITY', '?')}  "
-          f"TRD={m.get('TRADES', '?')}  -> {status}")
+    print(
+        f"  SCORE={score:.4f}  SH={m.get('SHARPE', '?')}  "
+        f"DD={m.get('MAX_DD', '?')}  PAR={m.get('PARITY', '?')}  "
+        f"TRD={m.get('TRADES', '?')}  -> {status}"
+    )
     sys.stdout.flush()
     if improved:
         BEST[0] = score
@@ -77,37 +79,69 @@ def run_exp(desc, cfg):
 
 
 ML_BASE = dict(
-    strategy="stacking", timeframe="D",
-    xgb_params=dict(n_estimators=300, max_depth=4, learning_rate=0.03,
-                    subsample=0.8, colsample_bytree=0.6, random_state=42, verbosity=0),
-    lstm_hidden=32, lookback=20, lstm_epochs=30, n_nested_folds=3,
+    strategy="stacking",
+    timeframe="D",
+    xgb_params=dict(
+        n_estimators=300,
+        max_depth=4,
+        learning_rate=0.03,
+        subsample=0.8,
+        colsample_bytree=0.6,
+        random_state=42,
+        verbosity=0,
+    ),
+    lstm_hidden=32,
+    lookback=20,
+    lstm_epochs=30,
+    n_nested_folds=3,
     label_params=[
         dict(rsi_oversold=45, rsi_overbought=55, confirm_bars=5, confirm_pct=0.005),
         dict(rsi_oversold=50, rsi_overbought=50, confirm_bars=5, confirm_pct=0.003),
         dict(rsi_oversold=48, rsi_overbought=52, confirm_bars=5, confirm_pct=0.005),
     ],
-    signal_threshold=0.6, cost_bps=2.0, is_years=2, oos_months=2,
+    signal_threshold=0.6,
+    cost_bps=2.0,
+    is_years=2,
+    oos_months=2,
 )
 
 # AUD_JPY best lead: vwap36, spread=1
 MR_AJ_LEAD = dict(
-    strategy="mean_reversion", instruments=["AUD_JPY"], timeframe="H1",
-    vwap_anchor=36, regime_filter="conf_rsi_14_dev",
-    tier_grid="conservative", spread_bps=1.0, slippage_bps=0.5,
-    is_bars=30000, oos_bars=7500,
+    strategy="mean_reversion",
+    instruments=["AUD_JPY"],
+    timeframe="H1",
+    vwap_anchor=36,
+    regime_filter="conf_rsi_14_dev",
+    tier_grid="conservative",
+    spread_bps=1.0,
+    slippage_bps=0.5,
+    is_bars=30000,
+    oos_bars=7500,
 )
 
 # HYG->IWB best lead
 XA_HYG_IWB = dict(
-    strategy="cross_asset", instruments=["IWB"], bond="HYG",
-    lookback=10, hold_days=10, threshold=0.50,
-    is_days=504, oos_days=126, spread_bps=5.0,
+    strategy="cross_asset",
+    instruments=["IWB"],
+    bond="HYG",
+    lookback=10,
+    hold_days=10,
+    threshold=0.50,
+    is_days=504,
+    oos_days=126,
+    spread_bps=5.0,
 )
 
 XA_HYG_QQQ = dict(
-    strategy="cross_asset", instruments=["QQQ"], bond="HYG",
-    lookback=10, hold_days=10, threshold=0.50,
-    is_days=504, oos_days=126, spread_bps=5.0,
+    strategy="cross_asset",
+    instruments=["QQQ"],
+    bond="HYG",
+    lookback=10,
+    hold_days=10,
+    threshold=0.50,
+    is_days=504,
+    oos_days=126,
+    spread_bps=5.0,
 )
 
 
@@ -132,7 +166,6 @@ experiments = [
     ("MR AUD_JPY vwap36 no_filter", c(MR_AJ_LEAD, regime_filter="no_filter")),
     ("MR AUD_JPY vwap36 standard", c(MR_AJ_LEAD, tier_grid="standard")),
     ("MR AUD_JPY vwap36 sp0.5", c(MR_AJ_LEAD, spread_bps=0.5, slippage_bps=0.2)),
-
     # ── 2. HYG->IWB fine-tuning (best: 3.04) ─────────────────────────────────
     ("XA HYG->IWB lb5 hd5", c(XA_HYG_IWB, lookback=5, hold_days=5)),
     ("XA HYG->IWB lb15 hd15", c(XA_HYG_IWB, lookback=15, hold_days=15)),
@@ -144,57 +177,90 @@ experiments = [
     ("XA HYG->IWB sp1", c(XA_HYG_IWB, spread_bps=1.0)),
     ("XA HYG->IWB is756", c(XA_HYG_IWB, is_days=756, oos_days=189)),
     ("XA HYG->IWB is1008", c(XA_HYG_IWB, is_days=1008, oos_days=252)),
-
     # ── 3. HYG cross-asset on other targets ───────────────────────────────────
     ("XA HYG->SPY lb10", c(XA_HYG_QQQ, instruments=["SPY"])),
     ("XA HYG->GLD lb10", c(XA_HYG_QQQ, instruments=["GLD"])),
     ("XA HYG->EFA lb10", c(XA_HYG_QQQ, instruments=["EFA"])),
     ("XA HYG->EEM lb10", c(XA_HYG_QQQ, instruments=["EEM"])),
     ("XA HYG->DBC lb10", c(XA_HYG_QQQ, instruments=["DBC"])),
-    ("XA LQD->IWB sp1", dict(
-        strategy="cross_asset", instruments=["IWB"], bond="LQD",
-        lookback=10, hold_days=10, threshold=0.50,
-        is_days=504, oos_days=126, spread_bps=1.0)),
-
+    (
+        "XA LQD->IWB sp1",
+        dict(
+            strategy="cross_asset",
+            instruments=["IWB"],
+            bond="LQD",
+            lookback=10,
+            hold_days=10,
+            threshold=0.50,
+            is_days=504,
+            oos_days=126,
+            spread_bps=1.0,
+        ),
+    ),
     # ── 4. TQQQ cbars=6 fine-tuning ───────────────────────────────────────────
-    ("TQQQ cbars6 oos1", c(ML_BASE, instruments=["TQQQ"], oos_months=1,
-                           label_params=[
-                               dict(rsi_oversold=45, rsi_overbought=55, confirm_bars=6, confirm_pct=0.005),
-                               dict(rsi_oversold=50, rsi_overbought=50, confirm_bars=6, confirm_pct=0.003),
-                               dict(rsi_oversold=48, rsi_overbought=52, confirm_bars=6, confirm_pct=0.005),
-                           ])),
-    ("TQQQ cbars6 is3y", c(ML_BASE, instruments=["TQQQ"], is_years=3,
-                           label_params=[
-                               dict(rsi_oversold=45, rsi_overbought=55, confirm_bars=6, confirm_pct=0.005),
-                               dict(rsi_oversold=50, rsi_overbought=50, confirm_bars=6, confirm_pct=0.003),
-                               dict(rsi_oversold=48, rsi_overbought=52, confirm_bars=6, confirm_pct=0.005),
-                           ])),
-    ("TQQQ cbars6 thr0.55", c(ML_BASE, instruments=["TQQQ"], signal_threshold=0.55,
-                              label_params=[
-                                  dict(rsi_oversold=45, rsi_overbought=55, confirm_bars=6, confirm_pct=0.005),
-                                  dict(rsi_oversold=50, rsi_overbought=50, confirm_bars=6, confirm_pct=0.003),
-                                  dict(rsi_oversold=48, rsi_overbought=52, confirm_bars=6, confirm_pct=0.005),
-                              ])),
-
+    (
+        "TQQQ cbars6 oos1",
+        c(
+            ML_BASE,
+            instruments=["TQQQ"],
+            oos_months=1,
+            label_params=[
+                dict(rsi_oversold=45, rsi_overbought=55, confirm_bars=6, confirm_pct=0.005),
+                dict(rsi_oversold=50, rsi_overbought=50, confirm_bars=6, confirm_pct=0.003),
+                dict(rsi_oversold=48, rsi_overbought=52, confirm_bars=6, confirm_pct=0.005),
+            ],
+        ),
+    ),
+    (
+        "TQQQ cbars6 is3y",
+        c(
+            ML_BASE,
+            instruments=["TQQQ"],
+            is_years=3,
+            label_params=[
+                dict(rsi_oversold=45, rsi_overbought=55, confirm_bars=6, confirm_pct=0.005),
+                dict(rsi_oversold=50, rsi_overbought=50, confirm_bars=6, confirm_pct=0.003),
+                dict(rsi_oversold=48, rsi_overbought=52, confirm_bars=6, confirm_pct=0.005),
+            ],
+        ),
+    ),
+    (
+        "TQQQ cbars6 thr0.55",
+        c(
+            ML_BASE,
+            instruments=["TQQQ"],
+            signal_threshold=0.55,
+            label_params=[
+                dict(rsi_oversold=45, rsi_overbought=55, confirm_bars=6, confirm_pct=0.005),
+                dict(rsi_oversold=50, rsi_overbought=50, confirm_bars=6, confirm_pct=0.003),
+                dict(rsi_oversold=48, rsi_overbought=52, confirm_bars=6, confirm_pct=0.005),
+            ],
+        ),
+    ),
     # ── 5. Portfolio: IWB + AUD_JPY_vwap36_sp1 + HYG->IWB ───────────────────
-    ("Portfolio IWB+AJ_vwap36+HYG_IWB", {
-        "strategy": "portfolio",
-        "description": "Portfolio IWB + AUD_JPY vwap36 sp1 + HYG->IWB",
-        "strategies": [
-            dict(**c(ML_BASE, instruments=["IWB"]), weight=0.5),
-            dict(**c(MR_AJ_LEAD), weight=0.3),
-            dict(**c(XA_HYG_IWB), weight=0.2),
-        ],
-    }),
-    ("Portfolio IWB+HYG_IWB", {
-        "strategy": "portfolio",
-        "description": "Portfolio IWB + HYG->IWB",
-        "strategies": [
-            dict(**c(ML_BASE, instruments=["IWB"]), weight=0.6),
-            dict(**c(XA_HYG_IWB), weight=0.4),
-        ],
-    }),
-
+    (
+        "Portfolio IWB+AJ_vwap36+HYG_IWB",
+        {
+            "strategy": "portfolio",
+            "description": "Portfolio IWB + AUD_JPY vwap36 sp1 + HYG->IWB",
+            "strategies": [
+                dict(**c(ML_BASE, instruments=["IWB"]), weight=0.5),
+                dict(**c(MR_AJ_LEAD), weight=0.3),
+                dict(**c(XA_HYG_IWB), weight=0.2),
+            ],
+        },
+    ),
+    (
+        "Portfolio IWB+HYG_IWB",
+        {
+            "strategy": "portfolio",
+            "description": "Portfolio IWB + HYG->IWB",
+            "strategies": [
+                dict(**c(ML_BASE, instruments=["IWB"]), weight=0.6),
+                dict(**c(XA_HYG_IWB), weight=0.4),
+            ],
+        },
+    ),
     # ── 6. Radical: IWB stacking with HYG as second instrument ───────────────
     ("IWB+HYG stacking", c(ML_BASE, instruments=["IWB", "HYG"])),
 ]

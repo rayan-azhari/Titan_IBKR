@@ -56,12 +56,9 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 TEST_INSTRUMENTS = ["GLD", "SPY", "EUR_USD", "QQQ"]
 
 LABEL_SWEEP = [
-    {"rsi_oversold": 45, "rsi_overbought": 55,
-     "confirm_bars": 10, "confirm_pct": 0.005},
-    {"rsi_oversold": 50, "rsi_overbought": 50,
-     "confirm_bars": 10, "confirm_pct": 0.003},
-    {"rsi_oversold": 48, "rsi_overbought": 52,
-     "confirm_bars": 10, "confirm_pct": 0.005},
+    {"rsi_oversold": 45, "rsi_overbought": 55, "confirm_bars": 10, "confirm_pct": 0.005},
+    {"rsi_oversold": 50, "rsi_overbought": 50, "confirm_bars": 10, "confirm_pct": 0.003},
+    {"rsi_oversold": 48, "rsi_overbought": 52, "confirm_bars": 10, "confirm_pct": 0.005},
 ]
 
 DELTA_THRESHOLD = 0.10  # minimum Sharpe improvement to count as a lift
@@ -171,8 +168,12 @@ def _wfo_loop(
 
         if position_fn is not None:
             fold_info = {
-                "model": model, "is_idx": is_idx, "oos_idx": oos_idx,
-                "X_all": X_fold, "returns": returns, "all_idx": all_idx,
+                "model": model,
+                "is_idx": is_idx,
+                "oos_idx": oos_idx,
+                "X_all": X_fold,
+                "returns": returns,
+                "all_idx": all_idx,
             }
             pos = position_fn(model, X_oos, fold_info)
         else:
@@ -221,10 +222,14 @@ def test_fibonacci(instrument: str) -> dict:
 
     delta = augmented["sharpe"] - base["sharpe"]
     return {
-        "phase": "0B", "layer": "Fibonacci",
-        "instrument": instrument, "tf": tf,
-        "base_sharpe": base["sharpe"], "aug_sharpe": augmented["sharpe"],
-        "delta": round(delta, 3), "pass": delta >= DELTA_THRESHOLD,
+        "phase": "0B",
+        "layer": "Fibonacci",
+        "instrument": instrument,
+        "tf": tf,
+        "base_sharpe": base["sharpe"],
+        "aug_sharpe": augmented["sharpe"],
+        "delta": round(delta, 3),
+        "pass": delta >= DELTA_THRESHOLD,
     }
 
 
@@ -234,8 +239,6 @@ def test_fibonacci(instrument: str) -> dict:
 def test_lstm(instrument: str) -> dict:
     """A/B: baseline vs baseline+LSTM hidden states."""
     from research.ml.lstm_features import (
-        LSTMFeatureExtractor,
-        build_sequences,
         extract_lstm_features,
         train_lstm,
     )
@@ -276,8 +279,12 @@ def test_lstm(instrument: str) -> dict:
         # Train LSTM on IS
         try:
             model = train_lstm(
-                X_is, y_is, lookback=LOOKBACK,
-                hidden_dim=HIDDEN_DIM, epochs=20, patience=3,
+                X_is,
+                y_is,
+                lookback=LOOKBACK,
+                hidden_dim=HIDDEN_DIM,
+                epochs=20,
+                patience=3,
             )
         except (ValueError, RuntimeError):
             return None
@@ -295,16 +302,24 @@ def test_lstm(instrument: str) -> dict:
     # For LSTM: use per_fold_hook to train LSTM per fold
     aug_feat = feat_clean.copy()
     augmented = _wfo_loop(
-        aug_feat, ret_clean, label_cache, tf, asset_type,
+        aug_feat,
+        ret_clean,
+        label_cache,
+        tf,
+        asset_type,
         per_fold_hook=lstm_fold_hook,
     )
 
     delta = augmented["sharpe"] - base["sharpe"]
     return {
-        "phase": "0C", "layer": "LSTM",
-        "instrument": instrument, "tf": tf,
-        "base_sharpe": base["sharpe"], "aug_sharpe": augmented["sharpe"],
-        "delta": round(delta, 3), "pass": delta >= DELTA_THRESHOLD,
+        "phase": "0C",
+        "layer": "LSTM",
+        "instrument": instrument,
+        "tf": tf,
+        "base_sharpe": base["sharpe"],
+        "aug_sharpe": augmented["sharpe"],
+        "delta": round(delta, 3),
+        "pass": delta >= DELTA_THRESHOLD,
     }
 
 
@@ -337,16 +352,24 @@ def test_quantile(instrument: str) -> dict:
 
     base = _wfo_loop(feat_clean, ret_clean, label_cache, tf, asset_type)
     augmented = _wfo_loop(
-        feat_clean, ret_clean, label_cache, tf, asset_type,
+        feat_clean,
+        ret_clean,
+        label_cache,
+        tf,
+        asset_type,
         per_fold_hook=qr_fold_hook,
     )
 
     delta = augmented["sharpe"] - base["sharpe"]
     return {
-        "phase": "0D", "layer": "Quantile",
-        "instrument": instrument, "tf": tf,
-        "base_sharpe": base["sharpe"], "aug_sharpe": augmented["sharpe"],
-        "delta": round(delta, 3), "pass": delta >= DELTA_THRESHOLD,
+        "phase": "0D",
+        "layer": "Quantile",
+        "instrument": instrument,
+        "tf": tf,
+        "base_sharpe": base["sharpe"],
+        "aug_sharpe": augmented["sharpe"],
+        "delta": round(delta, 3),
+        "pass": delta >= DELTA_THRESHOLD,
     }
 
 
@@ -384,16 +407,24 @@ def test_kelly(instrument: str) -> dict:
 
     base = _wfo_loop(feat_clean, ret_clean, label_cache, tf, asset_type)
     kelly = _wfo_loop(
-        feat_clean, ret_clean, label_cache, tf, asset_type,
+        feat_clean,
+        ret_clean,
+        label_cache,
+        tf,
+        asset_type,
         position_fn=kelly_position_fn,
     )
 
     delta = kelly["sharpe"] - base["sharpe"]
     return {
-        "phase": "0E", "layer": "Kelly",
-        "instrument": instrument, "tf": tf,
-        "base_sharpe": base["sharpe"], "aug_sharpe": kelly["sharpe"],
-        "delta": round(delta, 3), "pass": delta >= DELTA_THRESHOLD,
+        "phase": "0E",
+        "layer": "Kelly",
+        "instrument": instrument,
+        "tf": tf,
+        "base_sharpe": base["sharpe"],
+        "aug_sharpe": kelly["sharpe"],
+        "delta": round(delta, 3),
+        "pass": delta >= DELTA_THRESHOLD,
     }
 
 
@@ -467,7 +498,7 @@ def main() -> None:
         )
 
     # Per-phase verdict
-    print(f"\n  Per-phase verdicts:")
+    print("\n  Per-phase verdicts:")
     for phase in phases:
         if phase not in PHASE_MAP:
             continue

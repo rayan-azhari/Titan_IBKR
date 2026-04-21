@@ -36,7 +36,6 @@ import importlib.util
 import sys
 import time
 import traceback
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -99,9 +98,13 @@ def composite_score(
 
 
 EMPTY_RESULT = {
-    "sharpe": 0.0, "max_dd": 0.0, "parity": 0.0,
-    "pct_positive": 0.0, "worst_fold": -99.0,
-    "n_trades": 0, "n_folds": 0,
+    "sharpe": 0.0,
+    "max_dd": 0.0,
+    "parity": 0.0,
+    "pct_positive": 0.0,
+    "worst_fold": -99.0,
+    "n_trades": 0,
+    "n_folds": 0,
 }
 
 
@@ -127,21 +130,23 @@ def _load_daily(sym: str) -> pd.DataFrame:
 
 
 def _sharpe_from_rets(rets, ann_factor=252):
-    """Annualized Sharpe from a return series/array."""
-    if hasattr(rets, 'values'):
-        rets = rets.values
-    nz = rets[rets != 0.0] if len(rets) > 0 else rets
-    if len(nz) < 20:
-        return 0.0
-    s = float(np.std(nz))
-    if s < 1e-9:
-        return 0.0
-    return float(np.mean(nz) / s * sqrt(ann_factor))
+    """Annualized Sharpe from a return series/array.
+
+    Thin wrapper over ``titan.research.metrics.sharpe``. The old
+    implementation filtered ``rets != 0.0`` before annualising, which
+    overstated Sharpe by ``sqrt(1/active_ratio)`` for sparse strategies
+    (April 2026 audit). The shared helper does NOT filter zero days; the
+    caller is responsible for passing the correct ``ann_factor`` for the
+    series frequency.
+    """
+    from titan.research.metrics import sharpe as _sh
+
+    return _sh(rets, periods_per_year=int(ann_factor))
 
 
 def _max_dd_from_rets(rets):
     """Max drawdown from a return series/array."""
-    if hasattr(rets, 'values'):
+    if hasattr(rets, "values"):
         rets = rets.values
     if len(rets) < 5:
         return 0.0
@@ -180,7 +185,7 @@ def generic_rolling_wfo(
         is_start = max(0, oos_start - is_days)
 
         df_is = df.iloc[is_start:oos_start]
-        df_oos = df.iloc[oos_start:oos_start + oos_days]
+        df_oos = df.iloc[oos_start : oos_start + oos_days]
 
         try:
             is_rets = build_returns_fn(df_is, cfg)
@@ -195,11 +200,11 @@ def generic_rolling_wfo(
         fold_sharpes.append(oos_sh)
         all_is_sharpes.append(is_sh)
         if len(oos_rets) > 0:
-            all_oos_rets.append(oos_rets.values if hasattr(oos_rets, 'values') else oos_rets)
+            all_oos_rets.append(oos_rets.values if hasattr(oos_rets, "values") else oos_rets)
 
         # Count trades from signal transitions
         sig = cfg.get("_last_signal", None)
-        if sig is not None and hasattr(sig, '__len__'):
+        if sig is not None and hasattr(sig, "__len__"):
             total_trades += int(np.sum(np.abs(np.diff(sig)) > 0))
         else:
             total_trades += max(1, len(oos_rets[oos_rets != 0]) // 20) if len(oos_rets) > 0 else 0
@@ -241,10 +246,16 @@ def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
     """ML classifier WFO — existing v1 logic."""
     from research.ic_analysis.phase1_sweep import _get_annual_bars, _load_ohlcv
     from research.ml.run_52signal_classifier import (
-        COST_BPS, IS_RATIO_BARS, OOS_RATIO_BARS, SIGNAL_THRESHOLD,
-        TARGET_INSTRUMENTS, XGB_PARAMS,
-        _pred_to_position, build_features,
-        compute_regime_pullback_labels, compute_signal_sharpe,
+        COST_BPS,
+        IS_RATIO_BARS,
+        OOS_RATIO_BARS,
+        SIGNAL_THRESHOLD,
+        TARGET_INSTRUMENTS,
+        XGB_PARAMS,
+        _pred_to_position,
+        build_features,
+        compute_regime_pullback_labels,
+        compute_signal_sharpe,
         walk_forward_splits,
     )
 
@@ -264,10 +275,12 @@ def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
     df.attrs["instrument"] = instrument
     features = build_features(df, tf)
 
-    label_params_list = cfg.get("label_params", [
-        {"rsi_oversold": 45, "rsi_overbought": 55,
-         "confirm_bars": 10, "confirm_pct": 0.005},
-    ])
+    label_params_list = cfg.get(
+        "label_params",
+        [
+            {"rsi_oversold": 45, "rsi_overbought": 55, "confirm_bars": 10, "confirm_pct": 0.005},
+        ],
+    )
 
     label_cache = []
     for lp in label_params_list:
@@ -332,6 +345,7 @@ def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
 
         if strategy_type == "xgboost":
             from xgboost import XGBClassifier
+
             xgb_p = cfg.get("xgb_params", XGB_PARAMS).copy()
 
             # Training samples: entry bars (setup occurred)
@@ -367,6 +381,7 @@ def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
 
         elif strategy_type in ("stacking", "tcn_stacking", "ae_stacking"):
             from research.ml.ensemble_stacking import StackedEnsemble
+
             entry_mask = np.zeros(len(is_idx), dtype=bool)
             is_start = is_idx[0]
             for e in is_entries_fold:
@@ -381,18 +396,24 @@ def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
             X_is_aug, X_oos_aug = X_is, X_oos
             if strategy_type == "ae_stacking":
                 from research.ml.autoencoder_regime import (
-                    extract_regime_features, train_autoencoder,
+                    extract_regime_features,
+                    train_autoencoder,
                 )
+
                 ae = train_autoencoder(
                     X_is,
                     latent_dim=cfg.get("ae_latent_dim", 8),
                     epochs=cfg.get("ae_epochs", 100),
                 )
                 ae_is, kmeans = extract_regime_features(
-                    ae, X_is, n_clusters=cfg.get("ae_clusters", 4),
+                    ae,
+                    X_is,
+                    n_clusters=cfg.get("ae_clusters", 4),
                 )
                 ae_oos, _ = extract_regime_features(
-                    ae, X_oos, n_clusters=cfg.get("ae_clusters", 4),
+                    ae,
+                    X_oos,
+                    n_clusters=cfg.get("ae_clusters", 4),
                     kmeans_model=kmeans,
                 )
                 X_is_aug = np.hstack([X_is, ae_is])
@@ -415,11 +436,14 @@ def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
 
         elif strategy_type == "lstm_e2e":
             from research.ml.lstm_classifier import (
-                predict_lstm_classifier, train_lstm_classifier,
+                predict_lstm_classifier,
+                train_lstm_classifier,
             )
+
             y_is = best_y[is_idx]
             model = train_lstm_classifier(
-                X_is, y_is,
+                X_is,
+                y_is,
                 lookback=cfg.get("lookback", 20),
                 hidden_dim=cfg.get("lstm_hidden", 32),
                 epochs=cfg.get("lstm_epochs", 50),
@@ -455,16 +479,15 @@ def run_ml_wfo(instrument: str, cfg: dict, return_raw: bool = False) -> dict:
         return dict(EMPTY_RESULT)
 
     stitched = pd.concat(all_oos_rets).sort_index()
-    std = float(stitched.std())
-    oos_sharpe = float(stitched.mean() / std * np.sqrt(bars_yr)) if std > 1e-10 else 0.0
+    # Shared Sharpe helper — no nz-filter bias, explicit periods_per_year.
+    oos_sharpe = _sharpe_from_rets(stitched, ann_factor=bars_yr)
 
     eq = (1 + stitched).cumprod()
     max_dd = float(((eq - eq.cummax()) / eq.cummax()).min())
 
     if all_is_rets:
         is_stitched = pd.concat(all_is_rets).sort_index()
-        is_std = float(is_stitched.std())
-        is_sharpe = float(is_stitched.mean() / is_std * np.sqrt(bars_yr)) if is_std > 1e-10 else 0.0
+        is_sharpe = _sharpe_from_rets(is_stitched, ann_factor=bars_yr)
     else:
         is_sharpe = 0.0
 
@@ -498,7 +521,8 @@ def run_mean_reversion_wfo(instrument: str, cfg: dict, return_raw: bool = False)
         load_h1,
     )
     from research.mean_reversion.run_confluence_regime_wfo import (
-        TIER_GRIDS, TIER_SIZES, run_mr_wfo,
+        TIER_GRIDS,
+        run_mr_wfo,
     )
 
     tf = cfg.get("timeframe", "H1")
@@ -531,8 +555,12 @@ def run_mean_reversion_wfo(instrument: str, cfg: dict, return_raw: bool = False)
     oos_bars = cfg.get("oos_bars", 7500)
 
     r = run_mr_wfo(
-        close, deviation, regime_mask, tiers_pct,
-        is_bars=is_bars, oos_bars=oos_bars,
+        close,
+        deviation,
+        regime_mask,
+        tiers_pct,
+        is_bars=is_bars,
+        oos_bars=oos_bars,
         spread_bps=cfg.get("spread_bps", 2.0),
         slippage_bps=cfg.get("slippage_bps", 1.0),
     )
@@ -600,10 +628,9 @@ def run_trend_following_wfo(instrument: str, cfg: dict) -> dict:
     oos_days = cfg.get("oos_days", 126)
 
     # Drop warmup period (need slow_ma_period bars)
-    df_valid = df.iloc[slow_ma_period + 1:]
+    df_valid = df.iloc[slow_ma_period + 1 :]
 
-    return generic_rolling_wfo(build_returns, df_valid, cfg,
-                               is_days=is_days, oos_days=oos_days)
+    return generic_rolling_wfo(build_returns, df_valid, cfg, is_days=is_days, oos_days=oos_days)
 
 
 # -- 4. Cross-Asset Momentum (bond -> equity/gold) ----------------------------
@@ -620,7 +647,8 @@ def run_cross_asset_wfo(instrument: str, cfg: dict, return_raw: bool = False) ->
     target_close = load_daily(target_sym)
 
     r = run_bond_wfo(
-        bond_close, target_close,
+        bond_close,
+        target_close,
         lookback=cfg.get("lookback", 20),
         hold_days=cfg.get("hold_days", 20),
         threshold=cfg.get("threshold", 0.50),
@@ -661,12 +689,15 @@ def run_cross_asset_wfo(instrument: str, cfg: dict, return_raw: bool = False) ->
 def run_gold_macro_wfo(instrument: str, cfg: dict) -> dict:
     """Gold macro composite signal with rolling WFO."""
     from research.gold_macro.run_backtest import (
-        build_composite_signal, load_data,
+        build_composite_signal,
+        load_data,
     )
 
     data = load_data()
     sig_df = build_composite_signal(
-        data["GLD"], data["TIP"], data["TLT"],
+        data["GLD"],
+        data["TIP"],
+        data["TLT"],
         _load_daily("DXY") if "DXY" not in data else data["DXY"],
         real_rate_window=cfg.get("real_rate_window", 20),
         dollar_window=cfg.get("dollar_window", 20),
@@ -693,8 +724,7 @@ def run_gold_macro_wfo(instrument: str, cfg: dict) -> dict:
     is_days = cfg.get("is_days", 504)
     oos_days = cfg.get("oos_days", 126)
 
-    return generic_rolling_wfo(build_returns, sig_df, cfg,
-                               is_days=is_days, oos_days=oos_days)
+    return generic_rolling_wfo(build_returns, sig_df, cfg, is_days=is_days, oos_days=oos_days)
 
 
 # -- 6. FX Carry (carry + trend + VIX filter) ---------------------------------
@@ -703,7 +733,11 @@ def run_gold_macro_wfo(instrument: str, cfg: dict) -> dict:
 def run_fx_carry_wfo(instrument: str, cfg: dict) -> dict:
     """FX carry strategy with rolling WFO."""
     from research.fx_carry.run_backtest import (
-        build_signal, load_data as load_fx_data, load_vix,
+        build_signal,
+        load_vix,
+    )
+    from research.fx_carry.run_backtest import (
+        load_data as load_fx_data,
     )
 
     df = load_fx_data(instrument)
@@ -720,10 +754,21 @@ def run_fx_carry_wfo(instrument: str, cfg: dict) -> dict:
     signal = sig_df["signal"].fillna(0)
     cost_bps = cfg.get("spread_bps", 3.0) + cfg.get("slippage_bps", 1.0)
 
-    # Vol targeting
+    # Vol targeting. Daily bars -> periods_per_year=252. Route through the
+    # shared ``ewm_vol`` so the same math is used in every backtest and live.
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import ewm_vol as _ewm_vol
+
     vol_target = cfg.get("vol_target_pct", 0.08)
-    ewma_var = daily_ret.ewm(span=20, adjust=False).var()
-    realized_vol = np.sqrt(ewma_var.clip(lower=1e-8) * 252)
+    realized_vol = (
+        _ewm_vol(
+            daily_ret,
+            lam=(20 - 1) / (20 + 1),  # span=20 -> RiskMetrics lambda
+            periods_per_year=_BPY["D"],
+        )
+        .clip(lower=1e-4)
+        .fillna(1.0)
+    )
     vol_scale = (vol_target / realized_vol).clip(upper=1.5)
 
     # VIX halving
@@ -751,8 +796,7 @@ def run_fx_carry_wfo(instrument: str, cfg: dict) -> dict:
     is_days = cfg.get("is_days", 504)
     oos_days = cfg.get("oos_days", 126)
 
-    return generic_rolling_wfo(build_returns, sig_df, cfg,
-                               is_days=is_days, oos_days=oos_days)
+    return generic_rolling_wfo(build_returns, sig_df, cfg, is_days=is_days, oos_days=oos_days)
 
 
 # -- 7. Pairs Trading (spread mean reversion) ---------------------------------
@@ -776,7 +820,8 @@ def run_pairs_trading_wfo(instrument: str, cfg: dict) -> dict:
     entry_z = cfg.get("entry_z", 2.0)
     exit_z = cfg.get("exit_z", 0.5)
     max_z = cfg.get("max_z", 4.0)
-    refit_window = cfg.get("refit_window", 126)
+    # refit_window reserved for future walk-forward beta refit plumbing.
+    cfg.get("refit_window", 126)
     is_days = cfg.get("is_days", 504)
     oos_days = cfg.get("oos_days", 126)
     n = len(common)
@@ -795,11 +840,12 @@ def run_pairs_trading_wfo(instrument: str, cfg: dict) -> dict:
 
         a_is = close_a.iloc[is_start:oos_start]
         b_is = close_b.iloc[is_start:oos_start]
-        a_oos = close_a.iloc[oos_start:oos_start + oos_days]
-        b_oos = close_b.iloc[oos_start:oos_start + oos_days]
+        a_oos = close_a.iloc[oos_start : oos_start + oos_days]
+        b_oos = close_b.iloc[oos_start : oos_start + oos_days]
 
         # IS: estimate beta and spread stats
         from numpy.polynomial.polynomial import polyfit
+
         beta = float(polyfit(b_is.values, a_is.values, 1)[1])
         spread_is = a_is.values - beta * b_is.values
         mu = float(np.mean(spread_is))
@@ -815,24 +861,24 @@ def run_pairs_trading_wfo(instrument: str, cfg: dict) -> dict:
         # Position logic
         pos = np.zeros(len(z_oos))
         for i in range(1, len(z_oos)):
-            if pos[i-1] == 0:
+            if pos[i - 1] == 0:
                 if z_oos[i] > entry_z:
                     pos[i] = -1.0  # short spread
                 elif z_oos[i] < -entry_z:
-                    pos[i] = 1.0   # long spread
-            elif pos[i-1] > 0:  # long spread
+                    pos[i] = 1.0  # long spread
+            elif pos[i - 1] > 0:  # long spread
                 if z_oos[i] > -exit_z or abs(z_oos[i]) > max_z:
                     pos[i] = 0.0
                 else:
-                    pos[i] = pos[i-1]
-            elif pos[i-1] < 0:  # short spread
+                    pos[i] = pos[i - 1]
+            elif pos[i - 1] < 0:  # short spread
                 if z_oos[i] < exit_z or abs(z_oos[i]) > max_z:
                     pos[i] = 0.0
                 else:
-                    pos[i] = pos[i-1]
+                    pos[i] = pos[i - 1]
 
         # Returns: use pct_change to preserve array length (no off-by-one)
-        oos_close = close_a.iloc[oos_start:oos_start + oos_days]
+        oos_close = close_a.iloc[oos_start : oos_start + oos_days]
         target_ret_oos = oos_close.pct_change().fillna(0).values
         oos_rets = pos * target_ret_oos
 
@@ -966,7 +1012,7 @@ def main():
     try:
         cfg = load_experiment()
     except Exception as e:
-        print(f"SCORE: -99.0")
+        print("SCORE: -99.0")
         print(f"ERROR: Failed to load experiment.py: {e}")
         return
 
@@ -978,7 +1024,7 @@ def main():
     # Get the runner
     runner = STRATEGY_REGISTRY.get(strategy_type)
     if runner is None:
-        print(f"SCORE: -99.0")
+        print("SCORE: -99.0")
         print(f"ERROR: Unknown strategy type: {strategy_type}")
         return
 
@@ -987,7 +1033,7 @@ def main():
         try:
             elapsed = time.time() - t0
             if elapsed > args.timeout:
-                print(f"SCORE: -99.0")
+                print("SCORE: -99.0")
                 print(f"ERROR: Timeout after {elapsed:.0f}s")
                 return
 
@@ -1013,8 +1059,13 @@ def main():
     total_folds = sum(r["n_folds"] for r in all_results)
 
     score = composite_score(
-        avg_sharpe, worst_dd, avg_parity, avg_pos,
-        worst_fold, total_trades, total_folds,
+        avg_sharpe,
+        worst_dd,
+        avg_parity,
+        avg_pos,
+        worst_fold,
+        total_trades,
+        total_folds,
     )
 
     elapsed = time.time() - t0
@@ -1043,6 +1094,7 @@ def main():
     # Append to results.tsv
     try:
         import hashlib
+
         cfg_str = str(cfg)
         cfg_hash = hashlib.md5(cfg_str.encode()).hexdigest()[:8]
         desc = cfg.get("description", f"{strategy_type} on {','.join(instruments)}")

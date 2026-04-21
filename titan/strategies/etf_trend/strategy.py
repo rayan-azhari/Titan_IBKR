@@ -41,6 +41,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.trading.strategy import Strategy
 
+from titan.research.metrics import BARS_PER_YEAR, annualize_vol
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
 
 ET = ZoneInfo("America/New_York")
@@ -183,10 +184,11 @@ class ETFTrendStrategy(Strategy):
         if bar.bar_type != self.bt_1d:
             return
 
-        # Portfolio risk manager: update equity + check halt
+        # Portfolio risk manager (explicit bar timestamp so daily vol math
+        # uses the right calendar day rather than wall-clock at bar-replay).
         equity = self._account_equity()
         if equity > 0:
-            portfolio_risk_manager.update(self._prm_id, equity)
+            portfolio_risk_manager.update(self._prm_id, equity, ts=bar.ts_event)
         if portfolio_risk_manager.halt_all:
             self.log.warning("Portfolio kill switch active -- flattening.")
             self.close_all_positions(self.instrument_id)
@@ -376,7 +378,8 @@ class ETFTrendStrategy(Strategy):
         if len(closes) < 22:
             return 1.0
         rets = pd.Series(closes[-21:]).pct_change().dropna()
-        realized_vol = float(rets.std() * np.sqrt(252))
+        # Daily bars -> 252 per year. Route through shared metrics.
+        realized_vol = annualize_vol(float(rets.std()), periods_per_year=BARS_PER_YEAR["D"])
         if realized_vol <= 1e-9:
             return 1.0
         return float(np.clip(self.vol_target / realized_vol, 0.5, self.max_leverage))
@@ -413,6 +416,8 @@ class ETFTrendStrategy(Strategy):
         return Quantity.from_int(units) if units > 0 else None
 
     def _account_equity(self) -> float:
+        from titan.risk.strategy_equity import get_base_balance as _gb
+
         accounts = self.cache.accounts()
         if not accounts:
             return 0.0
@@ -420,7 +425,8 @@ class ETFTrendStrategy(Strategy):
         currencies = list(acct.balances().keys())
         if not currencies:
             return 0.0
-        return float(acct.balance_total(currencies[0]).as_double())
+        equity = _gb(acct, "USD")
+        return float(equity) if equity is not None else 0.0
 
     # ── Indicator helpers ──────────────────────────────────────────────────
 
@@ -484,7 +490,7 @@ class ETFTrendStrategy(Strategy):
 
         if "rv_20" in self.decel_signals and n >= 21:
             rets = np.diff(closes[-21:]) / np.maximum(closes[-21:-1], 1e-8)
-            rv = float(np.std(rets) * np.sqrt(252))
+            rv = annualize_vol(float(np.std(rets)), periods_per_year=BARS_PER_YEAR["D"])
             signals.append(float(-np.tanh(max(rv - 0.15, 0) * 5)))
 
         if "adx_14" in self.decel_signals:

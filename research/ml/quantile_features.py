@@ -95,18 +95,19 @@ class QuantileFeatureExtractor:
 
         for alpha in self.QUANTILES:
             self.models[alpha] = _fit_quantile_model(
-                X_clean, y_clean, alpha,
-                self.n_estimators, self.max_depth, self.learning_rate,
+                X_clean,
+                y_clean,
+                alpha,
+                self.n_estimators,
+                self.max_depth,
+                self.learning_rate,
             )
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Predict quantiles. Returns (n_samples, 3) array [p10, p50, p90]."""
         X_clean = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
-        preds = np.column_stack([
-            self.models[alpha].predict(X_clean)
-            for alpha in self.QUANTILES
-        ])
+        preds = np.column_stack([self.models[alpha].predict(X_clean) for alpha in self.QUANTILES])
         return preds
 
     def transform(self, X: np.ndarray) -> pd.DataFrame:

@@ -24,9 +24,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from dotenv import load_dotenv
+
 load_dotenv(PROJECT_ROOT / ".env")
 
 import os
+
 import pandas as pd
 from ibapi.client import EClient
 from ibapi.contract import Contract
@@ -54,14 +56,16 @@ class IBKRApp(EWrapper, EClient):
         self.connected_event.set()
 
     def historicalData(self, reqId, bar):
-        self.data_store.append({
-            "timestamp": bar.date,
-            "open": float(bar.open),
-            "high": float(bar.high),
-            "low": float(bar.low),
-            "close": float(bar.close),
-            "volume": float(bar.volume),
-        })
+        self.data_store.append(
+            {
+                "timestamp": bar.date,
+                "open": float(bar.open),
+                "high": float(bar.high),
+                "low": float(bar.low),
+                "close": float(bar.close),
+                "volume": float(bar.volume),
+            }
+        )
 
     def historicalDataEnd(self, reqId, start, end):
         self.req_complete = True
@@ -118,6 +122,7 @@ def parse_bars(raw: list) -> pd.DataFrame:
     if not raw:
         return pd.DataFrame()
     df = pd.DataFrame(raw)
+
     # IBKR H1 format: "20250408 17:15:00 US/Eastern"  (may have tz suffix)
     def _parse(ts: str) -> datetime:
         ts = ts.strip()
@@ -151,7 +156,12 @@ def main():
     parser.add_argument("--pair", default="AUD_USD", help="FX pair BASE_QUOTE (e.g. AUD_USD)")
     parser.add_argument("--years", type=int, default=15, help="Years of history to fetch")
     parser.add_argument("--host", default=os.getenv("IBKR_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=7497, help="IBKR port (7497=TWS Paper, 4002=Gateway)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=7497,
+        help="IBKR port (7497=TWS Paper, 4002=Gateway)",
+    )
     parser.add_argument("--client-id", type=int, default=30)
     args = parser.parse_args()
 
@@ -188,14 +198,15 @@ def main():
         end_str = end_ts.strftime("%Y%m%d-%H:%M:%S")  # IBKR UTC format: yyyymmdd-hh:mm:ss
         req_id = 200 + chunk
 
-        print(f"  Chunk {chunk+1}/{n_chunks} ending {end_str[:10]} ...", end=" ", flush=True)
+        print(f"  Chunk {chunk + 1}/{n_chunks} ending {end_str[:10]} ...", end=" ", flush=True)
         raw = fetch_chunk(app, req_id, contract, end_str)
 
         if raw:
             df_chunk = parse_bars(raw)
             if not df_chunk.empty:
                 all_frames.append(df_chunk)
-                print(f"{len(df_chunk)} bars  [{df_chunk.index[0].date()} - {df_chunk.index[-1].date()}]")
+                first, last = df_chunk.index[0].date(), df_chunk.index[-1].date()
+                print(f"{len(df_chunk)} bars  [{first} - {last}]")
             else:
                 print("parse error")
         else:
@@ -216,7 +227,7 @@ def main():
     if output_path.exists():
         existing = pd.read_parquet(output_path)
         if not isinstance(existing.index, pd.DatetimeIndex):
-            print(f"  Existing file has non-datetime index — replacing entirely")
+            print("  Existing file has non-datetime index — replacing entirely")
             merged = new_df
         else:
             if existing.index.tz is None:

@@ -34,14 +34,11 @@ from research.ml.run_52signal_classifier import (  # noqa: E402
     IS_RATIO_BARS,
     OOS_RATIO_BARS,
     SIGNAL_THRESHOLD,
-    TARGET_INSTRUMENTS,
-    XGB_PARAMS,
     _pred_to_position,
     compute_signal_sharpe,
     walk_forward_splits,
 )
 from research.ml.run_phase0_validation import (  # noqa: E402
-    LABEL_SWEEP,
     _prepare_data,
     _wfo_loop,
 )
@@ -93,8 +90,12 @@ def test_lstm_classifier(instrument: str) -> dict:
         y_is = best_y[is_idx]
 
         model = train_lstm_classifier(
-            X_is, y_is, lookback=LOOKBACK, hidden_dim=HIDDEN_DIM,
-            epochs=50, patience=7,
+            X_is,
+            y_is,
+            lookback=LOOKBACK,
+            hidden_dim=HIDDEN_DIM,
+            epochs=50,
+            patience=7,
         )
         if model is None:
             continue
@@ -114,10 +115,14 @@ def test_lstm_classifier(instrument: str) -> dict:
     delta = lstm_stats["sharpe"] - base["sharpe"]
 
     return {
-        "phase": "1A", "layer": "LSTM-E2E",
-        "instrument": instrument, "tf": tf,
-        "base_sharpe": base["sharpe"], "aug_sharpe": lstm_stats["sharpe"],
-        "delta": round(delta, 3), "pass": delta >= DELTA_THRESHOLD,
+        "phase": "1A",
+        "layer": "LSTM-E2E",
+        "instrument": instrument,
+        "tf": tf,
+        "base_sharpe": base["sharpe"],
+        "aug_sharpe": lstm_stats["sharpe"],
+        "delta": round(delta, 3),
+        "pass": delta >= DELTA_THRESHOLD,
         "n_folds": lstm_stats["n_folds"],
         "positive_pct": lstm_stats["positive_pct"],
     }
@@ -151,9 +156,7 @@ def test_stacking(instrument: str) -> dict:
         is_mask = np.zeros(len(all_idx), dtype=bool)
         is_mask[is_idx] = True
 
-        best_y, best_entries = _pick_best_labels_with_entries(
-            label_cache, all_idx, is_mask
-        )
+        best_y, best_entries = _pick_best_labels_with_entries(label_cache, all_idx, is_mask)
         if best_y is None:
             continue
 
@@ -171,8 +174,10 @@ def test_stacking(instrument: str) -> dict:
         y_is = best_y[is_idx]
 
         ensemble = StackedEnsemble(
-            lstm_hidden=HIDDEN_DIM, lstm_lookback=LOOKBACK,
-            lstm_epochs=30, n_nested_folds=3,
+            lstm_hidden=HIDDEN_DIM,
+            lstm_lookback=LOOKBACK,
+            lstm_epochs=30,
+            n_nested_folds=3,
         )
         try:
             ensemble.fit(X_is, y_is, entry_mask_is)
@@ -198,10 +203,14 @@ def test_stacking(instrument: str) -> dict:
     delta = stack_stats["sharpe"] - base["sharpe"]
 
     result = {
-        "phase": "1B", "layer": "Stacking",
-        "instrument": instrument, "tf": tf,
-        "base_sharpe": base["sharpe"], "aug_sharpe": stack_stats["sharpe"],
-        "delta": round(delta, 3), "pass": delta >= DELTA_THRESHOLD,
+        "phase": "1B",
+        "layer": "Stacking",
+        "instrument": instrument,
+        "tf": tf,
+        "base_sharpe": base["sharpe"],
+        "aug_sharpe": stack_stats["sharpe"],
+        "delta": round(delta, 3),
+        "pass": delta >= DELTA_THRESHOLD,
         "n_folds": stack_stats["n_folds"],
         "positive_pct": stack_stats["positive_pct"],
     }
@@ -249,8 +258,12 @@ def test_probabilistic(instrument: str) -> dict:
         y_ret_is = ret_clean.iloc[is_idx].values
 
         model = train_probabilistic_lstm(
-            X_is, y_ret_is, lookback=LOOKBACK, hidden_dim=HIDDEN_DIM,
-            epochs=50, patience=7,
+            X_is,
+            y_ret_is,
+            lookback=LOOKBACK,
+            hidden_dim=HIDDEN_DIM,
+            epochs=50,
+            patience=7,
         )
         if model is None:
             continue
@@ -279,9 +292,12 @@ def test_probabilistic(instrument: str) -> dict:
     avg_sigma_std = float(np.mean(sigma_stds)) if sigma_stds else 0.0
 
     return {
-        "phase": "1C", "layer": "Prob-LSTM",
-        "instrument": instrument, "tf": tf,
-        "base_sharpe": base["sharpe"], "aug_sharpe": prob_stats["sharpe"],
+        "phase": "1C",
+        "layer": "Prob-LSTM",
+        "instrument": instrument,
+        "tf": tf,
+        "base_sharpe": base["sharpe"],
+        "aug_sharpe": prob_stats["sharpe"],
         "delta": round(delta, 3),
         "pass": delta >= DELTA_THRESHOLD and worst_fold > -3.0 and avg_brier < 0.25,
         "n_folds": prob_stats["n_folds"],
@@ -326,8 +342,12 @@ def test_multi_horizon(instrument: str) -> dict:
         targets_is = [t[is_idx] for t in targets]
 
         model = train_multi_horizon_lstm(
-            X_is, targets_is, lookback=LOOKBACK, hidden_dim=HIDDEN_DIM,
-            epochs=50, patience=7,
+            X_is,
+            targets_is,
+            lookback=LOOKBACK,
+            hidden_dim=HIDDEN_DIM,
+            epochs=50,
+            patience=7,
         )
         if model is None:
             continue
@@ -349,10 +369,14 @@ def test_multi_horizon(instrument: str) -> dict:
     delta = mh_stats["sharpe"] - base["sharpe"]
 
     return {
-        "phase": "1D", "layer": "MultiHz",
-        "instrument": instrument, "tf": tf,
-        "base_sharpe": base["sharpe"], "aug_sharpe": mh_stats["sharpe"],
-        "delta": round(delta, 3), "pass": delta >= DELTA_THRESHOLD,
+        "phase": "1D",
+        "layer": "MultiHz",
+        "instrument": instrument,
+        "tf": tf,
+        "base_sharpe": base["sharpe"],
+        "aug_sharpe": mh_stats["sharpe"],
+        "delta": round(delta, 3),
+        "pass": delta >= DELTA_THRESHOLD,
         "n_folds": mh_stats["n_folds"],
         "positive_pct": mh_stats["positive_pct"],
     }
@@ -420,11 +444,16 @@ def _stitch(all_oos_rets, fold_sharpes, bars_yr):
 
 def _empty_result(phase, layer, instrument, tf):
     return {
-        "phase": phase, "layer": layer,
-        "instrument": instrument, "tf": tf,
-        "base_sharpe": 0.0, "aug_sharpe": 0.0,
-        "delta": 0.0, "pass": False,
-        "n_folds": 0, "positive_pct": 0.0,
+        "phase": phase,
+        "layer": layer,
+        "instrument": instrument,
+        "tf": tf,
+        "base_sharpe": 0.0,
+        "aug_sharpe": 0.0,
+        "delta": 0.0,
+        "pass": False,
+        "n_folds": 0,
+        "positive_pct": 0.0,
     }
 
 
@@ -488,7 +517,9 @@ def main() -> None:
         if phase_results:
             n_pass = sum(1 for r in phase_results if r["pass"])
             avg_delta = np.mean([r["delta"] for r in phase_results])
-            print(f"\n  Phase {phase} gate: {n_pass}/{len(phase_results)} pass, avg delta={avg_delta:+.3f}")
+            print(
+                f"\n  Phase {phase} gate: {n_pass}/{len(phase_results)} pass, avg delta={avg_delta:+.3f}"
+            )
 
             if phase == "1A" and n_pass == 0 and avg_delta <= 0:
                 print("  STOP: LSTM shows no signal. Skipping 1B-1D.")
@@ -515,7 +546,7 @@ def main() -> None:
         )
 
     # Per-phase verdict
-    print(f"\n  Per-phase verdicts:")
+    print("\n  Per-phase verdicts:")
     for phase in phases:
         if phase not in PHASE_MAP:
             continue

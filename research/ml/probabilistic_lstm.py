@@ -155,8 +155,8 @@ def predict_probabilistic(
     n_total = X.shape[0]
     mu_full = np.zeros(n_total, dtype=np.float64)
     sigma_full = np.ones(n_total, dtype=np.float64)
-    mu_full[lookback - 1:] = mu_np
-    sigma_full[lookback - 1:] = np.clip(sigma_np, 1e-6, None)
+    mu_full[lookback - 1 :] = mu_np
+    sigma_full[lookback - 1 :] = np.clip(sigma_np, 1e-6, None)
 
     return mu_full, sigma_full
 
@@ -188,8 +188,8 @@ def probabilistic_position(
         p_short = norm.cdf(0, loc=m, scale=s)
 
         # Kelly: f* = mu / sigma^2
-        kelly_long = max(0.0, m / (s ** 2)) * kelly_fraction
-        kelly_short = max(0.0, -m / (s ** 2)) * kelly_fraction
+        kelly_long = max(0.0, m / (s**2)) * kelly_fraction
+        kelly_short = max(0.0, -m / (s**2)) * kelly_fraction
 
         if p_long > min_prob and p_long > p_short:
             positions[i] = min(kelly_long, 1.0)

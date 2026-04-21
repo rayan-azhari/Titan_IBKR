@@ -239,15 +239,11 @@ class MRFXStrategy(Strategy):
             }
         )
 
-        # Portfolio risk manager: update equity every ~12 bars (hourly)
+        # Portfolio risk manager (deterministic USD + explicit bar ts; hourly cadence)
         if len(self.history) % 12 == 0:
-            accounts = self.cache.accounts()
-            if accounts:
-                acct = accounts[0]
-                ccys = list(acct.balances().keys())
-                if ccys:
-                    equity = float(acct.balance_total(ccys[0]).as_double())
-                    portfolio_risk_manager.update(self._prm_id, equity)
+            from titan.risk.strategy_equity import report_equity_and_check as _rec
+
+            _rec(self, self._prm_id, bar)
         if portfolio_risk_manager.halt_all:
             self.log.warning("Portfolio kill switch active -- flattening.")
             self._flatten_all()
@@ -364,11 +360,11 @@ class MRFXStrategy(Strategy):
         accounts = self.cache.accounts()
         if not accounts:
             return
-        acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
+        from titan.risk.strategy_equity import get_base_balance as _gb
+
+        equity = _gb(accounts[0], "USD")
+        if equity is None or equity <= 0:
             return
-        equity = float(acct.balance_total(ccys[0]).as_double())
 
         # Size: risk_pct * equity / (ATR * leverage_cap), scaled by tier weight
         if self._latest_atr <= 0:

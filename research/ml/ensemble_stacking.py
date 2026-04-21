@@ -21,7 +21,6 @@ from research.ml.lstm_classifier import (
     predict_lstm_classifier,
     train_lstm_classifier,
 )
-from research.ml.lstm_features import build_sequences
 from research.ml.run_52signal_classifier import XGB_PARAMS
 
 
@@ -52,15 +51,18 @@ class StackedEnsemble:
         """Train sequence model (LSTM or TCN) based on model_type."""
         if self.model_type == "tcn":
             from research.ml.tcn_classifier import train_tcn_classifier
+
             return train_tcn_classifier(
-                X, y,
+                X,
+                y,
                 lookback=self.lstm_lookback,
                 hidden_dim=self.lstm_hidden,
                 epochs=self.lstm_epochs,
                 patience=patience,
             )
         return train_lstm_classifier(
-            X, y,
+            X,
+            y,
             lookback=self.lstm_lookback,
             hidden_dim=self.lstm_hidden,
             epochs=self.lstm_epochs,
@@ -71,6 +73,7 @@ class StackedEnsemble:
         """Predict with sequence model (LSTM or TCN)."""
         if self.model_type == "tcn":
             from research.ml.tcn_classifier import predict_tcn_classifier
+
             return predict_tcn_classifier(model, X, self.lstm_lookback)
         return predict_lstm_classifier(model, X, self.lstm_lookback)
 
@@ -114,9 +117,7 @@ class StackedEnsemble:
             neg = len(y_xgb_train) - pos
             spw = neg / max(pos, 1)
 
-            xgb = XGBClassifier(
-                **self.xgb_params, scale_pos_weight=spw, eval_metric="logloss"
-            )
+            xgb = XGBClassifier(**self.xgb_params, scale_pos_weight=spw, eval_metric="logloss")
             xgb.fit(X_xgb_train, y_xgb_train)
             oof_xgb[val_start:val_end] = xgb.predict_proba(X_clean[val_start:val_end])[:, 1]
 
@@ -127,7 +128,7 @@ class StackedEnsemble:
             if seq_model is not None:
                 oof_lstm[val_start:val_end] = self._predict_seq_model(
                     seq_model, X_clean[val_start:val_end]
-                )[:val_end - val_start]
+                )[: val_end - val_start]
 
         # Fill any remaining NaN with 0.5 (neutral)
         oof_xgb = np.nan_to_num(oof_xgb, nan=0.5)
@@ -170,9 +171,7 @@ class StackedEnsemble:
         p_xgb = self.xgb_model.predict_proba(X_clean)[:, 1]
 
         if self.lstm_model is not None:
-            p_lstm = self._predict_seq_model(
-                self.lstm_model, X_clean
-            )[:len(X)]
+            p_lstm = self._predict_seq_model(self.lstm_model, X_clean)[: len(X)]
         else:
             p_lstm = np.full(len(X), 0.5)
 

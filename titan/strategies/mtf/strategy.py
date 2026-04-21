@@ -213,15 +213,11 @@ class MTFConfluenceStrategy(Strategy):
         if len(self.history[tf]) > self.config.warmup_bars + 100:
             self.history[tf] = self.history[tf][-self.config.warmup_bars :]
 
-        # Portfolio risk manager: update equity + check halt
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # Portfolio risk manager (deterministic USD + explicit bar ts)
+        from titan.risk.strategy_equity import report_equity_and_check as _rec
+
+        _, halted = _rec(self, self._prm_id, bar)
+        if halted:
             self.log.warning("Portfolio kill switch active -- flattening.")
             for instrument_id in self.bar_type_map.values():
                 self.close_all_positions(self.instrument_id)
@@ -407,7 +403,10 @@ class MTFConfluenceStrategy(Strategy):
         if not currencies:
             self.log.error("Account has no balances. Cannot size position.")
             return
-        acct_ccy = currencies[0]
+        from nautilus_trader.model.currency import Currency as _C
+
+        usd = _C.from_str("USD")
+        acct_ccy = usd if usd in currencies else currencies[0]
         equity_raw = float(account.balance_total(acct_ccy).as_double())
 
         # Convert to USD for consistent sizing; fall back to raw balance with warning.
