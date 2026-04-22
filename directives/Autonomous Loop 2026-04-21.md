@@ -153,10 +153,26 @@ Total 100 %. Three of the nine positions are cross-bond signals
 the previous 5-set — more bond-specific alpha, less bond→equity
 concentration.
 
-**Correlation check required before deployment**: run
-`scripts/rerank/optimize_candidate_portfolio.py` with this candidate
-set. Three TIP/LQD/HYG/TLT → HYG signals likely have some common
-factor; need to verify pairwise |ρ| < 0.5.
+**Correlation check — done, findings below**. The v3 optimizer
+([scripts/rerank/optimize_v3_portfolio.py](../scripts/rerank/optimize_v3_portfolio.py))
+ran on this candidate set and revealed the three X→HYG signals **do**
+share a common credit factor, with pairwise correlations well above
+the |ρ| < 0.5 threshold:
+
+| | tip_hyg_lb60 | lqd_hyg_lb10 | tlt_hyg_lb20 |
+|---|---:|---:|---:|
+| tip_hyg_lb60 | +1.000 | **+0.666** | **+0.640** |
+| lqd_hyg_lb10 | +0.666 | +1.000 | **+0.633** |
+| tlt_hyg_lb20 | +0.640 | +0.633 | +1.000 |
+
+Holding all three in the portfolio triple-counts the credit exposure.
+**TIP→HYG lb=60 is the single best representative** (highest full-
+history Sharpe +0.913, highest CI_lo +0.432, lowest DD -10.1%). The
+final deployable v3 portfolio drops LQD→HYG and TLT→HYG; their edge is
+effectively captured by TIP→HYG alone.
+
+Post-dedup 7-strategy realized OOS on the common 2016-2025 window:
+Sharpe **+1.791**, CI (+0.993, +2.642), Max DD **-4.6 %**.
 
 ---
 

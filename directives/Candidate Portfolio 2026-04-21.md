@@ -5,6 +5,20 @@
 **Driver**: [scripts/rerank/optimize_candidate_portfolio.py](../scripts/rerank/optimize_candidate_portfolio.py)
 **Raw output**: [.tmp/reports/rerank_2026_04_21/candidate_portfolio.md](../.tmp/reports/rerank_2026_04_21/candidate_portfolio.md)
 
+> [!NOTE]
+> **Superseded by the autonomous loop v3 analysis** — the subsequent run
+> in [Autonomous Loop 2026-04-21.md](./Autonomous%20Loop%202026-04-21.md)
+> and its portfolio optimizer
+> ([scripts/rerank/optimize_v3_portfolio.py](../scripts/rerank/optimize_v3_portfolio.py))
+> discovered a cross-bond signal family (TIP→HYG, LQD→HYG, TLT→HYG)
+> with lower drawdowns than the bond→equity set in this doc. The v3
+> correlation check then revealed those three cross-bond signals share
+> a **common credit factor with 0.63-0.67 pairwise correlation** on
+> the common 2016-2025 OOS window — holding all three would double-count
+> the credit exposure. TIP→HYG is the single best representative
+> (highest Sharpe +0.913, highest CI_lo +0.432, lowest DD -10.1%). Use
+> the v3 recommendation for live deployment decisions.
+
 Pulls `stitched_returns` from each candidate's WFO run on the corrected
 harness, aligns on the common date range, and evaluates correlation +
 portfolio metrics under two allocation schemes.

@@ -987,14 +987,15 @@ uv run pytest tests/ -v
 | Phase 8 | sp0.5 → beats IWB | **4.59** |
 | Phase 10 | is32k oos8k → DD 23%→9.6% | **5.14** |
 
-### 15.4 Champion Configuration
+### 15.4 Champion Configuration (post-audit, April 2026 remediation)
 
 ```python
 {
     "strategy": "mean_reversion",
     "instruments": ["AUD_JPY"],
     "timeframe": "H1",
-    "vwap_anchor": 46,                    # ~2 trading days
+    "vwap_anchor": 24,                    # ~1 trading day. Post-audit: 24 beats 46 on the
+                                          # corrected harness (was 46 pre-audit; 4th-of-6).
     "regime_filter": "conf_donchian_pos_20",
     "tier_grid": "conservative",
     "spread_bps": 0.5,                    # 0.5 pip — realistic at major FX brokers

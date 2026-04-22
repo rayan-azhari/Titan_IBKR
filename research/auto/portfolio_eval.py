@@ -68,7 +68,9 @@ STRATEGIES = [
             strategy="mean_reversion",
             instruments=["AUD_JPY"],
             timeframe="H1",
-            vwap_anchor=46,
+            # Post-audit optimum: anchor=24 beats the pre-fix 46 on the
+            # corrected harness.
+            vwap_anchor=24,
             regime_filter="conf_donchian_pos_20",
             tier_grid="conservative",
             spread_bps=0.5,

@@ -9,19 +9,24 @@ to reduce single-strategy risk and improve capital efficiency. As of April 21, 2
 layer is the rewritten `PortfolioRiskManager` + `PortfolioAllocator` + per-strategy
 `StrategyEquityTracker`.
 
-## Champion Portfolio (paper, April 2026)
+## Champion Portfolio (paper, April 2026 — post-remediation)
 
 Runner: `uv run python scripts/run_portfolio.py --strategies champion_portfolio`
 
-| Strategy | Class | Instruments | WFO Sharpe |
-|---|---|---|---|
-| MR AUD/JPY | `MRAUDJPYStrategy` (vwap_anchor=46) | AUD/JPY.IDEALPRO H1 | +2.10 OOS |
-| MR AUD/USD | `MRAUDJPYStrategy` (vwap_anchor=36) | AUD/USD.IDEALPRO H1 | +2.00 research |
-| Bond-Equity IHYU→CSPX | `BondGoldStrategy` reused | CSPX.LSEETF D | +1.64 OOS (25 folds 2013-2026) |
+All Sharpe numbers below are the **post-audit** WFO results on the
+corrected harness (`titan.research.metrics` module, sanctuary window).
+Pre-audit values are struck through so the magnitude of the revision
+stays visible.
 
-All three use the full `StrategyEquityTracker` integration -- they report real per-strategy
+| Strategy | Class | Instruments | WFO Sharpe (post-audit) |
+|---|---|---|---|
+| MR AUD/JPY | `MRAUDJPYStrategy` (vwap_anchor=24) | AUD/JPY.IDEALPRO H1 | ~~+2.10 OOS~~ **+0.910** OOS, CI (+0.478, +1.319) |
+| ~~MR AUD/USD~~ **DEPRECATED** | — | — | ~~+2.00 research~~ **+0.374** OOS, CI_lo = **-0.180** ([Deprecated Strategies](./Deprecated%20Strategies.md)) |
+| Bond-Equity IHYU→CSPX | `BondGoldStrategy` reused | CSPX.LSEETF D | ~~+1.64 OOS~~ **+0.895** OOS (HYG→IWB variant, CI (+0.396, +1.334)) |
+
+Both use the full `StrategyEquityTracker` integration -- they report real per-strategy
 equity (seed + realised P&L), not whole-account NLV. For AUD/JPY the FX unit conversion
-path (`convert_notional_to_units`) is live; for AUD/USD and CSPX the trivial USD path is used.
+path (`convert_notional_to_units`) is live; for CSPX the trivial USD path is used.
 
 ## Other Live Strategies
 
