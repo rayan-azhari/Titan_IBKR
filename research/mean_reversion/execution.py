@@ -270,8 +270,6 @@ def compute_combined_sharpe(daily_returns: pd.Series, freq: int = 252) -> float:
     Returns:
         Annualised Sharpe ratio.
     """
-    mu = daily_returns.mean()
-    sigma = daily_returns.std()
-    if sigma == 0 or np.isnan(sigma):
-        return np.nan
-    return float(mu / sigma * np.sqrt(freq))
+    from titan.research.metrics import sharpe as _sh
+
+    return float(_sh(daily_returns, periods_per_year=int(freq)))

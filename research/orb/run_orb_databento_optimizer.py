@@ -218,10 +218,14 @@ def _score(is_rets, oos_rets):
     is_n, oos_n = len(is_arr), len(oos_arr)
 
     def _sharpe(arr):
+        import pandas as _pd
+
+        from titan.research.metrics import BARS_PER_YEAR as _BPY
+        from titan.research.metrics import sharpe as _sh
+
         if len(arr) < 2:
             return 0.0
-        s = np.std(arr, ddof=1)
-        return float(np.mean(arr) / s * np.sqrt(252)) if s > 0 else 0.0
+        return float(_sh(_pd.Series(arr), periods_per_year=_BPY["D"]))
 
     def _wr(arr):
         return float(np.sum(arr > 0) / len(arr) * 100) if len(arr) > 0 else 0.0

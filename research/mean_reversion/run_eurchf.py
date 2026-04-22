@@ -215,12 +215,15 @@ def run_pipeline(
 def monte_carlo_gate(daily_returns: pd.Series, n: int = 500, pct: float = 5.0) -> dict:
     np.random.seed(42)
     vals = daily_returns.values.copy()
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
     sharpes = []
     for _ in range(n):
         np.random.shuffle(vals)
         s = pd.Series(vals)
-        mu, sd = s.mean(), s.std()
-        sharpes.append(mu / sd * np.sqrt(252) if sd > 0 else np.nan)
+        sh = float(_sh(s, periods_per_year=_BPY["D"]))
+        sharpes.append(sh if s.std() > 0 else np.nan)
     sharpes = [s for s in sharpes if not np.isnan(s)]
     p5 = float(np.percentile(sharpes, pct))
     pct_pos = float(np.mean([s > 0 for s in sharpes]))

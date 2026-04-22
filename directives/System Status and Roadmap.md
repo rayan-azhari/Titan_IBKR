@@ -1,8 +1,41 @@
 # Titan-IBKR System Status and Roadmap
 
-**Last updated:** 2026-04-05
+**Last updated:** 2026-04-21
 **Author:** Architect (Claude Code)
-**Status:** Active development, 5 live strategies, portfolio risk layer deployed, portfolio WFO framework built, multi-scale confluence research complete
+**Status:** Active development, 5+ live strategies, **portfolio-risk layer rewritten (April 21, 2026)** to use timestamped per-strategy equity + wall-clock gating + halt persistence. Champion portfolio live on paper. Multi-scale confluence + MR-FX research complete.
+
+> [!CAUTION]
+> **April 2026 quant audit remediation — revised performance numbers.**
+> All Sharpe / CAGR / DD numbers in this document dated **before the
+> April 2026 external quant audit** were computed under buggy math
+> (`sqrt(252)` applied to H1 data, same-bar look-ahead in bond-equity
+> WFO, filter-then-annualise Sharpe bias). The corrected numbers are:
+>
+> | Strategy | Pre-fix Sharpe | Post-fix Sharpe | Post-fix CI_lo |
+> |---|---:|---:|---:|
+> | MR AUD/JPY conf_donchian_pos_20 conservative | +4.64 | **+0.910** | +0.478 |
+> | MR AUD/JPY at `vwap_anchor=24` (new optimum) | — | **+0.97** | +0.47 |
+> | MR AUD/USD conf_rsi_14_dev conservative | +2.10 | **+0.374** | **-0.180** |
+> | IEF→GLD lb=60 | +1.17 | **+0.721** | +0.302 |
+> | HYG→IWB lb=10 | +1.57 | **+0.895** | +0.396 |
+>
+> * **Deprecated**: AUD/USD MR (CI_lo < 0) → see
+>   [directives/Deprecated Strategies.md](./Deprecated%20Strategies.md).
+> * **Live config change**: AUD/JPY `vwap_anchor` 46 → 24 (corrected
+>   harness shows 24 beats 46 on every metric).
+> * **New post-remediation portfolio candidates** (from re-rank and
+>   autonomous loop): TLT→QQQ lb=10 (CI_lo +0.54), TIP→HYG lb=60
+>   (CI_lo +0.43, DD -10%), LQD→HYG, TLT→HYG, ML TQQQ stacking.
+> * **Full analysis**:
+>   [Remediation Runbook April 2026.md](./Remediation%20Runbook%20April%202026.md),
+>   [Remediation Audit 2026-04-21.md](./Remediation%20Audit%202026-04-21.md),
+>   [Rerank Analysis 2026-04-21.md](./Rerank%20Analysis%202026-04-21.md),
+>   [Candidate Portfolio 2026-04-21.md](./Candidate%20Portfolio%202026-04-21.md),
+>   [Autonomous Loop 2026-04-21.md](./Autonomous%20Loop%202026-04-21.md).
+>
+> Individual line-item Sharpes below are NOT updated — use this header
+> as the source of truth; treat in-line pre-audit numbers as
+> historical only.
 
 ---
 
@@ -270,25 +303,77 @@ Data (OHLCV) -> [Feature Builder] -> 79 features -> [Regime+Pullback Labeler] ->
 
 ## 4. Portfolio Risk Management
 
-### 4.1 PortfolioRiskManager (deployed April 2026)
+### 4.1 PortfolioRiskManager (deployed April 2026, **rewritten April 21, 2026**)
 
-**File:** `titan/risk/portfolio_risk_manager.py`
+**Files:**
+- `titan/risk/portfolio_risk_manager.py` -- rewritten
+- `titan/risk/portfolio_allocator.py` -- rewritten
+- `titan/risk/strategy_equity.py` -- **NEW** per-strategy P&L tracker + deterministic currency + FX unit helper
+- `tests/test_portfolio_risk_april2026_fixes.py` -- 13 regression tests
 
-Module-level singleton shared by all live strategies. Auto-loads config from `config/risk.toml [portfolio]`.
+**Why the rewrite:** The original implementation had four structural defects that a full audit surfaced on April 21, 2026 (see `Comprehensive Audit Report.md`):
 
-**Integration pattern (all 4 live strategies wired):**
-1. `on_start()`: `portfolio_risk_manager.register_strategy(id, initial_equity)`
-2. `on_bar()`: `portfolio_risk_manager.update(id, current_equity)` + halt check
-3. Sizing: `computed_size * portfolio_risk_manager.scale_factor`
+1. Every strategy fed the PortfolioRiskManager the **whole account NLV** (`acct.balance_total(list(balances.keys())[0])`) instead of its own per-strategy equity. All strategies' equity histories were identical -> inverse-vol allocator collapsed to equal weights and correlation estimates were all ~1.0.
+2. `list(balances.keys())[0]` is **non-deterministic** for multi-currency accounts -- USD / JPY / EUR order is insertion-dependent.
+3. FX strategies did `units = notional_usd / price` where `price` was in the quote ccy (e.g. JPY-per-AUD for AUD/JPY), producing garbage unit counts.
+4. EWMA vol was recomputed on every tick with `* 252` annualisation -- fine for daily strategies, broken for mixed H1/D1 cadences.
 
-**Risk controls:**
+**New architecture:**
+
+Per-strategy equity is now tracked locally by each strategy via `StrategyEquityTracker`:
+
+```python
+# In on_start()
+self._equity_tracker = StrategyEquityTracker(
+    prm_id=self._prm_id,
+    initial_equity=self.config.initial_equity,  # Seed capital (base ccy)
+    base_ccy="USD",
+)
+portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+
+# In on_bar() -- one-line drop-in
+from titan.risk.strategy_equity import report_equity_and_check
+_, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
+if halted:
+    self._flatten()
+    return
+portfolio_allocator.tick(now=bar_ts.date())
+
+# In on_position_closed()
+self._equity_tracker.on_position_closed(
+    float(event.realized_pnl.as_double()),
+    fx_to_base=jpy_to_usd_rate if quote_ccy != "USD" else 1.0,
+)
+
+# In sizing code -- FX-aware unit conversion
+from titan.risk.strategy_equity import convert_notional_to_units
+units = convert_notional_to_units(
+    notional_base=equity * target_vol / ann_vol,
+    price=px,
+    quote_ccy="JPY",        # price is JPY per AUD
+    base_ccy="USD",
+    fx_rate_quote_to_base=jpy_to_usd_rate,  # MUST be explicit for non-USD quotes
+)
+```
+
+**Timestamp-aware math:**
+* Each strategy's equity is stored as a timestamped `pd.Series`, resampled to business-day on demand for vol/correlation work.
+* EWMA variance is rebuilt **once per calendar date** from daily portfolio NAV -- annualisation factor is always correct.
+* Allocator rebalances on wall-clock date distance (not tick count). Ticking 1000 times in a day triggers zero extra rebalances.
+* Correlation check runs once per calendar date on the aligned daily grid.
+
+**Risk controls (unchanged semantics, new mechanics):**
 
 | Trigger | Action | Reset |
 |---------|--------|-------|
 | Portfolio DD > 10% | Linear scale-down from 1.0 to 0.25 floor | Auto when DD recovers |
-| Portfolio DD > 15% | Kill switch: `halt_all = True`, flatten everything | Manual `reset_halt()` |
+| Portfolio DD > 15% | Kill switch: `halt_all = True`, flatten everything, **persisted to `.tmp/portfolio_halt.json`** | Manual `reset_halt(operator=...)` |
 | Strategy pair r > 0.85 | WARNING log (informational) | N/A |
 | Single strategy > 60% of portfolio | WARNING log | N/A |
+
+**Halt persistence (new):** Kill switch state writes to `.tmp/portfolio_halt.json` with reason and UTC timestamp. On process restart the file is re-read and halt is restored -- **a crashed + restarted process cannot silently un-halt**. Operator must call `reset_halt(operator="alice")` to resume; that writes a cleared-halt record.
+
+**HWM semantics (new):** `reset_halt` **preserves** the pre-halt high-water mark. The previous behaviour re-anchored HWM to the drawn-down total, which silently reduced the kill-switch distance. Operators who actually want to re-baseline must explicitly call `reset_hwm(operator="alice")`.
 
 **Config:** `config/risk.toml`
 ```toml
@@ -298,9 +383,49 @@ portfolio_heat_scale_pct   = 10.0
 correlation_window_days    = 60
 correlation_halt_threshold = 0.85
 portfolio_max_single_pct   = 60.0
+vol_target_ann_pct         = 12.0
+vol_ewma_lambda            = 0.94
+vol_scale_min              = 0.25
+vol_scale_max              = 2.0
+# Regime scaling (VIX tiers + ATR percentile)
+vix_tier_1                 = 17.8
+vix_tier_2                 = 23.1
+vix_tier_3                 = 30.0
+atr_pct_low                = 25.0
+atr_pct_high               = 75.0
+atr_pct_extreme            = 90.0
+
+[allocation]
+rebalance_interval_days    = 21  # Monthly (wall-clock, not tick-count)
+ewma_lambda                = 0.94
+min_weight                 = 0.05
+max_weight                 = 0.60
+min_history_days           = 30
+correlation_penalty_threshold = 0.70
 ```
 
-### 4.2 Backtest Limitations (documented)
+### 4.1a Strategy integration reference (all 13 strategies migrated)
+
+Every strategy that was previously calling `balance_total(list(balances.keys())[0])` was migrated to one of two patterns depending on how live-critical it is:
+
+| Strategy | Pattern | Notes |
+|---|---|---|
+| `mr_audjpy`, `bond_gold` | **Full tracker** | Live in `champion_portfolio`. Uses `StrategyEquityTracker` + FX-aware sizing. |
+| `gld_confluence`, `gold_macro`, `fx_carry`, `etf_trend`, `ic_equity_daily`, `ml`, `mtf`, `orb`, `gap_fade`, `mr_fx`, `pairs` | **Deterministic USD fallback** | Uses `get_base_balance(account, "USD")` + explicit `bar.ts_event` timestamp. Account-level NLV is still the equity input pending per-strategy P&L wiring. |
+
+The live `champion_portfolio` set (`mr_audjpy`, `bond_equity_ihyu_cspx`) uses classes that are fully migrated.
+(`mr_audusd` was removed from the champion set 2026-04-21 — see the
+[Deprecated Strategies doc](./Deprecated%20Strategies.md).)
+
+### 4.2 Research backtester fix (`research/auto/phase_portfolio.py`)
+
+The portfolio backtester had its own defects -- cherry-picked weight scenarios evaluated in-sample, per-bar (not per-trade) risk targeting, and Sharpe diluted by zero-fill days. Rewrite:
+- Removed the hand-picked `WEIGHT_SCENARIOS` dict (look-ahead).
+- New flow: split stitched returns 50/50 by date, compute inverse-vol weights on IS only, report OOS, plus a 100-draw random-weight sensitivity band.
+- `scale_to_risk` now applies a trade-frequency-aware per-trade vol proxy (`std(nz) / sqrt(trades_per_active_day)`).
+- `_sharpe` now computes on active-trade days only, so low-frequency strategies aren't diluted by zero-fill.
+
+### 4.3 Backtest Limitations (documented)
 
 The current ML backtest is a **signal quality test, not a portfolio simulation**:
 - Each instrument assumes 100% of capital in isolation
@@ -665,7 +790,7 @@ Also tested triple filter (HMM + Hurst + confluence) on EUR/USD -- HMM doesn't i
 
 | Instrument | Filter | Tiers | Sharpe | Trades | % Pos | Gate |
 |---|---|---|---|---|---|---|
-| **AUD/JPY** | **conf_rsi_14_dev** | **95/98/99/99.9** | **+2.08** | **119** | **75%** | **PASS** |
+| **AUD/JPY** | **conf_rsi_14_dev** | **95/98/99/99.9** | ~~**+2.08**~~ **+0.826** (post-audit, CI +0.314) | **119** | **75%** | **PASS** |
 | EUR/USD | conf_rsi_14_dev | 95/98/99/99.9 | +1.18 | 180 | 31% | FAIL |
 | GBP/USD | conf_rsi_14_dev | 90/95/98/99 | +0.30 | 211 | 75% | FAIL |
 | GLD/SPY/QQQ/DAX/FTSE | -- | -- | 0.00 | 0 | 0% | FAIL |
@@ -684,7 +809,7 @@ Also tested triple filter (HMM + Hurst + confluence) on EUR/USD -- HMM doesn't i
 | # | Strategy | Instrument | Signal | WFO Sharpe | % Pos Folds | Status |
 |---|---|---|---|---|---|---|
 | 1 | **AND-Gated Confluence** | **GLD H1** | `trend_mom` across H1/H4/D/W scales, AND-gate | **+1.46** | **80%** | **Ready for deployment** |
-| 2 | **MR + Confluence Regime** | **AUD/JPY H1** | VWAP deviation grid, rsi_14_dev disagreement filter | **+2.08** | **75%** | **Ready for deployment** |
+| 2 | **MR + Confluence Regime** | **AUD/JPY H1** | VWAP deviation grid, rsi_14_dev disagreement filter | ~~**+2.08**~~ **+0.826** (post-audit) | **75%** | **Deployed paper, post-audit remediated** |
 
 ### 10.8 Cross-Asset Novel Strategy Research
 
@@ -693,7 +818,7 @@ Brainstormed and tested 3 novel cross-asset strategies using existing daily data
 **Idea 1: Bond->Equity/Gold Momentum**
 - Signal: TLT/IEF log-return over lookback period predicts equity/gold returns
 - Edge: institutional constraint -- bond market prices rate expectations before equity market adjusts
-- **WFO Result: IEF->GLD LB=60, Sharpe +1.17, 68% positive folds across 37 folds (17+ years)**
+- **WFO Result: IEF->GLD LB=60, Sharpe ~~+1.17~~ **+0.721** (post-audit, CI +0.302), 55% positive folds across 38 folds (17+ years)**
 - **PASS** -- deeply validated signal, consistent across multiple regimes (2007-2026)
 
 **Idea 2: Volatility Risk Premium (VRP) Timing**
@@ -720,7 +845,7 @@ Brainstormed and tested 3 novel cross-asset strategies using existing daily data
 |---|---|---|---|---|---|---|
 | 1 | **GLD AND-gated confluence** | GLD H1 | **+1.46** | 80% | Trend (multi-scale) | Ready |
 | 2 | **AUD/JPY MR + confluence regime** | AUD/JPY H1 | **+2.08** | 75% | Mean reversion | Ready |
-| 3 | **Bond->Gold momentum** | IEF->GLD daily | **+1.17** | 68% | Cross-asset lead-lag | Ready |
+| 3 | **Bond->Gold momentum** | IEF->GLD daily | ~~**+1.17**~~ **+0.721** (post-audit) | 55% | Cross-asset lead-lag | Deployed |
 | 4 | **Cross-asset confluence** | GLD risk_off | **+1.28** | N/A (static) | Macro AND-gate | Needs WFO |
 
 **Key insight:** Gold is the system's richest alpha source. It responds to macro factors (real rates, dollar, risk sentiment) that propagate with lags across asset classes, creating multiple independent edges.
@@ -748,7 +873,7 @@ Brainstormed and tested 3 novel cross-asset strategies using existing daily data
 | Gold Macro | Gold Macro (cross-asset) | GLD daily | 5-10% | Deployed (Sharpe +0.60) |
 | Miners | ML PSKY | PSKY | 5-10% | Research validated |
 | **AUD/JPY MR** | **MR + confluence regime** | **AUD/JPY H1** | **5-10%** | **WFO VALIDATED (Sharpe +2.08)** |
-| **Bond->Gold** | **IEF momentum -> GLD** | **IEF/GLD daily** | **5-10%** | **WFO VALIDATED (Sharpe +1.17, 37 folds)** |
+| **Bond->Gold** | **IEF momentum -> GLD** | **IEF/GLD daily** | **5-10%** | **WFO VALIDATED (Sharpe ~~+1.17~~ **+0.721** post-audit, CI_lo +0.302, 38 folds)** |
 | **Cross-Asset Overlay** | **4-asset AND-gate** | **TLT/GLD/DXY/SPY** | **Overlay** | **57/108 pass (needs WFO)** |
 | Carry | FX Carry | AUD/JPY | 5% | Deployed |
 | Intraday | ORB + Gap Fade | SPY + EUR/USD | 5-10% | LIVE / Deployed |
@@ -828,3 +953,297 @@ uv run pytest tests/ -v
 - `directives/IC Signal Analysis.md` -- IC pipeline methodology
 - `directives/Backtesting & Validation.md` -- Validation framework
 - `directives/ETF Trend Strategy.md` -- ETF strategy spec
+
+---
+
+## 15. Autoresearch v2 Results (April 7, 2026)
+
+### 15.1 Architecture
+
+3-file Karpathy-style autonomous loop:
+- `research/auto/evaluate.py` — immutable WFO evaluator (10 strategy runners)
+- `research/auto/experiment.py` — agent-editable config (git-tracked)
+- `scripts/rerank/run_autonomous_loop.py` — multi-phase driver (superseded the old `phase2_loop.py` — `phase10_loop.py` / `iter2_loop.py` — `iter5_loop.py` scripts)
+
+### 15.2 Top Results (420+ experiments)
+
+| Rank | Strategy | Config | SCORE | Sharpe | DD | Trades |
+|------|----------|--------|-------|--------|----|--------|
+| **#1** | **MR AUD_JPY** | **vwap46 don sp0.5 is32k oos8k** | **5.1368** | **+4.644** | **-9.6%** | **154** |
+| #2 | MR AUD_JPY | vwap46 don sp0.5 is28k oos8k | 4.9998 | +4.544 | -18.8% | 147 |
+| #3 | MR AUD_JPY | vwap46 don sp0 | 4.6910 | +4.362 | -23% | 161 |
+| #4 | ML Stacking | IWB D cbars=5 | 4.5462 | +3.996 | -3% | 5 |
+| #5 | Cross-Asset | HYG→IWB lb10 | 3.0375 | +2.630 | -13% | 254 |
+
+### 15.3 AUD/JPY Discovery Path (10 phases, 420+ experiments)
+
+| Phase | Change | SCORE |
+|-------|--------|-------|
+| Baseline | rsi_14_dev, vwap24, sp2 | 2.60 |
+| Phase 3 | spread=1bps | 2.91 |
+| Phase 4 | vwap36 | 3.29 |
+| Phase 5 | + donchian (SYNERGISTIC) | **3.94** |
+| Phase 7 | vwap46 don sp1 | 4.48 |
+| Phase 8 | sp0.5 → beats IWB | **4.59** |
+| Phase 10 | is32k oos8k → DD 23%→9.6% | **5.14** |
+
+### 15.4 Champion Configuration (post-audit, April 2026 remediation)
+
+```python
+{
+    "strategy": "mean_reversion",
+    "instruments": ["AUD_JPY"],
+    "timeframe": "H1",
+    "vwap_anchor": 24,                    # ~1 trading day. Post-audit: 24 beats 46 on the
+                                          # corrected harness (was 46 pre-audit; 4th-of-6).
+    "regime_filter": "conf_donchian_pos_20",
+    "tier_grid": "conservative",
+    "spread_bps": 0.5,                    # 0.5 pip — realistic at major FX brokers
+    "slippage_bps": 0.2,
+    "is_bars": 32000,                     # ~3.65 years of H1 bars
+    "oos_bars": 8000,                     # ~1 year per WFO fold
+}
+```
+
+### 15.5 Bug Fixes (Gemini Code Review)
+
+1. Parity exploit — only reward when IS sharpe > 0
+2. Transaction cost erasure — pre-compute `signal.diff()` globally
+3. FX carry vol_scale reset — pre-shift before WFO loop
+4. Pairs array mismatch — `pct_change()` replaces `np.diff()`
+5. XGBoost false positives — add background bars to training set
+
+### 15.6 New Files
+
+| File | Description |
+|------|-------------|
+| `research/auto/evaluate.py` | 10-strategy WFO evaluator |
+| `research/auto/experiment.py` | Agent-editable config |
+| `research/auto/run_loop.py` | 52-experiment batch runner |
+| `scripts/rerank/run_autonomous_loop.py` | Multi-phase autonomous loop driver (post-remediation replacement for the per-phase loop scripts) |
+| `research/ml/tcn_classifier.py` | TCN (45-bar receptive field) |
+| `research/ml/autoencoder_regime.py` | Unsupervised 72→8 regime discovery |
+| `research/ml/ensemble_stacking.py` | LSTM/TCN dispatch layer |
+
+### 15.7 Key Findings
+
+1. **IWB stacking is fully converged** — same 5 trades regardless of model/seed/params
+2. **TCN = LSTM = AE** for IWB (XGBoost picks same 5 trades regardless)
+3. **vwap46 + donchian filter is synergistic** — neither alone achieves these results
+4. **is_bars=32k, oos_bars=8k** dramatically reduces DD (23% → 9.6%)
+5. **HYG→IWB** cross-asset scores 3.04 (credit spread predicts broad US equity)
+6. **Gold macro, pairs trading, FX carry** all fail (scores < 0 or marginal)
+7. **Portfolio combinations** cannot beat standalone AUD/JPY SCORE metric (shorter overlap period dilutes SCORE) but DO deliver superior risk-adjusted returns on the common evaluation window — see Section 16.
+
+---
+
+## 16. Diversified Portfolio Backtest (April 7, 2026)
+
+### 16.1 Motivation
+
+In live trading, capital is not 100% concentrated in one strategy. Section 15 found 5 strong strategies. This section evaluates them as a portfolio with proper 1%-per-trade risk management.
+
+### 16.2 Implementation: `research/auto/phase_portfolio.py`
+
+**Architecture:**
+- Calls `run_mean_reversion_wfo`, `run_ml_wfo`, `run_cross_asset_wfo` with `return_raw=True` to extract raw OOS return series (new backward-compatible parameter added to `evaluate.py`)
+- `run_mr_wfo` and `run_bond_wfo` now expose `stitched_returns` in their return dict
+- Each strategy's return series is scaled via **1%-ATR risk model** (see below)
+- Series are expanded to full business-day calendar then combined via inner join on common dates
+- Reports per-strategy standalone stats, pairwise correlation matrix, and portfolio metrics for 4 weight scenarios
+
+**1% ATR Risk Scaling:**
+```
+stop_dist     = stop_mult × σ(daily_returns)    [proxy for ATR stop]
+scale_factor  = 0.01 / stop_dist                [target: 1% risk per trade]
+scaled_return = raw_return × scale_factor
+```
+Per-strategy stop multipliers: MR = 1.5×, ML Stacking = 2.0×, Cross-Asset = 1.5×
+
+**Files modified:**
+- `research/auto/evaluate.py` — `return_raw=False` param added to 3 runners (backward-compatible)
+- `research/mean_reversion/run_confluence_regime_wfo.py` — `stitched_returns` added to return dict
+- `research/cross_asset/run_bond_equity_wfo.py` — `stitched_returns` with date index added
+
+### 16.3 Top-5 Portfolio Definition
+
+| # | Strategy | Instrument | TF | Target Alloc |
+|---|----------|-----------|-----|-------------|
+| 1 | MR vwap46+donchian sp0.5 is32k | AUD/JPY | H1 | 40% |
+| 2 | ML Stacking cbars=5 | IWB | D | 25% |
+| 3 | Cross-Asset HYG->IWB | IWB | D | 15% |
+| 4 | ML Stacking cbars=5 | QQQ | D | 15% |
+| 5 | MR vwap36+donchian sp0.5 | AUD/USD | H1 | 5% |
+
+**Note:** QQQ ML was auto-excluded — its `feat_clean` only covers to 2013-11-14 due to feature warm-up window interaction. Needs investigation before deployment.
+
+### 16.4 Portfolio Results (4 strategies, 2021-01-27 → 2024-02-05)
+
+**Pairwise Correlations (near-zero — excellent diversification):**
+
+| Pair | Correlation |
+|------|------------|
+| AUD/JPY MR ↔ IWB ML | -0.01 |
+| AUD/JPY MR ↔ HYG->IWB | 0.00 |
+| AUD/JPY MR ↔ AUD/USD MR | +0.02 |
+| IWB ML ↔ HYG->IWB | +0.17 |
+
+**Weight Scenarios (789 common trading days):**
+
+| Scenario | Weights | Portfolio Sharpe | Max DD | Calmar | SCORE |
+|----------|---------|-----------------|--------|--------|-------|
+| Target (40/25/15/15%) | 40/25/15/15 | **2.571** | **-1.2%** | 3.58 | 2.87 |
+| Balanced (25/25/20/20%) | equal-ish | 2.372 | -1.6% | 2.84 | 2.67 |
+| Equal (20% each) | 20/20/20/20 | 2.312 | -1.9% | 2.66 | 2.61 |
+| **MR-heavy (50/20/15/10%)** | **50/20/15/10** | **2.598** | **-1.1%** | **3.82** | **2.90** |
+
+**Standalone AUD/JPY MR on the same 2021-2024 window:**
+- Sharpe: 1.742 | Max DD: -0.7%
+
+**Portfolio vs Standalone (same period):**
+- Portfolio Sharpe: **2.60** vs Standalone: **1.74** (+49% higher Sharpe)
+- Portfolio DD: **-1.1%** comparable to standalone -0.7%
+- Diversification benefit confirmed: portfolio Sharpe exceeds each individual strategy
+
+### 16.5 Key Insights
+
+1. **Near-zero strategy correlations** — AUD/JPY MR (FX intraday) + IWB ML (US equity daily) + HYG->IWB (credit momentum) are essentially uncorrelated. Combining them captures genuine alpha from 3 independent market microstructures.
+2. **Portfolio Sharpe > standalone Sharpe** on common evaluation window — demonstrates diversification is additive, not dilutive.
+3. **SCORE metric disadvantages portfolios** — SCORE is designed for individual strategy WFO evaluation. Portfolio SCORE (2.90) is lower than AUD/JPY SCORE (5.14) because: (a) shorter common overlap period, (b) no parity/fold-count bonus at portfolio level. This is expected and does not indicate the portfolio is worse.
+4. **1% risk model math** (worst case, all 4 strategies lose simultaneously):
+   - AUD/JPY (40%): 1% × 40% = 0.40% of total
+   - IWB ML (25%): 1% × 25% = 0.25% of total
+   - HYG->IWB (15%): 1% × 15% = 0.15% of total
+   - AUD/USD MR (15%): 1% × 15% = 0.15% of total
+   - **Max simultaneous loss: 0.95% of total capital** ✓
+5. **MR-heavy allocation wins** — AUD/JPY MR is the dominant alpha source. Giving it 50% maximizes portfolio Sharpe while maintaining near-zero overall correlation with the ML/XA components.
+
+### 16.6 Next Steps
+
+1. **Paper-trade AUD/JPY MR champion** — validate live fills before capital allocation.
+2. **Live portfolio risk model** — the `scale_to_risk` approach slots into `ic_generic/strategy.py` as a per-trade sizing rule using `current_atr × stop_mult` in place of the vol proxy used in research.
+
+---
+
+## 17. Full Portfolio Evaluation (April 8, 2026)
+
+### 17.1 Data Downloads
+
+Extended FX H1 data via IBKR TWS Paper (port 7497) using `scripts/download_h1_fx.py`:
+- AUD/JPY H1: 93,076 bars | 2011-04-12 -> 2026-04-08 (was 2016 start, RangeIndex)
+- AUD/USD H1: 93,067 bars | 2011-04-12 -> 2026-04-08 (was 2016 start, RangeIndex)
+
+Fixed QQQ ML fold failure: `is_years=2` produces only 7% valid folds (balanced label gate fails) — changed to `is_years=4` which gives sufficient IS diversity.
+
+### 17.2 Per-Strategy Results (risk-scaled, OOS WFO)
+
+Script: `research/auto/portfolio_eval.py`
+
+| Strategy | Alloc | Sharpe | Sortino | CAGR | Max DD | Trades | Win% | Prof.Factor | RoR | % In Market |
+|----------|-------|--------|---------|------|--------|--------|------|-------------|-----|-------------|
+| AUD/JPY MR | 40% | 1.045 | 0.610 | +2.97% | -2.09% | 117 | 69.2% | 3.30 | **0.00%** | 6.8% |
+| IWB ML | 25% | 0.833 | 0.289 | +1.45% | -2.53% | 15 | 86.7% | 188.13 | **0.00%** | 4.5% |
+| HYG->IWB | 15% | 1.572 | 1.382 | +10.41% | -10.13% | 175 | 70.3% | 3.92 | **0.00%** | 36.3% |
+| QQQ ML | 15% | 0.336 | 0.288 | +1.68% | -21.04% | 122 | 61.5% | 1.57 | 10.54% | 46.1% |
+| AUD/USD MR | 5% | 0.677 | 0.272 | +2.49% | -7.98% | 228 | 61.0% | 1.84 | 0.32% | 12.4% |
+
+> [!WARNING] QQQ ML has -21% max DD and 10.5% risk of ruin at 15% allocation — consider reducing to 5-10% or excluding until validated further.
+
+> [!IMPORTANT] IWB ML profit factor of 188 is driven by only 15 trades over 17 years — too few to be statistically meaningful. The 2 losses are near-zero (-0.14%), producing an artificially extreme ratio.
+
+### 17.3 Combined Portfolio (5 strategies, 2016-06-07 to 2024-02-05)
+
+Weights: AUD/JPY MR 40% / IWB ML 25% / HYG->IWB 15% / QQQ ML 15% / AUD/USD MR 5%
+
+| Metric | Value |
+|--------|-------|
+| Sharpe Ratio | **1.978** |
+| Sortino Ratio | **2.362** |
+| Calmar Ratio | **1.267** |
+| CAGR | +3.49% |
+| Max Drawdown | **-2.72%** |
+| Avg DD Duration | 9.1 days |
+| Win Rate | 71.1% (106W / 43L) |
+| Profit Factor | **6.20** |
+| Risk of Ruin | **0.00%** |
+| % Time in Market | 72.1% |
+| Max 1-trade capital loss | **1.00%** (all 5 hit stop simultaneously) |
+
+### 17.4 Pairwise Correlations
+
+| | AUD/JPY MR | IWB ML | HYG->IWB | QQQ ML | AUD/USD MR |
+|---|---|---|---|---|---|
+| AUD/JPY MR | 1.000 | -0.011 | -0.012 | -0.051 | **+0.264** |
+| IWB ML | -0.011 | 1.000 | +0.110 | -0.002 | -0.003 |
+| HYG->IWB | -0.012 | +0.110 | 1.000 | **+0.310** | -0.045 |
+| QQQ ML | -0.051 | -0.002 | +0.310 | 1.000 | -0.143 |
+| AUD/USD MR | **+0.264** | -0.003 | -0.045 | -0.143 | 1.000 |
+
+Key observations:
+- AUD/JPY ↔ AUD/USD: +0.264 (both AUD pairs, expected — same underlying currency)
+- HYG->IWB ↔ QQQ ML: +0.310 (both US equity, different signal — manageable)
+- All other pairs: < 0.15 — genuine independence
+
+### 17.5 Annual Returns (portfolio)
+
+| Year | Return |
+|------|--------|
+| 2016 | +0.19% |
+| 2017 | +2.55% |
+| 2018 | +0.31% |
+| 2019 | +5.27% |
+| 2020 | +6.57% |
+| 2021 | +0.82% |
+| 2022 | +5.54% |
+| 2023 | +5.98% |
+| 2024 | +0.69% |
+
+**8/9 years positive.** 2018 and 2021 near-zero (not negative). No single year below -1%.
+
+### 17.6 Key Findings
+
+1. **Portfolio RoR = 0.00%** — with 1% risk model, a 50% drawdown from random trade sequence is essentially impossible over 1000 trades.
+2. **Portfolio Sortino (2.36) > Sharpe (1.98)** — downside vol is lower than upside vol. The loss distribution is tightly controlled.
+3. **AUD/JPY MR dominates** the portfolio in a positive way: Sharpe 1.045, RoR 0.00%, only 6.8% in market (very selective entries).
+4. **HYG->IWB is the CAGR engine**: +10.41% CAGR standalone, 36.3% time in market. The portfolio's alpha engine.
+5. **QQQ ML is the weak link**: -21% DD, 10.5% RoR, 46% time in market (low selectivity). Recommend reducing to 5% or replacing.
+6. **IWB ML has too few trades** (15 in 17 years) for statistical significance. 86.7% win rate and 188 profit factor are artifacts of extreme trade scarcity.
+7. **Recommended reallocation**: AUD/JPY MR 45%, HYG->IWB 25%, IWB ML 15%, AUD/USD MR 10%, QQQ ML 5%.
+
+### 17.7 New Files
+
+| File | Description |
+|------|-------------|
+| `research/auto/portfolio_eval.py` | Comprehensive per-strategy + portfolio stats (Sharpe, Sortino, WR, RoR, deployed%) |
+| `scripts/download_h1_fx.py` | IBKR H1 FX downloader (1Y chunks, DatetimeIndex output) |
+
+### 17.8 Revised Portfolio: QQQ ML Removed, HYG->IWB Doubled (April 8, 2026)
+
+QQQ ML (-21% DD, 10.5% RoR) removed. Its 15% weight redistributed to HYG->IWB (15% -> 30%).
+
+**New allocation: AUD/JPY MR 40% / IWB ML 25% / HYG->IWB 30% / AUD/USD MR 5%**
+
+| Metric | Old (5 strategies) | New (4 strategies) | Change |
+|--------|-------------------|-------------------|--------|
+| Sharpe | 1.978 | **2.027** | +0.05 |
+| Sortino | 2.362 | 2.061 | -0.3 (QQQ removal) |
+| CAGR | +3.49% | **+4.72%** | **+1.23pp** |
+| Max DD | -2.72% | -3.26% | -0.54pp (HYG has -10% standalone) |
+| RoR | 0.00% | **0.00%** | unchanged |
+| Win Rate | 71.1% | 69.5% | -1.6pp |
+| Profit Factor | 6.20 | 5.70 | -0.5 |
+| % In Market | 72.1% | **47.6%** | **-24.5pp less deployed** |
+
+Key improvements:
+- CAGR +1.23pp higher (+35% more return for same risk budget)
+- Max simultaneous loss still capped at exactly **1.00%** of capital
+- 47.6% in market vs 72.1% — more capital available to compound or deploy elsewhere
+- Max correlation in portfolio: **HYG->IWB ↔ IWB ML = 0.110** (excellent)
+
+Annual returns (2016–2024): **7/9 years positive**, 2019 +6.85%, 2020 +10.05%, 2023 +9.96%.
+
+### 17.9 Next Steps
+
+1. **Paper-trade AUD/JPY MR** — all research complete, validate live fills.
+2. **Deploy HYG->IWB cross-asset** — strongest CAGR engine in the portfolio (+10.4% standalone CAGR).
+3. **Live portfolio risk model** — implement `scale_to_risk` in each strategy using `current_atr × stop_mult`.

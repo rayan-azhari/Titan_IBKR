@@ -298,10 +298,11 @@ def run_pipeline_slice(
     n_trades = int(pf.trades.count())
     win_rate = float(pf.trades.win_rate()) if n_trades > 0 else 0.0
 
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
     daily_ret = pf.returns().resample("1D").sum()
-    sharpe = float(
-        daily_ret.mean() / daily_ret.std() * np.sqrt(252) if daily_ret.std() > 0 else float("nan")
-    )
+    sharpe = float(_sh(daily_ret, periods_per_year=_BPY["D"]))
     max_dd = float(pf.max_drawdown())
     weeks = (df_slice.index[-1] - df_slice.index[0]).days / 7
 
@@ -326,13 +327,18 @@ def run_pipeline_slice(
 def monte_carlo(daily_returns: pd.Series, n: int = 500, pct: float = 5.0) -> dict:
     if len(daily_returns) == 0 or daily_returns.std() == 0:
         return {"pct_sharpe": float("nan"), "pct_profitable": 0.0, "pass": False}
+    from titan.research.metrics import BARS_PER_YEAR as _BPY2
+    from titan.research.metrics import sharpe as _sh2
+
     np.random.seed(42)
     vals, sharpes = daily_returns.values.copy(), []
     for _ in range(n):
         np.random.shuffle(vals)
         s = pd.Series(vals)
-        mu, sd = s.mean(), s.std()
-        sharpes.append(mu / sd * np.sqrt(252) if sd > 0 else float("nan"))
+        if s.std() > 0:
+            sharpes.append(float(_sh2(s, periods_per_year=_BPY2["D"])))
+        else:
+            sharpes.append(float("nan"))
     sharpes = [s for s in sharpes if not np.isnan(s)]
     if not sharpes:
         return {"pct_sharpe": float("nan"), "pct_profitable": 0.0, "pass": False}
@@ -420,8 +426,11 @@ def run_stage3(df: pd.DataFrame) -> None:
     print("\n[4/5] WFO (6mo IS / 2mo OOS)...")
     wfo_ret, wfo_folds = walk_forward(df)
     neg = sum(1 for f in wfo_folds if not np.isnan(f["sharpe"]) and f["sharpe"] < 0)
+    from titan.research.metrics import BARS_PER_YEAR as _BPY3
+    from titan.research.metrics import sharpe as _sh3
+
     wfo_sharpe = (
-        float(wfo_ret.mean() / wfo_ret.std() * np.sqrt(252))
+        float(_sh3(wfo_ret, periods_per_year=_BPY3["D"]))
         if len(wfo_ret) > 0 and wfo_ret.std() > 0
         else float("nan")
     )

@@ -15,7 +15,6 @@ Usage:
 
 import argparse
 import sys
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -179,11 +178,14 @@ def run_confluence_wfo(
 
         # Daily aggregate (~7 H1 bars/day for equities)
         def _sharpe(rets):
+            from titan.research.metrics import BARS_PER_YEAR as _BPY
+            from titan.research.metrics import sharpe as _sh
+
             daily = pd.Series(rets).groupby(np.arange(len(rets)) // 7).sum()
             daily = daily[daily != 0.0]
             if len(daily) < 10:
                 return 0.0
-            return float(daily.mean() / daily.std() * sqrt(252)) if daily.std() > 1e-9 else 0.0
+            return float(_sh(daily, periods_per_year=_BPY["D"]))
 
         is_sh = _sharpe(is_rets)
         oos_sh = _sharpe(oos_rets)
@@ -221,9 +223,10 @@ def run_confluence_wfo(
     st_daily = st_daily[st_daily != 0.0]
 
     if len(st_daily) >= 20:
-        st_sh = (
-            float(st_daily.mean() / st_daily.std() * sqrt(252)) if st_daily.std() > 1e-9 else 0.0
-        )
+        from titan.research.metrics import BARS_PER_YEAR as _BPY2
+        from titan.research.metrics import sharpe as _sh2
+
+        st_sh = float(_sh2(st_daily, periods_per_year=_BPY2["D"]))
         st_eq = (1 + st_daily).cumprod()
         st_dd = float(((st_eq - st_eq.cummax()) / st_eq.cummax()).min())
         st_ret = float(st_daily.mean() * 252)

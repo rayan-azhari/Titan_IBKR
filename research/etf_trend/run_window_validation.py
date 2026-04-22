@@ -17,7 +17,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -71,8 +70,10 @@ def window_stats(close: pd.Series, in_pos: pd.Series, fees: float = FEES_BASE) -
     dd = (eq - rolling_max) / rolling_max
     max_dd = float(dd.min())
 
-    std = strat_ret.std()
-    sharpe = float(strat_ret.mean() / std * np.sqrt(252)) if std > 1e-9 else 0.0
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
+    sharpe = float(_sh(strat_ret, periods_per_year=_BPY["D"]))
 
     n_bars = len(close)
     ann_ret = (1 + total_ret) ** (365 / n_bars) - 1
@@ -100,8 +101,10 @@ def bah_stats(close: pd.Series) -> dict:
     rolling_max = eq.cummax()
     dd = (eq - rolling_max) / rolling_max
     max_dd = float(dd.min())
-    std = daily_ret.std()
-    sharpe = float(daily_ret.mean() / std * np.sqrt(252)) if std > 1e-9 else 0.0
+    from titan.research.metrics import BARS_PER_YEAR as _BPY2
+    from titan.research.metrics import sharpe as _sh2
+
+    sharpe = float(_sh2(daily_ret, periods_per_year=_BPY2["D"]))
     n_bars = len(close)
     ann_ret = (1 + total_ret) ** (365 / n_bars) - 1
     calmar = ann_ret / abs(max_dd) if max_dd < -1e-9 else 0.0

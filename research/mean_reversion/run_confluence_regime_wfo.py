@@ -10,7 +10,6 @@ Usage:
 
 import argparse
 import sys
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -55,6 +54,7 @@ def run_mr_wfo(
     n = len(close)
     folds = []
     stitched_pnl = []
+    stitched_trades: list[float] = []
     fold_idx = 0
     oos_start = is_bars
 
@@ -130,17 +130,27 @@ def run_mr_wfo(
 
         if oos_result["daily_pnl"] is not None:
             stitched_pnl.append(oos_result["daily_pnl"])
+        # Plumb trade-level returns up to the portfolio scaler.
+        stitched_trades.extend(oos_result.get("trade_returns", []))
 
         fold_idx += 1
         oos_start += oos_bars
 
-    # Stitch
+    # Stitch. Sharpe goes through the shared ``titan.research.metrics.sharpe``
+    # — no filtering of zero-return days (that bias overstated Sharpe by
+    # sqrt(1/active_ratio) in the old implementation).
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import bootstrap_sharpe_ci as _boot_ci
+    from titan.research.metrics import sharpe as _sh_metric
+
+    st_ci_lo = 0.0
+    st_ci_hi = 0.0
     if stitched_pnl:
         all_oos = pd.concat(stitched_pnl)
-        all_oos = all_oos[all_oos != 0.0]
         if len(all_oos) >= 20:
-            st_sh = (
-                float(all_oos.mean() / all_oos.std() * sqrt(252)) if all_oos.std() > 1e-9 else 0.0
+            st_sh = _sh_metric(all_oos, periods_per_year=_BPY["D"])
+            st_ci_lo, st_ci_hi = _boot_ci(
+                all_oos, periods_per_year=_BPY["D"], n_resamples=1000, seed=42
             )
             st_eq = (1 + all_oos).cumprod()
             st_dd = float(((st_eq - st_eq.cummax()) / st_eq.cummax()).min())
@@ -155,13 +165,25 @@ def run_mr_wfo(
     pct_positive = (fold_df["oos_sharpe"] > 0).mean() if len(fold_df) > 0 else 0
     total_trades = fold_df["oos_trades"].sum() if len(fold_df) > 0 else 0
 
+    raw_returns = pd.concat(stitched_pnl) if stitched_pnl else pd.Series(dtype=float)
+
     return {
         "fold_df": fold_df,
         "stitched_sharpe": round(st_sh, 3),
+        # 95% bootstrap CI. Deployment gate: strategies whose lower bound
+        # <= 0 should be tagged tier=unconfirmed (April 2026 audit).
+        "sharpe_ci_95_lo": round(st_ci_lo, 3),
+        "sharpe_ci_95_hi": round(st_ci_hi, 3),
         "stitched_dd_pct": round(st_dd * 100, 2),
         "n_folds": len(folds),
         "pct_positive": round(pct_positive, 3),
         "total_trades": int(total_trades),
+        "stitched_returns": raw_returns,
+        # Trade-level returns across every OOS fold. Downstream sizing
+        # (scale_to_risk) prefers these over daily P&L when available
+        # because trade-level vol is the correct input for a "1% per
+        # trade" risk budget.
+        "stitched_trades": list(stitched_trades),
     }
 
 
@@ -174,7 +196,23 @@ def _fold_backtest(
     spread_bps: float,
     slippage_bps: float,
 ) -> dict:
-    """Run MR backtest on a single fold slice."""
+    """Run MR backtest on a single fold slice.
+
+    Pyramiding semantics (April 2026 audit fix).
+
+    The live ``MRAUDJPYStrategy`` accumulates tier entries across bars —
+    e.g. tier 0 fires at bar 100, tier 1 at bar 102 — and holds the summed
+    position until an exit triggers. The previous backtest reset
+    ``position[i] = 0`` at the start of every bar from ``np.zeros(n)`` and
+    only carried forward from the prior bar in a narrow branch, so a
+    subsequent tier at a new bar *replaced* the prior position instead of
+    adding to it. The backtest consequently simulated a different strategy
+    than what was running live.
+
+    The new loop keeps ``current_pos``, ``current_tiers_hit``, and a
+    weighted ``entry_price`` across bars, so the pyramid accumulates and
+    exits close the *full* accumulated position.
+    """
     n = len(close)
     close_arr = close.values
     dev_arr = deviation.values
@@ -185,77 +223,102 @@ def _fold_backtest(
     session_arr = (hour_arr >= 7) & (hour_arr < 12)
     combined_gate = gate_arr & session_arr
 
-    position = np.zeros(n)
-    entry_price = 0.0
-    entry_bar = 0
-    tiers_hit = set()
-    trade_returns = []
-    trade_durations = []
+    # Persistent trade state (mirrors live strategy).
+    current_pos: float = 0.0  # signed total exposure
+    entry_price: float = 0.0  # weighted-average entry
+    entry_bar: int = 0
+    current_tiers_hit: set[int] = set()
+
+    trade_returns: list[float] = []
+    trade_durations: list[int] = []
     bar_pnl = np.zeros(n)
     cost_per_unit = (spread_bps + slippage_bps) / 10_000
+    # For reporting / correlation only — the P&L driver is bar_pnl.
+    position_trace = np.zeros(n)
+
+    def _close_position(i: int, px: float) -> None:
+        nonlocal current_pos, entry_price, current_tiers_hit
+        direction = np.sign(current_pos)
+        size = abs(current_pos)
+        if size <= 0 or entry_price <= 0:
+            current_pos = 0.0
+            entry_price = 0.0
+            current_tiers_hit = set()
+            return
+        gross = (px - entry_price) / entry_price * direction
+        # Exit cost is charged proportional to size exited.
+        trade_ret = gross - cost_per_unit
+        trade_returns.append(trade_ret)
+        trade_durations.append(i - entry_bar)
+        # Mark-to-market: bar_pnl on the exit bar reflects the move from the
+        # prior bar plus the realised exit (cost). Keep simple: realise the
+        # whole trade PnL on the exit bar for attribution.
+        bar_pnl[i] += trade_ret * size
+        current_pos = 0.0
+        entry_price = 0.0
+        current_tiers_hit = set()
 
     for i in range(1, n):
         px = close_arr[i]
+        prev_px = close_arr[i - 1]
         dev = abs(dev_arr[i]) if not np.isnan(dev_arr[i]) else 0.0
-        prev_pos = position[i - 1]
 
-        # Exit checks
-        if prev_pos != 0:
+        # 1) Carry-forward mark-to-market for any existing position. This
+        #    happens *first* so the exit return below is computed against
+        #    entry_price (not prev_px).
+        if current_pos != 0.0:
+            bar_pnl[i] += (px - prev_px) / prev_px * current_pos
+            position_trace[i] = current_pos
+
+        # 2) Exit checks.
+        if current_pos != 0.0:
             if hour_arr[i] >= 21:
-                ret = (px - entry_price) / entry_price * np.sign(prev_pos) - cost_per_unit
-                trade_returns.append(ret)
-                trade_durations.append(i - entry_bar)
-                bar_pnl[i] = ret * abs(prev_pos)
-                position[i] = 0
-                entry_price = 0.0
-                tiers_hit = set()
+                _close_position(i, px)
+                position_trace[i] = 0.0
                 continue
 
             lvl0 = levels.iloc[i, 0] if not np.isnan(levels.iloc[i, 0]) else 999
             if dev < lvl0 * 0.5:
-                ret = (px - entry_price) / entry_price * np.sign(prev_pos) - cost_per_unit
-                trade_returns.append(ret)
-                trade_durations.append(i - entry_bar)
-                bar_pnl[i] = ret * abs(prev_pos)
-                position[i] = 0
-                entry_price = 0.0
-                tiers_hit = set()
+                _close_position(i, px)
+                position_trace[i] = 0.0
                 continue
 
-        # Entry checks
+        # 3) Entry checks — gate on session + regime mask.
         if combined_gate[i]:
             for tier_idx in range(len(levels.columns)):
-                if tier_idx in tiers_hit:
+                if tier_idx in current_tiers_hit:
                     continue
                 lvl = levels.iloc[i, tier_idx]
                 if np.isnan(lvl):
                     continue
-                if dev > lvl:
-                    size = tier_sizes[tier_idx] if tier_idx < len(tier_sizes) else 1
-                    direction = -1.0 if dev_arr[i] > 0 else 1.0
-                    if position[i] == 0:
-                        entry_price = px
-                        entry_bar = i
-                    else:
-                        old_size = abs(position[i])
-                        entry_price = (entry_price * old_size + px * size) / (old_size + size)
-                    position[i] += direction * size
-                    tiers_hit.add(tier_idx)
-                    bar_pnl[i] -= cost_per_unit * size
-
-        if position[i] == 0 and prev_pos != 0 and bar_pnl[i] == 0:
-            position[i] = prev_pos
-            bar_pnl[i] = (px - close_arr[i - 1]) / close_arr[i - 1] * prev_pos
-        elif position[i] == 0 and prev_pos == 0:
-            position[i] = 0
+                if dev <= lvl:
+                    continue
+                size = tier_sizes[tier_idx] if tier_idx < len(tier_sizes) else 1
+                direction = -1.0 if dev_arr[i] > 0 else 1.0
+                # Require new tier's direction to match current direction if
+                # already in a position — a flip would be a re-entry.
+                if current_pos != 0.0 and np.sign(current_pos) != direction:
+                    # Directional disagreement: treat as exit, then skip
+                    # remaining tier checks on this bar (next bar can re-enter).
+                    _close_position(i, px)
+                    position_trace[i] = 0.0
+                    break
+                if current_pos == 0.0:
+                    entry_price = px
+                    entry_bar = i
+                else:
+                    old_abs = abs(current_pos)
+                    entry_price = (entry_price * old_abs + px * size) / (old_abs + size)
+                current_pos += direction * size
+                current_tiers_hit.add(tier_idx)
+                # Entry cost charged on incremental size.
+                bar_pnl[i] -= cost_per_unit * size
+            position_trace[i] = current_pos
 
     daily_pnl = pd.Series(bar_pnl, index=close.index).resample("D").sum()
-    daily_pnl = daily_pnl[daily_pnl != 0.0]
-
-    def _sharpe(d):
-        if len(d) < 10:
-            return 0.0
-        return float(d.mean() / d.std() * sqrt(252)) if d.std() > 1e-9 else 0.0
+    # NOTE: filtering to non-zero days is now intentionally *not* done before
+    # computing Sharpe. Zero-day inclusion is the correct annualisation (see
+    # titan.research.metrics.sharpe for the why).
 
     def _dd(d):
         if len(d) < 5:
@@ -263,17 +326,22 @@ def _fold_backtest(
         eq = (1 + d).cumprod()
         return float(((eq - eq.cummax()) / eq.cummax()).min())
 
+    # Import here to avoid heavy imports at module load.
+    from titan.research.metrics import BARS_PER_YEAR
+    from titan.research.metrics import sharpe as _sh_metric
+
     n_trades = len(trade_returns)
     wr = sum(1 for r in trade_returns if r > 0) / n_trades * 100 if n_trades > 0 else 0
     avg_hold = np.mean(trade_durations) if trade_durations else 0
 
     return {
-        "sharpe": round(_sharpe(daily_pnl), 3),
+        "sharpe": round(_sh_metric(daily_pnl, periods_per_year=BARS_PER_YEAR["D"]), 3),
         "n_trades": n_trades,
         "win_rate": round(wr, 1),
         "avg_hold": round(avg_hold, 1),
         "dd_pct": round(_dd(daily_pnl) * 100, 2),
         "daily_pnl": daily_pnl,
+        "trade_returns": trade_returns,
     }
 
 

@@ -37,6 +37,7 @@ from nautilus_trader.trading.strategy import Strategy
 
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import StrategyEquityTracker, report_equity_and_check
 
 
 class PairsConfig(StrategyConfig):
@@ -58,6 +59,8 @@ class PairsConfig(StrategyConfig):
     max_leverage: float = 2.0  # Max combined notional / equity
     # Warmup
     warmup_bars: int = 504  # 2 years of daily bars
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
 
 
 class PairsStrategy(Strategy):
@@ -88,14 +91,25 @@ class PairsStrategy(Strategy):
         self._prm_id: str = ""
         self._last_bar_a: float | None = None
         self._last_bar_b: float | None = None
-        self._bars_a_seen: int = 0
-        self._bars_b_seen: int = 0
+        # Bar synchronisation by date — the previous ``_bars_{a,b}_seen``
+        # counters permanently de-synced the strategy if one leg had a
+        # missing bar (holiday, data gap). Tracking by date lets both legs
+        # fall out of sync for a day and then rejoin on the next common date.
+        self._last_date_a: "pd.Timestamp | None" = None
+        self._last_date_b: "pd.Timestamp | None" = None
+        self._last_eval_date: "pd.Timestamp | None" = None
+        self._equity_tracker: StrategyEquityTracker | None = None
 
     # -- Lifecycle -------------------------------------------------------------
 
     def on_start(self) -> None:
         self._prm_id = f"pairs_{self.config.ticker_a}_{self.config.ticker_b}"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         self._warmup()
         self.subscribe_bars(self.bar_type_a)
@@ -137,21 +151,32 @@ class PairsStrategy(Strategy):
     # -- Bar handler -----------------------------------------------------------
 
     def on_bar(self, bar: Bar) -> None:
+        from nautilus_trader.core.datetime import unix_nanos_to_dt as _u
+
+        bar_date = _u(bar.ts_event).date()
+
         # Track which leg this bar belongs to
         if bar.bar_type == self.bar_type_a:
             self._last_bar_a = float(bar.close)
             self._closes_a.append(float(bar.close))
-            self._bars_a_seen += 1
+            self._last_date_a = bar_date
         elif bar.bar_type == self.bar_type_b:
             self._last_bar_b = float(bar.close)
             self._closes_b.append(float(bar.close))
-            self._bars_b_seen += 1
+            self._last_date_b = bar_date
         else:
             return
 
-        # Only evaluate when both legs have new data
-        if self._bars_a_seen != self._bars_b_seen:
+        # Evaluate only when both legs have delivered for this same date. If
+        # one leg missed a session (holiday, data gap), we skip this date
+        # and resume when both legs align again — rather than permanently
+        # losing sync as the old counter-based gate did.
+        if self._last_date_a != bar_date or self._last_date_b != bar_date:
             return
+        if self._last_eval_date == bar_date:
+            # Idempotent: a re-emitted bar must not double-evaluate.
+            return
+        self._last_eval_date = bar_date
 
         self._bar_count += 1
 
@@ -162,20 +187,14 @@ class PairsStrategy(Strategy):
         if len(self._closes_b) > max_len:
             self._closes_b = self._closes_b[-max_len:]
 
-        # Portfolio risk
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # Portfolio risk: per-strategy tracker equity, explicit bar timestamp
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
+        if halted:
             self.log.warning("Portfolio kill switch -- flattening pair.")
             self._close_both_legs("kill switch")
             return
 
-        portfolio_allocator.tick()
+        portfolio_allocator.tick(now=_u(bar.ts_event).date())
 
         # Need enough data
         if len(self._closes_a) < 60 or len(self._closes_b) < 60:
@@ -252,15 +271,12 @@ class PairsStrategy(Strategy):
         """Enter a pair trade (two simultaneous legs)."""
         if self._last_bar_a is None or self._last_bar_b is None or self._beta is None:
             return
+        if self._equity_tracker is None:
+            return
 
-        accounts = self.cache.accounts()
-        if not accounts:
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
             return
-        acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
-            return
-        equity = float(acct.balance_total(ccys[0]).as_double())
 
         # Risk budget per trade
         risk_notional = equity * self.config.risk_pct
@@ -347,6 +363,12 @@ class PairsStrategy(Strategy):
     # -- Events ----------------------------------------------------------------
 
     def on_position_closed(self, event) -> None:
+        if self._equity_tracker is not None:
+            try:
+                pnl = float(event.realized_pnl.as_double())
+                self._equity_tracker.on_position_closed(pnl, fx_to_base=1.0)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(f"LEG CLOSED: {event.instrument_id} PnL={event.realized_pnl}")
 
     def on_order_rejected(self, event) -> None:

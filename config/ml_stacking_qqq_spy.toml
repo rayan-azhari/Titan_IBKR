@@ -1,0 +1,64 @@
+# ML Stacking Strategy -- QQQ + SPY (multi-instrument)
+# Autoresearch Exp14: SCORE=2.1884, Sharpe=+1.688, DD=-18.5%
+# Baseline stacking config validated across 45 experiments
+
+instruments       = ["QQQ", "SPY"]
+strategy          = "stacking"
+timeframe         = "D"
+
+# --- XGBoost Parameters ---
+[xgb]
+n_estimators      = 300
+max_depth         = 4
+learning_rate     = 0.03
+subsample         = 0.8
+colsample_bytree  = 0.6
+random_state      = 42
+
+# --- LSTM Parameters ---
+[lstm]
+hidden_dim        = 32
+lookback          = 20
+epochs            = 30
+dropout           = 0.3
+
+# --- Stacking Meta-Learner ---
+[stacking]
+n_nested_folds    = 3
+
+# --- Label Engineering ---
+[[label_params]]
+rsi_oversold      = 45
+rsi_overbought    = 55
+confirm_bars      = 10
+confirm_pct       = 0.005
+
+[[label_params]]
+rsi_oversold      = 50
+rsi_overbought    = 50
+confirm_bars      = 10
+confirm_pct       = 0.003
+
+[[label_params]]
+rsi_oversold      = 48
+rsi_overbought    = 52
+confirm_bars      = 10
+confirm_pct       = 0.005
+
+# --- Position Sizing ---
+[sizing]
+signal_threshold  = 0.6
+cost_bps          = 2.0
+
+# --- Walk-Forward Configuration ---
+[wfo]
+is_years          = 2
+oos_months        = 3                 # 3 months OOS outperforms 6 months
+
+# --- Validation Metrics (Autoresearch Exp14) ---
+# SCORE:      2.1884
+# OOS Sharpe: +1.688
+# Max DD:     -18.5%
+# Parity:     3.025
+# Pos Folds:  84%
+# Trades:     19

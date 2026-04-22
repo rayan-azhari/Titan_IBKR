@@ -1011,5 +1011,7 @@ def align_to_common_window(
 
 
 def _quick_sharpe(s: pd.Series) -> float:
-    std = float(s.std())
-    return float(s.mean() / std * np.sqrt(252)) if std > 1e-9 else 0.0
+    from titan.research.metrics import BARS_PER_YEAR
+    from titan.research.metrics import sharpe as _sh
+
+    return float(_sh(s, periods_per_year=BARS_PER_YEAR["D"]))

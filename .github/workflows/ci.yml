@@ -37,5 +37,20 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      - name: Run unit tests
+      # Research math guardrails run FIRST — AST-level checks that fail CI
+      # if a PR re-introduces the April 2026 audit bug patterns
+      # (bare sqrt(252), filter-then-annualise Sharpe, balances.keys()[0]).
+      - name: Research math guardrails (AST)
+        run: uv run pytest tests/test_research_math_guardrails.py -v --tb=short
+
+      - name: Shared metrics helper tests
+        run: uv run pytest tests/test_research_metrics.py -v --tb=short
+
+      - name: Statistical rigor (bootstrap CI + no-lookahead)
+        run: uv run pytest tests/test_research_rigor.py -v --tb=short
+
+      - name: Strategy live-vs-research parity
+        run: uv run pytest tests/test_strategy_live_parity.py -v --tb=short
+
+      - name: Run unit tests (full suite)
         run: uv run pytest tests/ -v --tb=short -x

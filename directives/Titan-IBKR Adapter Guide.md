@@ -350,6 +350,71 @@ This tests the `ibapi` connectivity to the local socket server.
 
 ---
 
+## 6a. Multi-Currency Account Pitfalls (April 2026 audit)
+
+The April 21 portfolio-risk audit surfaced a class of bugs that live adjacent to
+the adapter: anywhere strategy code reads `account.balances()` or
+`account.balance_total(ccy)`, non-determinism and silent currency mismatches
+can corrupt sizing.
+
+### 6a.1 Never use `list(balances.keys())[0]`
+
+Python dict ordering reflects insertion order, and IBKR multi-currency
+accounts insert in an order the broker chooses. On an account that has held
+USD, JPY, and EUR at various times, `list(account.balances().keys())[0]` can
+return **any** of them across process restarts. Every strategy that used this
+pattern was migrated on April 21 -- reintroducing it is a regression.
+
+**Correct pattern:**
+```python
+from titan.risk.strategy_equity import get_base_balance
+
+equity = get_base_balance(account, "USD")  # explicit, deterministic
+if equity is None or equity <= 0:
+    self.log.warning("No USD balance on account; skipping bar.")
+    return
+```
+
+`get_base_balance` returns `None` if USD is absent, which is **correct**
+behaviour -- the strategy should log and skip rather than silently trade
+against the wrong currency.
+
+### 6a.2 FX unit conversion for non-USD-quoted instruments
+
+An AUD/JPY spot price is quoted in JPY per 1 AUD. Dividing a USD notional by
+that price gives a meaningless unit count:
+
+```python
+# ❌ WRONG for AUD/JPY (price is JPY per AUD)
+units = int(notional_usd / price)  # ~108 "units" at price=95 -- garbage
+
+# ✅ CORRECT
+from titan.risk.strategy_equity import convert_notional_to_units
+units = convert_notional_to_units(
+    notional_base=notional_usd,
+    price=price,                     # JPY per AUD
+    quote_ccy="JPY",
+    base_ccy="USD",
+    fx_rate_quote_to_base=0.0067,    # JPY -> USD rate -- MUST be explicit
+)
+# ~15,710 AUD units for a 10,000 USD notional at price=95, rate=0.0067
+```
+
+The helper **raises `ValueError`** if `quote_ccy != base_ccy` and no FX rate
+is supplied -- it refuses to silently assume 1.0. This is the intended
+behaviour; configure the rate on your strategy config or subscribe to a
+spot feed.
+
+### 6a.3 Diagnostic procedure when sizing looks wrong
+
+1. Log the raw equity your strategy passed to the PRM.
+2. Check `get_base_balance(account, "USD")` returns the value you expect.
+3. For FX strategies, verify `quote_ccy` and `fx_rate_quote_to_base` in the
+   sizing call.
+4. Run the 13-test regression suite: `uv run pytest tests/test_portfolio_risk_april2026_fixes.py -v`.
+
+---
+
 ## 7. Future Roadmap
 
 ### **1. Trailing Stop Support (High Priority)**

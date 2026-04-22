@@ -205,8 +205,11 @@ def compute_portfolio_stats(
         }
 
     # ── Core metrics ───────────────────────────────────────────────────────
+    from titan.research.metrics import annualize_vol as _ann
+    from titan.research.metrics import sharpe as _sh
+
     std = float(rets.std())
-    sharpe = float(rets.mean() / std * np.sqrt(ANNUAL_BARS)) if std > 1e-9 else 0.0
+    sharpe = float(_sh(rets, periods_per_year=ANNUAL_BARS))
 
     equity = (1.0 + rets).cumprod()
     rolling_max = equity.cummax()
@@ -228,9 +231,12 @@ def compute_portfolio_stats(
     # ── Diversification ratio (Choueifaty-Coignard) ────────────────────────
     w_arr = np.array([weights.get(k, 0.0) for k in component_returns])
     comp_vols = np.array(
-        [component_returns[k].std() * np.sqrt(ANNUAL_BARS) for k in component_returns]
+        [
+            _ann(float(component_returns[k].std()), periods_per_year=ANNUAL_BARS)
+            for k in component_returns
+        ]
     )
-    port_vol = std * np.sqrt(ANNUAL_BARS)
+    port_vol = _ann(std, periods_per_year=ANNUAL_BARS)
     dr = float(np.dot(w_arr, comp_vols) / port_vol) if port_vol > 1e-9 else 1.0
 
     # ── Correlation matrix ─────────────────────────────────────────────────
@@ -252,10 +258,7 @@ def compute_portfolio_stats(
     individual_sharpes: dict[str, float] = {}
     for k, s in component_returns.items():
         s_clean = s.dropna()
-        sd = float(s_clean.std())
-        individual_sharpes[k] = (
-            float(s_clean.mean() / sd * np.sqrt(ANNUAL_BARS)) if sd > 1e-9 else 0.0
-        )
+        individual_sharpes[k] = float(_sh(s_clean, periods_per_year=ANNUAL_BARS))
 
     return {
         "sharpe": round(sharpe, 3),
