@@ -963,7 +963,7 @@ uv run pytest tests/ -v
 3-file Karpathy-style autonomous loop:
 - `research/auto/evaluate.py` — immutable WFO evaluator (10 strategy runners)
 - `research/auto/experiment.py` — agent-editable config (git-tracked)
-- `research/auto/program.md` — autonomous agent instructions
+- `scripts/rerank/run_autonomous_loop.py` — multi-phase driver (superseded the old `phase2_loop.py` — `phase10_loop.py` / `iter2_loop.py` — `iter5_loop.py` scripts)
 
 ### 15.2 Top Results (420+ experiments)
 
@@ -1019,9 +1019,8 @@ uv run pytest tests/ -v
 |------|-------------|
 | `research/auto/evaluate.py` | 10-strategy WFO evaluator |
 | `research/auto/experiment.py` | Agent-editable config |
-| `research/auto/program.md` | Autonomous agent instructions |
 | `research/auto/run_loop.py` | 52-experiment batch runner |
-| `research/auto/phase2_loop.py` — `phase10_loop.py` | Phase scripts |
+| `scripts/rerank/run_autonomous_loop.py` | Multi-phase autonomous loop driver (post-remediation replacement for the per-phase loop scripts) |
 | `research/ml/tcn_classifier.py` | TCN (45-bar receptive field) |
 | `research/ml/autoencoder_regime.py` | Unsupervised 72→8 regime discovery |
 | `research/ml/ensemble_stacking.py` | LSTM/TCN dispatch layer |
