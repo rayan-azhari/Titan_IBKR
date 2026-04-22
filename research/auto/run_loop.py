@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent.parent
 EXP = ROOT / "research/auto/experiment.py"
 EVAL = ROOT / "research/auto/evaluate.py"
-BEST = [4.5462]  # Current global best (IWB stacking cbars=5)
+BEST = [1.2630]  # Current best under rolling sanctuary (AUD_JPY MR v46 sp0.5 is32k oos8k)
 MIN_IMPROVEMENT = 0.02
 
 
@@ -241,12 +241,176 @@ experiments = [
     ("FC AUD_JPY vol10", c(FC_BASE, instruments=["AUD_JPY"], vol_target_pct=0.10)),
     ("FC AUD_USD default", c(FC_BASE, instruments=["AUD_USD"])),
     ("FC EUR_USD carry-1", c(FC_BASE, instruments=["EUR_USD"], carry_direction=-1)),
-    # Pairs Trading
-    ("PT INTC/TXN", c(PT_BASE, instruments=["INTC"], pair_b="TXN")),
-    ("PT GOOGL/META", c(PT_BASE, instruments=["GOOGL"], pair_b="META")),
+    # Pairs Trading (ETF-only per no-single-stock constraint)
     ("PT GLD/IAU", c(PT_BASE, instruments=["GLD"], pair_b="IAU")),
     ("PT SPY/QQQ", c(PT_BASE, instruments=["SPY"], pair_b="QQQ")),
-    ("PT MSFT/AAPL", c(PT_BASE, instruments=["MSFT"], pair_b="AAPL")),
+    ("PT GLD/SLV", c(PT_BASE, instruments=["GLD"], pair_b="SLV")),
+    ("PT IEF/TLT", c(PT_BASE, instruments=["IEF"], pair_b="TLT")),
+    ("PT LQD/HYG", c(PT_BASE, instruments=["LQD"], pair_b="HYG")),
+    ("PT GDX/GDXJ", c(PT_BASE, instruments=["GDX"], pair_b="GDXJ")),
+    # -- Phase 2: rediscover champion direction under new sanctuary --
+    # MR with donchian + spread_bps=0.5 sweep (current champion family)
+    (
+        "MR AUD_JPY v46 don sp0.5 is32k",
+        c(
+            MR_BASE,
+            instruments=["AUD_JPY"],
+            vwap_anchor=46,
+            regime_filter="conf_donchian_pos_20",
+            spread_bps=0.5,
+            slippage_bps=0.2,
+            is_bars=32000,
+            oos_bars=8000,
+        ),
+    ),
+    (
+        "MR AUD_JPY v24 don sp0.5 is32k",
+        c(
+            MR_BASE,
+            instruments=["AUD_JPY"],
+            vwap_anchor=24,
+            regime_filter="conf_donchian_pos_20",
+            spread_bps=0.5,
+            slippage_bps=0.2,
+            is_bars=32000,
+            oos_bars=8000,
+        ),
+    ),
+    (
+        "MR AUD_JPY v36 don sp0.5 is32k",
+        c(
+            MR_BASE,
+            instruments=["AUD_JPY"],
+            vwap_anchor=36,
+            regime_filter="conf_donchian_pos_20",
+            spread_bps=0.5,
+            slippage_bps=0.2,
+            is_bars=32000,
+            oos_bars=8000,
+        ),
+    ),
+    (
+        "MR AUD_JPY v60 don sp0.5 is32k",
+        c(
+            MR_BASE,
+            instruments=["AUD_JPY"],
+            vwap_anchor=60,
+            regime_filter="conf_donchian_pos_20",
+            spread_bps=0.5,
+            slippage_bps=0.2,
+            is_bars=32000,
+            oos_bars=8000,
+        ),
+    ),
+    (
+        "MR AUD_JPY v46 don sp0.5 is24k oos6k",
+        c(
+            MR_BASE,
+            instruments=["AUD_JPY"],
+            vwap_anchor=46,
+            regime_filter="conf_donchian_pos_20",
+            spread_bps=0.5,
+            slippage_bps=0.2,
+            is_bars=24000,
+            oos_bars=6000,
+        ),
+    ),
+    (
+        "MR AUD_JPY v46 don sp0.5 is20k oos5k",
+        c(
+            MR_BASE,
+            instruments=["AUD_JPY"],
+            vwap_anchor=46,
+            regime_filter="conf_donchian_pos_20",
+            spread_bps=0.5,
+            slippage_bps=0.2,
+            is_bars=20000,
+            oos_bars=5000,
+        ),
+    ),
+    # Try all FX pairs with the donchian+sp0.5 champion recipe
+    (
+        "MR EUR_USD v46 don sp0.5 is32k",
+        c(
+            MR_BASE,
+            instruments=["EUR_USD"],
+            vwap_anchor=46,
+            regime_filter="conf_donchian_pos_20",
+            spread_bps=0.5,
+            slippage_bps=0.2,
+            is_bars=32000,
+            oos_bars=8000,
+        ),
+    ),
+    (
+        "MR GBP_USD v46 don sp0.5 is32k",
+        c(
+            MR_BASE,
+            instruments=["GBP_USD"],
+            vwap_anchor=46,
+            regime_filter="conf_donchian_pos_20",
+            spread_bps=0.5,
+            slippage_bps=0.2,
+            is_bars=32000,
+            oos_bars=8000,
+        ),
+    ),
+    (
+        "MR AUD_USD v46 don sp0.5 is32k",
+        c(
+            MR_BASE,
+            instruments=["AUD_USD"],
+            vwap_anchor=46,
+            regime_filter="conf_donchian_pos_20",
+            spread_bps=0.5,
+            slippage_bps=0.2,
+            is_bars=32000,
+            oos_bars=8000,
+        ),
+    ),
+    (
+        "MR USD_JPY v46 don sp0.5 is32k",
+        c(
+            MR_BASE,
+            instruments=["USD_JPY"],
+            vwap_anchor=46,
+            regime_filter="conf_donchian_pos_20",
+            spread_bps=0.5,
+            slippage_bps=0.2,
+            is_bars=32000,
+            oos_bars=8000,
+        ),
+    ),
+    (
+        "MR USD_CHF v46 don sp0.5 is32k",
+        c(
+            MR_BASE,
+            instruments=["USD_CHF"],
+            vwap_anchor=46,
+            regime_filter="conf_donchian_pos_20",
+            spread_bps=0.5,
+            slippage_bps=0.2,
+            is_bars=32000,
+            oos_bars=8000,
+        ),
+    ),
+    # Cross-asset new pairs
+    ("XA IEF->IWB lb10", c(XA_BASE, instruments=["IWB"], bond="IEF", lookback=10, hold_days=10)),
+    ("XA TLT->IWB lb10", c(XA_BASE, instruments=["IWB"], bond="TLT", lookback=10, hold_days=10)),
+    ("XA HYG->IWB lb10", c(XA_BASE, instruments=["IWB"], bond="HYG", lookback=10, hold_days=10)),
+    ("XA HYG->QQQ lb10", c(XA_BASE, instruments=["QQQ"], bond="HYG", lookback=10, hold_days=10)),
+    ("XA HYG->SPY lb10", c(XA_BASE, instruments=["SPY"], bond="HYG", lookback=10, hold_days=10)),
+    ("XA LQD->GLD lb10", c(XA_BASE, instruments=["GLD"], bond="LQD", lookback=10, hold_days=10)),
+    ("XA TIP->GLD lb20", c(XA_BASE, instruments=["GLD"], bond="TIP", lookback=20, hold_days=20)),
+    ("XA TIP->GLD lb60", c(XA_BASE, instruments=["GLD"], bond="TIP", lookback=60, hold_days=60)),
+    # Trend on more ETFs w/ multiple MAs
+    ("TF GLD SMA100", c(TF_BASE, instruments=["GLD"], slow_ma=100)),
+    ("TF GLD SMA150", c(TF_BASE, instruments=["GLD"], slow_ma=150)),
+    ("TF DBC SMA150", c(TF_BASE, instruments=["DBC"], slow_ma=150)),
+    ("TF SLV SMA200", c(TF_BASE, instruments=["SLV"])),
+    ("TF TQQQ SMA200", c(TF_BASE, instruments=["TQQQ"])),
+    ("TF IWB SMA100", c(TF_BASE, instruments=["IWB"], slow_ma=100)),
+    ("TF GDX SMA200", c(TF_BASE, instruments=["GDX"])),
 ]
 
 if __name__ == "__main__":
