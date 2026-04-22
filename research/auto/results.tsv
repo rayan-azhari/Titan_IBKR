@@ -593,3 +593,4 @@ timestamp	hash	score	sharpe	max_dd	parity	pos_folds	trades	instruments	descripti
 2026-04-07 18:52:53	4acd18a5	4.4104	+4.1270	-25.0%	1.1940	38%	157	AUD_JPY	MR AUD_JPY v47 sp0
 2026-04-07 18:53:18	4b0bc96e	2.3522	+1.8457	-8.4%	2.8497	78%	20	IWB	IWB stacking is2.5y
 2026-04-22 12:03:23	4843c3cc	1.2630	+0.7690	-19.5%	1.6681	83%	96	AUD_JPY	MR AUD_JPY v46 sp0.5 is32k oos8k
+2026-04-22 12:28:55	d4d0f698	4.5462	+3.9962	-3.0%	6.5719	100%	5	IWB	ML IWB stacking baseline
