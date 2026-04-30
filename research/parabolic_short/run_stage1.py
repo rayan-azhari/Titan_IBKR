@@ -70,12 +70,12 @@ def load_one(path: Path) -> tuple[str, pd.DataFrame] | None:
 
 
 def report(
-    name: str, rets: pd.Series, trades: list,
+    name: str,
+    rets: pd.Series,
+    trades: list,
 ) -> dict:
     sh = sharpe(rets, periods_per_year=DAILY_PER_YEAR)
-    lo, hi = bootstrap_sharpe_ci(
-        rets, periods_per_year=DAILY_PER_YEAR, n_resamples=2000
-    )
+    lo, hi = bootstrap_sharpe_ci(rets, periods_per_year=DAILY_PER_YEAR, n_resamples=2000)
     dd = max_drawdown(rets)
     total = float((1.0 + rets).prod() - 1.0)
     yrs = len(rets) / DAILY_PER_YEAR if DAILY_PER_YEAR else 0.0
@@ -180,8 +180,7 @@ def main() -> None:
     oos_mask = (pooled.index >= oos_start) & (pooled.index < sanctuary_start)
 
     is_trades = [t for t in all_trades if t.entry_date < oos_start]
-    oos_trades = [t for t in all_trades
-                  if oos_start <= t.entry_date < sanctuary_start]
+    oos_trades = [t for t in all_trades if oos_start <= t.entry_date < sanctuary_start]
 
     print("\n  Trade R-multiple summary (full):")
     rs = np.array([t.r_multiple for t in all_trades])

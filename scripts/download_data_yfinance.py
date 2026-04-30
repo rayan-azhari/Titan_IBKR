@@ -46,6 +46,7 @@ def _parse_symbol_arg(arg: str) -> tuple[str, str]:
         return yahoo.strip(), local.strip()
     return arg, arg
 
+
 # Interval mappings: our name -> yfinance name, output suffix
 _INTERVAL_MAP = {
     "D": ("1d", "D"),

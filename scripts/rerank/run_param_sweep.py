@@ -55,9 +55,8 @@ def economic_story(signal: str, target: str) -> str:
     """Return a one-line causal mechanism, or '' if nonsensical."""
     # Credit-spread -> equity
     if signal == "HYG" and target in ("SPY", "QQQ", "IWB"):
-        return (
-            "credit spreads widen (HYG falls) -> risk-off -> "
-            + ("tech sells off" if target == "QQQ" else "broader equity")
+        return "credit spreads widen (HYG falls) -> risk-off -> " + (
+            "tech sells off" if target == "QQQ" else "broader equity"
         )
     # Duration -> growth equity
     if signal == "TLT" and target in ("QQQ", "TQQQ", "SPY", "IWB"):
@@ -101,9 +100,7 @@ def economic_story(signal: str, target: str) -> str:
 # ── WFO wrapper ────────────────────────────────────────────────────────
 
 
-def run_combo(
-    signal: str, target: str, lookback: int, hold: int, threshold: float
-) -> dict | None:
+def run_combo(signal: str, target: str, lookback: int, hold: int, threshold: float) -> dict | None:
     from research.cross_asset.run_bond_equity_wfo import load_daily, run_bond_wfo
 
     try:
@@ -249,9 +246,7 @@ def main() -> None:
         "| # | Signal | Target | LB | Hold | Th | Sharpe | CI_lo | CI_hi | "
         "Max DD | Folds | Pos% | Story |"
     )
-    lines.append(
-        "|--:|---|---|--:|--:|---:|---:|---:|---:|---:|--:|--:|---|"
-    )
+    lines.append("|--:|---|---|--:|--:|---:|---:|---:|---:|---:|--:|--:|---|")
     bonf_sorted = bonf.sort_values("ci_lo", ascending=False).reset_index(drop=True)
     for i, r in bonf_sorted.iterrows():
         lines.append(

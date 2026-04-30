@@ -41,7 +41,7 @@ LOGS_DIR = PROJECT_ROOT / ".tmp" / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 RESTART_DELAY_SECS = 180  # 3 min — covers IBKR maintenance / weekly restart
-QUICK_DEATH_SECS = 30     # if process dies in <30s, treat as config error
+QUICK_DEATH_SECS = 30  # if process dies in <30s, treat as config error
 QUICK_DEATH_DELAY_SECS = 60
 STRATEGY_SCRIPT = PROJECT_ROOT / "scripts" / "run_portfolio.py"
 
@@ -93,15 +93,16 @@ def main() -> int:
     parser.add_argument(
         "--strategies",
         default="champion_portfolio",
-        help="Strategy bundle name passed to run_portfolio.py "
-             "(default: champion_portfolio)",
+        help="Strategy bundle name passed to run_portfolio.py (default: champion_portfolio)",
     )
     args = parser.parse_args()
 
     cmd = [sys.executable, str(STRATEGY_SCRIPT), "--strategies", args.strategies]
     log.info(f"Watchdog starting. Child command: {' '.join(cmd)}")
-    log.info(f"Restart cooldown: {RESTART_DELAY_SECS}s normal, "
-             f"{QUICK_DEATH_DELAY_SECS}s if child dies in <{QUICK_DEATH_SECS}s")
+    log.info(
+        f"Restart cooldown: {RESTART_DELAY_SECS}s normal, "
+        f"{QUICK_DEATH_DELAY_SECS}s if child dies in <{QUICK_DEATH_SECS}s"
+    )
 
     global _current_proc
     attempt = 0

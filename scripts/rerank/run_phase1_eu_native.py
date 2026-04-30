@@ -88,9 +88,7 @@ def build_ratio(sym_num: str, sym_den: str) -> pd.Series:
 # ── Runner ─────────────────────────────────────────────────────────────
 
 
-def run_channel(
-    name: str, signal: pd.Series, target: pd.Series, story: str
-) -> list[dict]:
+def run_channel(name: str, signal: pd.Series, target: pd.Series, story: str) -> list[dict]:
     from research.cross_asset.run_bond_equity_wfo import run_bond_wfo
 
     rows: list[dict] = []
@@ -165,34 +163,54 @@ def main() -> None:
     rows: list[dict] = []
 
     # Channel 1: UUP -> EUR/USD (dollar strength -> EUR weakness)
-    rows.extend(run_channel(
-        "UUP->EURUSD", uup, eurusd,
-        "Dollar strength -> EUR/USD momentum (USD up -> EUR down)",
-    ))
+    rows.extend(
+        run_channel(
+            "UUP->EURUSD",
+            uup,
+            eurusd,
+            "Dollar strength -> EUR/USD momentum (USD up -> EUR down)",
+        )
+    )
 
     # Channel 2: CL=F -> ^GDAXI (oil -> German equity via energy imports)
-    rows.extend(run_channel(
-        "CL->GDAXI", cl, gdaxi,
-        "Oil shock -> DAX (Germany is a net energy importer)",
-    ))
+    rows.extend(
+        run_channel(
+            "CL->GDAXI",
+            cl,
+            gdaxi,
+            "Oil shock -> DAX (Germany is a net energy importer)",
+        )
+    )
 
     # Channel 3: GLD -> EUR/USD (safe-haven rotation; gold-up = USD-down)
-    rows.extend(run_channel(
-        "GLD->EURUSD", gld, eurusd,
-        "Gold rally -> USD weakness -> EUR/USD up (safe-haven)",
-    ))
+    rows.extend(
+        run_channel(
+            "GLD->EURUSD",
+            gld,
+            eurusd,
+            "Gold rally -> USD weakness -> EUR/USD up (safe-haven)",
+        )
+    )
 
     # Channel 4: IGOV-IEF spread -> EUR/USD
-    rows.extend(run_channel(
-        "IGOV_IEF->EURUSD", spread_igov_ief, eurusd,
-        "International-vs-US rate premium -> EUR/USD (rate differential)",
-    ))
+    rows.extend(
+        run_channel(
+            "IGOV_IEF->EURUSD",
+            spread_igov_ief,
+            eurusd,
+            "International-vs-US rate premium -> EUR/USD (rate differential)",
+        )
+    )
 
     # Channel 5: DAX/SPY relative -> ^GDAXI
-    rows.extend(run_channel(
-        "DAX_SPY_ratio->GDAXI", ratio_gdaxi_spy, gdaxi,
-        "DAX/SPY momentum -> DAX (relative-strength continuation)",
-    ))
+    rows.extend(
+        run_channel(
+            "DAX_SPY_ratio->GDAXI",
+            ratio_gdaxi_spy,
+            gdaxi,
+            "DAX/SPY momentum -> DAX (relative-strength continuation)",
+        )
+    )
 
     df = pd.DataFrame(rows)
     df.to_csv(REPORT / "results.csv", index=False)

@@ -74,7 +74,9 @@ def get_bond_equity_returns(
         spread_bps=5.0,
     )
     s = r["stitched_returns"]
-    s.name = f"{bond.lower()}_{target.lower()}_lb{lookback}_h{hold_days}_t{int(threshold * 100):03d}"  # noqa: E501
+    s.name = (
+        f"{bond.lower()}_{target.lower()}_lb{lookback}_h{hold_days}_t{int(threshold * 100):03d}"  # noqa: E501
+    )
     return s
 
 
@@ -209,12 +211,8 @@ def main() -> None:
         v3s = series[v3_key]
         v4s = series[v4_key]
         print(f"\n  {label}")
-        print(
-            f"    v3  Sharpe={sharpe(v3s):+.3f}  CI={boot_ci(v3s)}  DD={max_dd(v3s) * 100:+.1f}%"
-        )
-        print(
-            f"    v4  Sharpe={sharpe(v4s):+.3f}  CI={boot_ci(v4s)}  DD={max_dd(v4s) * 100:+.1f}%"
-        )
+        print(f"    v3  Sharpe={sharpe(v3s):+.3f}  CI={boot_ci(v3s)}  DD={max_dd(v3s) * 100:+.1f}%")
+        print(f"    v4  Sharpe={sharpe(v4s):+.3f}  CI={boot_ci(v4s)}  DD={max_dd(v4s) * 100:+.1f}%")
 
     # Portfolio analysis on the v4 correlation mix (5 strategies).
     v4_keys = [n for n, _, _ in CANDIDATES if n in series]
@@ -351,8 +349,7 @@ def main() -> None:
     if "ml_iwb" in series:
         s = series["ml_iwb"]
         md.append(
-            f"Sharpe={sharpe(s):+.3f}  CI={boot_ci(s)}  "
-            f"DD={max_dd(s) * 100:+.1f}%  bars={len(s)}"
+            f"Sharpe={sharpe(s):+.3f}  CI={boot_ci(s)}  DD={max_dd(s) * 100:+.1f}%  bars={len(s)}"
         )
     else:
         md.append("ML IWB not loaded.")

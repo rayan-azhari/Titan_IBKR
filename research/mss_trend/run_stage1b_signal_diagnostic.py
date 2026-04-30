@@ -53,8 +53,10 @@ def load_pair(pair: str):
 
 
 def collect_entries(
-    h1: pd.DataFrame, daily: pd.DataFrame,
-    daily_n: int = 2, m15_n: int = 6,
+    h1: pd.DataFrame,
+    daily: pd.DataFrame,
+    daily_n: int = 2,
+    m15_n: int = 6,
 ) -> list[tuple[int, int]]:
     """Return list of (entry_bar_idx, direction) for every MSS trigger.
 
@@ -110,20 +112,22 @@ def collect_entries(
     return entries
 
 
-def forward_returns(closes: np.ndarray, entry_idx: int, horizon: int,
-                    direction: int) -> float | None:
+def forward_returns(
+    closes: np.ndarray, entry_idx: int, horizon: int, direction: int
+) -> float | None:
     if entry_idx + horizon >= len(closes):
         return None
     p0 = closes[entry_idx]
     p1 = closes[entry_idx + horizon]
     if p0 <= 0 or p1 <= 0:
         return None
-    raw = (p1 / p0 - 1.0)
+    raw = p1 / p0 - 1.0
     return direction * raw
 
 
-def random_baseline(closes: np.ndarray, n_samples: int, horizon: int,
-                    rng: np.random.Generator) -> np.ndarray:
+def random_baseline(
+    closes: np.ndarray, n_samples: int, horizon: int, rng: np.random.Generator
+) -> np.ndarray:
     """Sample n_samples random (idx, direction) pairs and compute signed
     forward returns. Same data; same horizon; random selection."""
     valid_max = len(closes) - horizon - 1
@@ -138,7 +142,9 @@ def random_baseline(closes: np.ndarray, n_samples: int, horizon: int,
 
 
 def bootstrap_mean_ci(
-    x: np.ndarray, n_resamples: int = 5000, confidence: float = 0.95,
+    x: np.ndarray,
+    n_resamples: int = 5000,
+    confidence: float = 0.95,
     seed: int = 42,
 ) -> tuple[float, float, float]:
     if len(x) < 10:
@@ -174,20 +180,21 @@ def main() -> None:
         print(f"{n_entries} entries")
 
         for h in HORIZONS:
-            for (idx, direction) in entries:
+            for idx, direction in entries:
                 r = forward_returns(closes, idx, h, direction)
                 if r is not None:
                     all_entries_by_horizon[h].append(r)
-            baseline = random_baseline(closes, n_samples=n_entries * 5,
-                                       horizon=h, rng=rng)
+            baseline = random_baseline(closes, n_samples=n_entries * 5, horizon=h, rng=rng)
             all_baseline_by_horizon[h].extend(baseline.tolist())
 
     print("\n" + "=" * 84)
     print("POOLED RESULTS (all 5 pairs, all entries)")
     print("=" * 84)
-    print(f"\n{'Horizon':>10}  {'N entry':>9}  "
-          f"{'Mean entry (bps)':>18}  {'Entry 95% CI (bps)':>26}  "
-          f"{'Mean baseline (bps)':>21}  {'p(better)':>11}")
+    print(
+        f"\n{'Horizon':>10}  {'N entry':>9}  "
+        f"{'Mean entry (bps)':>18}  {'Entry 95% CI (bps)':>26}  "
+        f"{'Mean baseline (bps)':>21}  {'p(better)':>11}"
+    )
     print("-" * 100)
 
     for h in HORIZONS:
@@ -207,13 +214,17 @@ def main() -> None:
             if er > br:
                 wins += 1
         p_better = wins / n_b
+
         def bps(x):
             return x * 1e4
-        print(f"{h:>9}h  {len(e):>9d}  "
-              f"{bps(e_mean):>+17.2f}   "
-              f"[{bps(e_lo):>+6.2f}, {bps(e_hi):>+6.2f}]   "
-              f"{bps(b_mean):>+19.2f}   "
-              f"{p_better:>10.1%}")
+
+        print(
+            f"{h:>9}h  {len(e):>9d}  "
+            f"{bps(e_mean):>+17.2f}   "
+            f"[{bps(e_lo):>+6.2f}, {bps(e_hi):>+6.2f}]   "
+            f"{bps(b_mean):>+19.2f}   "
+            f"{p_better:>10.1%}"
+        )
 
     print()
     print("=" * 84)

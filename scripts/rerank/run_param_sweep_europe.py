@@ -70,9 +70,7 @@ def economic_story(signal: str, target: str) -> str:
     return ""
 
 
-def run_combo(
-    signal: str, target: str, lookback: int, hold: int, threshold: float
-) -> dict | None:
+def run_combo(signal: str, target: str, lookback: int, hold: int, threshold: float) -> dict | None:
     from research.cross_asset.run_bond_equity_wfo import load_daily, run_bond_wfo
 
     try:
@@ -190,12 +188,9 @@ def main() -> None:
     if len(bonf) > 0:
         lines.append("## Bonferroni survivors\n")
         lines.append(
-            "| # | Signal | Target | LB | Hold | Th | Sharpe | CI_lo | "
-            "CI_hi | DD | Folds | Pos% |"
+            "| # | Signal | Target | LB | Hold | Th | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |"
         )
-        lines.append(
-            "|--:|---|---|--:|--:|---:|---:|---:|---:|---:|--:|--:|"
-        )
+        lines.append("|--:|---|---|--:|--:|---:|---:|---:|---:|---:|--:|--:|")
         bonf_sorted = bonf.sort_values("ci_lo", ascending=False).reset_index(drop=True)
         for i, r in bonf_sorted.iterrows():
             lines.append(
@@ -220,9 +215,7 @@ def main() -> None:
         "| # | Signal | Target | LB | Hold | Th | Sharpe | CI_lo | "
         "CI_hi | DD | Folds | Pos% | Story |"
     )
-    lines.append(
-        "|--:|---|---|--:|--:|---:|---:|---:|---:|---:|--:|--:|---|"
-    )
+    lines.append("|--:|---|---|--:|--:|---:|---:|---:|---:|---:|--:|--:|---|")
     for i, r in top20.iterrows():
         lines.append(
             f"| {i + 1} | {r['signal']} | {r['target']} | "

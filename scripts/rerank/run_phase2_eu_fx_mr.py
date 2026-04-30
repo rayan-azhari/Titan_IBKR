@@ -45,9 +45,7 @@ MIN_FOLDS = 2
 MIN_POS = 0.50
 
 
-def run_config(
-    pair: str, vwap_anchor: int, filter_name: str, grid_name: str
-) -> dict | None:
+def run_config(pair: str, vwap_anchor: int, filter_name: str, grid_name: str) -> dict | None:
     from research.mean_reversion.run_confluence_regime_test import (
         build_atr_regime_mask,
         build_confluence_disagreement_mask,
@@ -125,7 +123,9 @@ def main() -> None:
     t0 = time.time()
 
     rows: list[dict] = []
-    combos = [(p, v, f, g) for p in PAIRS for v in VWAP_ANCHORS for f in FILTERS for g in TIER_GRIDS]  # noqa: E501
+    combos = [
+        (p, v, f, g) for p in PAIRS for v in VWAP_ANCHORS for f in FILTERS for g in TIER_GRIDS
+    ]  # noqa: E501
     print(f"  Combos: {len(combos)}")
 
     tested = 0
@@ -183,7 +183,9 @@ def main() -> None:
 
     if not bonf.empty:
         lines.append("## Bonferroni survivors\n")
-        lines.append("| # | Pair | vwap | Filter | Grid | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")  # noqa: E501
+        lines.append(
+            "| # | Pair | vwap | Filter | Grid | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |"
+        )  # noqa: E501
         lines.append("|--:|---|--:|---|---|---:|---:|---:|---:|--:|--:|")
         for i, r in bonf.sort_values("ci_lo", ascending=False).reset_index(drop=True).iterrows():
             lines.append(
@@ -198,7 +200,9 @@ def main() -> None:
     lines.append("## Top 10 by CI_lo\n")
     if not df.empty:
         top = df.sort_values("ci_lo", ascending=False).head(10).reset_index(drop=True)
-        lines.append("| # | Pair | vwap | Filter | Grid | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")  # noqa: E501
+        lines.append(
+            "| # | Pair | vwap | Filter | Grid | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |"
+        )  # noqa: E501
         lines.append("|--:|---|--:|---|---|---:|---:|---:|---:|--:|--:|")
         for i, r in top.iterrows():
             lines.append(

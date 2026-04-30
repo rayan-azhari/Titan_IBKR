@@ -22,10 +22,10 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class Swing:
-    idx: int          # bar index where the swing occurred
+    idx: int  # bar index where the swing occurred
     confirm_idx: int  # bar index where the swing was confirmable (idx + N)
     price: float
-    is_high: bool     # True for swing high, False for swing low
+    is_high: bool  # True for swing high, False for swing low
 
 
 def detect_swings(
@@ -61,9 +61,9 @@ def detect_swings(
     for i in range(n, m - n):
         # Strict inequality on both sides — ties don't qualify as a swing,
         # matching the convention "higher than the N candles on both sides".
-        if h[i] > h[i - n: i].max() and h[i] > h[i + 1: i + n + 1].max():
+        if h[i] > h[i - n : i].max() and h[i] > h[i + 1 : i + n + 1].max():
             swings.append(Swing(idx=i, confirm_idx=i + n, price=float(h[i]), is_high=True))
-        if lo[i] < lo[i - n: i].min() and lo[i] < lo[i + 1: i + n + 1].min():
+        if lo[i] < lo[i - n : i].min() and lo[i] < lo[i + 1 : i + n + 1].min():
             swings.append(Swing(idx=i, confirm_idx=i + n, price=float(lo[i]), is_high=False))
     swings.sort(key=lambda s: s.idx)
     return swings

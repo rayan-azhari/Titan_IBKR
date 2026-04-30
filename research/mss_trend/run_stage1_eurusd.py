@@ -109,8 +109,7 @@ def main() -> None:
     print(f"      OOS        : {oos_start} → {sanctuary_start}")
     print(f"      Sanctuary  : {sanctuary_start} → {m15.index[-1]}  (UNTOUCHED)")
 
-    print("\n[3/4] Generating trades on full dataset (one pass, no parameter "
-          "tuning)...")
+    print("\n[3/4] Generating trades on full dataset (one pass, no parameter tuning)...")
     trades = generate_trades(
         m15_df=m15,
         daily_df=daily,
@@ -135,14 +134,12 @@ def main() -> None:
     is_mask = m15.index < oos_start
     oos_mask = (m15.index >= oos_start) & (m15.index < sanctuary_start)
     is_trades = [t for t in trades if t.entry_ts < oos_start]
-    oos_trades = [t for t in trades
-                  if oos_start <= t.entry_ts < sanctuary_start]
+    oos_trades = [t for t in trades if oos_start <= t.entry_ts < sanctuary_start]
 
     print("\n[4/4] Results:\n")
     report_block("IS  (2005 → 2021)", bar_returns[is_mask], len(is_trades))
     print()
-    res_oos = report_block("OOS (2021 → 2025)", bar_returns[oos_mask],
-                            len(oos_trades))
+    res_oos = report_block("OOS (2021 → 2025)", bar_returns[oos_mask], len(oos_trades))
 
     print("\n" + "=" * 72)
     print("GATE EVALUATION")

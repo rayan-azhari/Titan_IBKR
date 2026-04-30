@@ -36,7 +36,7 @@ class TradeV2:
     stop_price: float
     exit_date: pd.Timestamp
     exit_price: float
-    exit_reason: str   # 'time' | 'sl'
+    exit_reason: str  # 'time' | 'sl'
     r_multiple: float
     return_pct: float
 
@@ -46,11 +46,11 @@ def detect_setups_v2(df: pd.DataFrame) -> pd.Series:
     o, c, v = df["open"], df["close"], df["volume"]
     sma10 = c.rolling(SMA_LEN, min_periods=SMA_LEN).mean()
     avg_v20 = v.rolling(20, min_periods=20).mean()
-    green = (c > o)
+    green = c > o
     three_green = green.shift(1) & green.shift(2) & green.shift(3)
-    gap_up = (o > c.shift(1) * (1.0 + GAP_PCT))
-    vol_blowoff = (v > avg_v20 * VOL_MULT)
-    extended = (c.shift(1) > sma10.shift(1) * (1.0 + EXT_PCT))
+    gap_up = o > c.shift(1) * (1.0 + GAP_PCT)
+    vol_blowoff = v > avg_v20 * VOL_MULT
+    extended = c.shift(1) > sma10.shift(1) * (1.0 + EXT_PCT)
     return (three_green & gap_up & vol_blowoff & extended).fillna(False)
 
 
@@ -97,18 +97,20 @@ def simulate_trades_v2(df: pd.DataFrame, symbol: str) -> list[TradeV2]:
         net_ret = gross_ret - 2.0 * cost
         r_mult = (entry_open - exit_price) / risk - 2.0 * cost * entry_open / risk
 
-        trades.append(TradeV2(
-            symbol=symbol,
-            setup_date=idx[t_idx],
-            entry_date=idx[entry_idx],
-            entry_price=float(entry_open),
-            stop_price=float(stop),
-            exit_date=idx[exit_idx],
-            exit_price=float(exit_price),
-            exit_reason=exit_reason,
-            r_multiple=float(r_mult),
-            return_pct=float(net_ret),
-        ))
+        trades.append(
+            TradeV2(
+                symbol=symbol,
+                setup_date=idx[t_idx],
+                entry_date=idx[entry_idx],
+                entry_price=float(entry_open),
+                stop_price=float(stop),
+                exit_date=idx[exit_idx],
+                exit_price=float(exit_price),
+                exit_reason=exit_reason,
+                r_multiple=float(r_mult),
+                return_pct=float(net_ret),
+            )
+        )
         blocked_until = exit_idx
 
     return trades

@@ -153,8 +153,7 @@ def main() -> None:
     lines: list[str] = [
         f"# Phase 5 — Cross-Continent Equity Lead-Lag ({len(df)} combos)",
         "",
-        f"Tests US <-> EU equity momentum in both directions. "
-        f"Universe: US = {US}, EU = {EU}.",
+        f"Tests US <-> EU equity momentum in both directions. Universe: US = {US}, EU = {EU}.",
         "",
         f"**Gate**: CI_lo >= {BONF_CI_LO}, folds >= {BONF_MIN_FOLDS}, "
         f"pos >= {int(BONF_MIN_POS * 100)}%, DD >= {BONF_MAX_DD}%.",
@@ -182,8 +181,11 @@ def main() -> None:
     lines.append("| Signal | Target | Direction | Max Sharpe | Max CI_lo | CI_lo > 0 |")
     lines.append("|---|---|---|---:|---:|--:|")
     pair_stats = (
-        df.groupby(["signal", "target", "direction"])["ci_lo"].max().reset_index()
-        .sort_values("ci_lo", ascending=False).head(10)
+        df.groupby(["signal", "target", "direction"])["ci_lo"]
+        .max()
+        .reset_index()
+        .sort_values("ci_lo", ascending=False)
+        .head(10)
     )
     for _, r in pair_stats.iterrows():
         sub = df[(df["signal"] == r["signal"]) & (df["target"] == r["target"])]
@@ -196,7 +198,9 @@ def main() -> None:
 
     if not bonf.empty:
         lines.append("## Bonferroni survivors\n")
-        lines.append("| # | Signal | Target | Direction | LB | Hold | Th | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")  # noqa: E501
+        lines.append(
+            "| # | Signal | Target | Direction | LB | Hold | Th | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |"  # noqa: E501
+        )
         lines.append("|--:|---|---|---|--:|--:|---:|---:|---:|---:|---:|--:|--:|")
         for i, r in bonf.sort_values("ci_lo", ascending=False).reset_index(drop=True).iterrows():
             lines.append(
@@ -212,7 +216,9 @@ def main() -> None:
     lines.append("## Top 10 by CI_lo\n")
     if not df.empty:
         top = df.sort_values("ci_lo", ascending=False).head(10).reset_index(drop=True)
-        lines.append("| # | Signal | Target | Direction | LB | Hold | Th | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")  # noqa: E501
+        lines.append(
+            "| # | Signal | Target | Direction | LB | Hold | Th | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |"  # noqa: E501
+        )
         lines.append("|--:|---|---|---|--:|--:|---:|---:|---:|---:|---:|--:|--:|")
         for i, r in top.iterrows():
             lines.append(

@@ -41,8 +41,9 @@ HORIZONS = [1, 3, 5, 10, 20]
 def list_equity_files() -> list[Path]:
     files = sorted(glob.glob(str(DATA_DIR / "*_D.parquet")))
     fx_prefixes = ("EUR_", "GBP_", "AUD_", "USD_", "NZD_", "CHF_", "JPY_")
-    return [Path(f) for f in files
-            if not any(os.path.basename(f).startswith(p) for p in fx_prefixes)]
+    return [
+        Path(f) for f in files if not any(os.path.basename(f).startswith(p) for p in fx_prefixes)
+    ]
 
 
 def load_one(path: Path):
@@ -68,16 +69,17 @@ def detect_setups_only(df: pd.DataFrame) -> pd.Series:
     o, c, v = df["open"], df["close"], df["volume"]
     sma10 = c.rolling(SMA_LEN, min_periods=SMA_LEN).mean()
     avg_v20 = v.rolling(20, min_periods=20).mean()
-    green = (c > o)
+    green = c > o
     three_green = green.shift(1) & green.shift(2) & green.shift(3)
-    gap_up = (o > c.shift(1) * (1.0 + GAP_PCT))
-    vol_blowoff = (v > avg_v20 * VOL_MULT)
-    extended = (c.shift(1) > sma10.shift(1) * (1.0 + EXT_PCT))
+    gap_up = o > c.shift(1) * (1.0 + GAP_PCT)
+    vol_blowoff = v > avg_v20 * VOL_MULT
+    extended = c.shift(1) > sma10.shift(1) * (1.0 + EXT_PCT)
     return (three_green & gap_up & vol_blowoff & extended).fillna(False)
 
 
-def bootstrap_mean_ci(x: np.ndarray, n_resamples: int = 5000,
-                      confidence: float = 0.95, seed: int = 42):
+def bootstrap_mean_ci(
+    x: np.ndarray, n_resamples: int = 5000, confidence: float = 0.95, seed: int = 42
+):
     if len(x) < 10:
         return (np.nan, np.nan, np.nan)
     rng = np.random.default_rng(seed)
@@ -85,9 +87,11 @@ def bootstrap_mean_ci(x: np.ndarray, n_resamples: int = 5000,
     for i in range(n_resamples):
         means[i] = rng.choice(x, size=len(x), replace=True).mean()
     alpha = 1.0 - confidence
-    return (float(x.mean()),
-            float(np.quantile(means, alpha / 2.0)),
-            float(np.quantile(means, 1.0 - alpha / 2.0)))
+    return (
+        float(x.mean()),
+        float(np.quantile(means, alpha / 2.0)),
+        float(np.quantile(means, 1.0 - alpha / 2.0)),
+    )
 
 
 def main() -> None:
@@ -143,8 +147,10 @@ def main() -> None:
     print(f"  Symbols with >=1 setup : {n_symbols_with_setups}")
     print(f"  Total setup events     : {n_total_setups}")
     print()
-    print(f"{'Horiz':>6}  {'N setups':>9}  {'Setup mean (bps)':>18}  "
-          f"{'Setup 95% CI (bps)':>26}  {'Baseline mean (bps)':>21}  {'p(setup beats)':>15}")
+    print(
+        f"{'Horiz':>6}  {'N setups':>9}  {'Setup mean (bps)':>18}  "
+        f"{'Setup 95% CI (bps)':>26}  {'Baseline mean (bps)':>21}  {'p(setup beats)':>15}"
+    )
     print("-" * 100)
     for h in HORIZONS:
         s = np.array(setup_rets_by_h[h])
@@ -162,13 +168,17 @@ def main() -> None:
             if er > br:
                 wins += 1
         p_better = wins / n_b
+
         def bps(x):
             return x * 1e4
-        print(f"{h:>5}d  {len(s):>9d}  "
-              f"{bps(s_mean):>+17.2f}   "
-              f"[{bps(s_lo):>+6.2f}, {bps(s_hi):>+6.2f}]   "
-              f"{bps(b_mean):>+19.2f}   "
-              f"{p_better:>14.1%}")
+
+        print(
+            f"{h:>5}d  {len(s):>9d}  "
+            f"{bps(s_mean):>+17.2f}   "
+            f"[{bps(s_lo):>+6.2f}, {bps(s_hi):>+6.2f}]   "
+            f"{bps(b_mean):>+19.2f}   "
+            f"{p_better:>14.1%}"
+        )
 
     print()
     print("=" * 84)

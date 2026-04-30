@@ -33,13 +33,13 @@ import numpy as np
 import pandas as pd
 
 # Frozen parameters
-GAP_PCT = 0.03      # 3% gap-up minimum
-VOL_MULT = 1.5      # volume must exceed 1.5x 20d avg
-EXT_PCT = 0.10      # 10% above 10dSMA
+GAP_PCT = 0.03  # 3% gap-up minimum
+VOL_MULT = 1.5  # volume must exceed 1.5x 20d avg
+EXT_PCT = 0.10  # 10% above 10dSMA
 SMA_LEN = 10
-MAX_HOLD = 10       # trading days
-COST_BPS = 5.0      # per side
-RISK_PCT = 0.01     # 1% per trade
+MAX_HOLD = 10  # trading days
+COST_BPS = 5.0  # per side
+RISK_PCT = 0.01  # 1% per trade
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,7 @@ class Trade:
     stop_price: float
     exit_date: pd.Timestamp
     exit_price: float
-    exit_reason: str   # 'tp' | 'sl' | 'time'
+    exit_reason: str  # 'tp' | 'sl' | 'time'
     r_multiple: float
     return_pct: float  # gross return on capital (sign for short)
 
@@ -67,12 +67,12 @@ def detect_setups(df: pd.DataFrame) -> pd.Series:
     sma10 = c.rolling(SMA_LEN, min_periods=SMA_LEN).mean()
     avg_v20 = v.rolling(20, min_periods=20).mean()
 
-    green = (c > o)
+    green = c > o
     three_green = green.shift(1) & green.shift(2) & green.shift(3)
-    gap_up = (o > c.shift(1) * (1.0 + GAP_PCT))
-    vol_blowoff = (v > avg_v20 * VOL_MULT)
-    extended = (c.shift(1) > sma10.shift(1) * (1.0 + EXT_PCT))
-    red_today = (c < o)
+    gap_up = o > c.shift(1) * (1.0 + GAP_PCT)
+    vol_blowoff = v > avg_v20 * VOL_MULT
+    extended = c.shift(1) > sma10.shift(1) * (1.0 + EXT_PCT)
+    red_today = c < o
 
     setup = three_green & gap_up & vol_blowoff & extended & red_today
     return setup.fillna(False)
@@ -139,18 +139,20 @@ def simulate_trades(df: pd.DataFrame, symbol: str) -> list[Trade]:
         # R-multiple: how many "risk units" was the move
         r_mult = (entry_open - exit_price) / risk - 2.0 * cost_factor * entry_open / risk
 
-        trades.append(Trade(
-            symbol=symbol,
-            setup_date=idx[t_idx],
-            entry_date=idx[entry_idx],
-            entry_price=float(entry_open),
-            stop_price=float(stop),
-            exit_date=idx[exit_idx],
-            exit_price=float(exit_price),
-            exit_reason=exit_reason,
-            r_multiple=float(r_mult),
-            return_pct=float(net_ret),
-        ))
+        trades.append(
+            Trade(
+                symbol=symbol,
+                setup_date=idx[t_idx],
+                entry_date=idx[entry_idx],
+                entry_price=float(entry_open),
+                stop_price=float(stop),
+                exit_date=idx[exit_idx],
+                exit_price=float(exit_price),
+                exit_reason=exit_reason,
+                r_multiple=float(r_mult),
+                return_pct=float(net_ret),
+            )
+        )
         blocked_until = exit_idx
 
     return trades

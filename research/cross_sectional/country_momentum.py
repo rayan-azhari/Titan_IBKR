@@ -48,16 +48,13 @@ from titan.research.metrics import (  # noqa: E402
 from titan.research.metrics import sharpe as _sharpe  # noqa: E402
 
 
-def _rank_momentum(
-    prices: pd.DataFrame, lookback: int, top_k: int, bottom_k: int
-) -> pd.DataFrame:
+def _rank_momentum(prices: pd.DataFrame, lookback: int, top_k: int, bottom_k: int) -> pd.DataFrame:
     """At each row, rank instruments by `lookback`-day log return. Output
     rows are the same as prices.index, cols the same as prices.columns.
     Values: +1/top_k for top-k, -1/bottom_k for bottom-k, 0 otherwise."""
     logp = np.log(prices)
     mom = logp - logp.shift(lookback)
 
-    prices.shape[1]
     weights = pd.DataFrame(0.0, index=prices.index, columns=prices.columns)
     for ts, row in mom.iterrows():
         vals = row.dropna()
@@ -129,9 +126,7 @@ def _stitched_oos_returns(
         stitched_parts.append(port_rets_net)
         sd = port_rets_net.std()
         if sd > 1e-12:
-            fold_sharpes.append(
-                _sharpe(port_rets_net, periods_per_year=BARS_PER_YEAR["D"])
-            )
+            fold_sharpes.append(_sharpe(port_rets_net, periods_per_year=BARS_PER_YEAR["D"]))
         oos_start += oos_days
 
     stitched = pd.concat(stitched_parts) if stitched_parts else pd.Series(dtype=float)
@@ -185,9 +180,7 @@ def run_country_wfo(
 
     pp = BARS_PER_YEAR["D"]
     sharpe = float(_sharpe(stitched, periods_per_year=pp))
-    ci_lo, ci_hi = bootstrap_sharpe_ci(
-        stitched, periods_per_year=pp, n_resamples=1000, seed=42
-    )
+    ci_lo, ci_hi = bootstrap_sharpe_ci(stitched, periods_per_year=pp, n_resamples=1000, seed=42)
     eq = (1.0 + stitched).cumprod()
     dd = float(((eq - eq.cummax()) / eq.cummax()).min()) * 100
     pct_pos = float(np.mean([s > 0 for s in fold_sharpes])) if fold_sharpes else 0.0

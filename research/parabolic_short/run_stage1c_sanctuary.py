@@ -46,8 +46,9 @@ SANCTUARY_START = pd.Timestamp("2025-01-01", tz="UTC")
 def list_equity_files() -> list[Path]:
     files = sorted(glob.glob(str(DATA_DIR / "*_D.parquet")))
     fx_prefixes = ("EUR_", "GBP_", "AUD_", "USD_", "NZD_", "CHF_", "JPY_")
-    return [Path(f) for f in files
-            if not any(os.path.basename(f).startswith(p) for p in fx_prefixes)]
+    return [
+        Path(f) for f in files if not any(os.path.basename(f).startswith(p) for p in fx_prefixes)
+    ]
 
 
 def load_one(path: Path):
@@ -68,8 +69,9 @@ def load_one(path: Path):
     return sym, df
 
 
-def bootstrap_mean_ci(x: np.ndarray, n_resamples: int = 5000,
-                      confidence: float = 0.95, seed: int = 42):
+def bootstrap_mean_ci(
+    x: np.ndarray, n_resamples: int = 5000, confidence: float = 0.95, seed: int = 42
+):
     if len(x) < 5:
         return (float(np.mean(x)) if len(x) > 0 else np.nan, np.nan, np.nan)
     rng = np.random.default_rng(seed)
@@ -77,9 +79,11 @@ def bootstrap_mean_ci(x: np.ndarray, n_resamples: int = 5000,
     for i in range(n_resamples):
         means[i] = rng.choice(x, size=len(x), replace=True).mean()
     alpha = 1.0 - confidence
-    return (float(x.mean()),
-            float(np.quantile(means, alpha / 2.0)),
-            float(np.quantile(means, 1.0 - alpha / 2.0)))
+    return (
+        float(x.mean()),
+        float(np.quantile(means, alpha / 2.0)),
+        float(np.quantile(means, 1.0 - alpha / 2.0)),
+    )
 
 
 def main() -> None:
@@ -106,13 +110,21 @@ def main() -> None:
         trades = simulate_trades_v2(df, symbol=df.index.name or "_")
         # Replace symbol attribute (dataclass is frozen so rebuild)
         sym = p.name.replace("_D.parquet", "")
-        trades = [TradeV2(
-            symbol=sym, setup_date=t.setup_date, entry_date=t.entry_date,
-            entry_price=t.entry_price, stop_price=t.stop_price,
-            exit_date=t.exit_date, exit_price=t.exit_price,
-            exit_reason=t.exit_reason, r_multiple=t.r_multiple,
-            return_pct=t.return_pct,
-        ) for t in trades]
+        trades = [
+            TradeV2(
+                symbol=sym,
+                setup_date=t.setup_date,
+                entry_date=t.entry_date,
+                entry_price=t.entry_price,
+                stop_price=t.stop_price,
+                exit_date=t.exit_date,
+                exit_price=t.exit_price,
+                exit_reason=t.exit_reason,
+                r_multiple=t.r_multiple,
+                return_pct=t.return_pct,
+            )
+            for t in trades
+        ]
 
         for t in trades:
             if t.entry_date >= SANCTUARY_START:
@@ -168,8 +180,7 @@ def main() -> None:
             pooled.loc[d] = float(np.mean(vs))
 
     sh = sharpe(pooled, periods_per_year=DAILY_PER_YEAR)
-    sh_lo, sh_hi = bootstrap_sharpe_ci(pooled, periods_per_year=DAILY_PER_YEAR,
-                                        n_resamples=2000)
+    sh_lo, sh_hi = bootstrap_sharpe_ci(pooled, periods_per_year=DAILY_PER_YEAR, n_resamples=2000)
     yrs = len(pooled) / DAILY_PER_YEAR if DAILY_PER_YEAR else 0
     if yrs > 0 and len(rs) >= 5:
         t_sh = trade_sharpe(rs, trades_per_year=len(rs) / yrs)

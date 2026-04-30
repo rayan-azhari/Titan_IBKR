@@ -61,8 +61,7 @@ def load_pair(pair: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     return h1, d
 
 
-def run_pair(pair: str, oos_start: pd.Timestamp,
-             sanctuary_start: pd.Timestamp) -> dict:
+def run_pair(pair: str, oos_start: pd.Timestamp, sanctuary_start: pd.Timestamp) -> dict:
     h1, daily = load_pair(pair)
 
     # Trim sanctuary
@@ -77,8 +76,10 @@ def run_pair(pair: str, oos_start: pd.Timestamp,
         tp_r_multiple=2.0,
     )
     bar_rets = trades_to_bar_returns(
-        trades, bar_index=h1_in_scope.index,
-        risk_per_trade=0.01, cost_per_trade=5e-5,
+        trades,
+        bar_index=h1_in_scope.index,
+        risk_per_trade=0.01,
+        cost_per_trade=5e-5,
     )
 
     is_mask = h1_in_scope.index < oos_start
@@ -88,16 +89,18 @@ def run_pair(pair: str, oos_start: pd.Timestamp,
 
     def _block(rets, n_trades, label):
         sh = sharpe(rets, periods_per_year=H1_PER_YEAR)
-        lo, hi = bootstrap_sharpe_ci(rets, periods_per_year=H1_PER_YEAR,
-                                     n_resamples=2000)
+        lo, hi = bootstrap_sharpe_ci(rets, periods_per_year=H1_PER_YEAR, n_resamples=2000)
         dd = max_drawdown(rets)
-        wins = sum(1 for t in (oos_trades if "OOS" in label else is_trades)
-                   if t.r_multiple > 0)
+        wins = sum(1 for t in (oos_trades if "OOS" in label else is_trades) if t.r_multiple > 0)
         wr = wins / max(n_trades, 1)
         return {
             "label": label,
-            "sharpe": sh, "ci_lo": lo, "ci_hi": hi,
-            "max_dd": dd, "n_trades": n_trades, "win_rate": wr,
+            "sharpe": sh,
+            "ci_lo": lo,
+            "ci_hi": hi,
+            "max_dd": dd,
+            "n_trades": n_trades,
+            "win_rate": wr,
         }
 
     is_block = _block(bar_rets[is_mask], len(is_trades), "IS")
@@ -125,25 +128,28 @@ def main() -> None:
     oos_start = common_start + pd.Timedelta(days=int(span_yrs * 365.25 * 0.7))
     print(f"\n  IS         : {common_start.date()}  →  {oos_start.date()}")
     print(f"  OOS        : {oos_start.date()}  →  {sanctuary_start.date()}")
-    print(f"  Sanctuary  : {sanctuary_start.date()}  →  {common_end.date()}  "
-          "(UNTOUCHED)")
+    print(f"  Sanctuary  : {sanctuary_start.date()}  →  {common_end.date()}  (UNTOUCHED)")
 
     results = []
-    print(f"\n{'Pair':<10}{'IS Sh':>8}{'IS CI':>16}{'IS DD':>10}{'IS#':>6}"
-          f"  | {'OOS Sh':>8}{'OOS CI':>16}{'OOS DD':>10}{'OOS#':>6}{'OOS WR':>8}")
+    print(
+        f"\n{'Pair':<10}{'IS Sh':>8}{'IS CI':>16}{'IS DD':>10}{'IS#':>6}"
+        f"  | {'OOS Sh':>8}{'OOS CI':>16}{'OOS DD':>10}{'OOS#':>6}{'OOS WR':>8}"
+    )
     print("-" * 110)
     for pair in PAIRS:
         r = run_pair(pair, oos_start, sanctuary_start)
         results.append(r)
         is_b, oos_b = r["is"], r["oos"]
-        print(f"{pair:<10}"
-              f"{is_b['sharpe']:>+8.2f}"
-              f"  [{is_b['ci_lo']:>+5.2f},{is_b['ci_hi']:>+5.2f}]"
-              f"{is_b['max_dd']:>10.1%}{is_b['n_trades']:>6d}  | "
-              f"{oos_b['sharpe']:>+8.2f}"
-              f"  [{oos_b['ci_lo']:>+5.2f},{oos_b['ci_hi']:>+5.2f}]"
-              f"{oos_b['max_dd']:>10.1%}{oos_b['n_trades']:>6d}"
-              f"{oos_b['win_rate']:>7.1%}")
+        print(
+            f"{pair:<10}"
+            f"{is_b['sharpe']:>+8.2f}"
+            f"  [{is_b['ci_lo']:>+5.2f},{is_b['ci_hi']:>+5.2f}]"
+            f"{is_b['max_dd']:>10.1%}{is_b['n_trades']:>6d}  | "
+            f"{oos_b['sharpe']:>+8.2f}"
+            f"  [{oos_b['ci_lo']:>+5.2f},{oos_b['ci_hi']:>+5.2f}]"
+            f"{oos_b['max_dd']:>10.1%}{oos_b['n_trades']:>6d}"
+            f"{oos_b['win_rate']:>7.1%}"
+        )
 
     # Pooled OOS: average per-bar return series across pairs (equal-weight)
     pooled = pd.concat([r["oos_returns"] for r in results], axis=1).fillna(0.0)

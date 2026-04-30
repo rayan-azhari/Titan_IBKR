@@ -117,7 +117,9 @@ def generate_trades(
 
     for i in range(n_bars):
         # Ingest swings confirmed by close of bar i
-        while cursor < len(m15_swings_by_confirm) and m15_swings_by_confirm[cursor].confirm_idx <= i:
+        while (
+            cursor < len(m15_swings_by_confirm) and m15_swings_by_confirm[cursor].confirm_idx <= i
+        ):
             sw = m15_swings_by_confirm[cursor]
             if sw.is_high:
                 confirmed_highs.append(sw)
