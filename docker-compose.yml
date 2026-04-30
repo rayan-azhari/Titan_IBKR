@@ -64,7 +64,9 @@ services:
       TZ: America/New_York
     volumes:
       - titan-tmp:/app/.tmp              # halt.json + logs persist via named volume
-      - ./data:/app/data:ro              # warmup parquets, host-editable
+      - ./data:/app/data                 # warmup parquets — RW so refresh_market_data.sh
+                                         #   running inside the container can update them.
+                                         #   Strategies themselves only read from here.
       - ./models:/app/models:ro          # ML artefacts (read-only at runtime)
       - ./config:/app/config:ro          # TOMLs editable -> just `restart` to apply
     networks:

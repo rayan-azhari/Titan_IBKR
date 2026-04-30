@@ -17,9 +17,10 @@ populate indicators *before* the first live bar arrives:
 | `mr_audjpy` | `data/AUD_JPY_{H1,H4,D,W}.parquet` | 3000 H1 (~17 weeks) |
 | `bond_equity_ihyu_cspx` | `data/CSPX_D.parquet`, `data/IHYU_D.parquet` | ~120 daily (~6 months) |
 
-The compose stack bind-mounts `./data` read-only into the container — so
-the parquets are host-managed, not baked into the image. That's the
-right architecture, but it leaves an open question: **how do the parquets
+The compose stack bind-mounts `./data` (read-write) into the container —
+so the parquets are host-managed, not baked into the image, and writes
+from inside the container land on host disk. That's the right
+architecture, but it leaves an open question: **how do the parquets
 stay current** on a long-running unattended VPS deployment, especially
 across multi-day outages?
 
