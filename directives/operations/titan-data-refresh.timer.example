@@ -1,0 +1,45 @@
+# Titan-IBKR daily market data refresh — systemd timer
+#
+# Install on a Linux VPS:
+#   1. Copy to /etc/systemd/system/titan-data-refresh.timer
+#      (keep the same filename minus .example)
+#   2. Make sure titan-data-refresh.service is also installed
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now titan-data-refresh.timer
+#   5. Verify:  sudo systemctl list-timers | grep titan-data-refresh
+#
+# Schedule rationale:
+#   * 02:00 America/New_York: after US market close (16:00 ET) and well
+#     after the daily ETF settlement cutoff
+#   * 1h before the IB Gateway weekly auto-restart (Sunday 03:00 ET) on
+#     Sundays — gives the gateway a full hour of headroom
+#   * Weekday FX is open at 02:00 ET, so AUD_JPY refresh has live data
+#     to fetch
+#   * RandomizedDelaySec spreads the load across a 5-min window so a
+#     fleet of titan deployments don't all hit IBKR/yfinance at once
+#
+# To change cadence, edit OnCalendar below. Examples:
+#   *-*-* 02:00:00              # daily 02:00 (default)
+#   *-*-* 02,14:00:00           # twice daily 02:00 and 14:00
+#   Mon..Fri *-*-* 06:00:00     # weekdays only at 06:00
+#
+# To force an immediate run for testing:
+#   sudo systemctl start titan-data-refresh.service
+# (timer is for scheduling; .service is what actually runs)
+
+[Unit]
+Description=Schedule Titan-IBKR market data refresh
+Documentation=file:///home/titan/Titan-IBKR/directives/Market%20Data%20Refresh%20Strategy.md
+
+[Timer]
+# Daily at 02:00 America/New_York
+OnCalendar=*-*-* 02:00:00 America/New_York
+# Spread within 5 minutes to avoid synchronised hammering of upstream APIs
+RandomizedDelaySec=300
+# If the VPS was off when the timer should have fired, run on next boot
+Persistent=true
+# Targets the .service of the same name
+Unit=titan-data-refresh.service
+
+[Install]
+WantedBy=timers.target

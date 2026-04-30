@@ -1,0 +1,48 @@
+# Titan-IBKR daily market data refresh — systemd service template
+#
+# Install on a Linux VPS:
+#   1. Copy to /etc/systemd/system/titan-data-refresh.service
+#   2. Edit WorkingDirectory below to match your repo location
+#   3. sudo systemctl daemon-reload
+#   4. Test:  sudo systemctl start titan-data-refresh.service
+#             sudo journalctl -u titan-data-refresh.service -n 100
+#   5. Enable timer (separate file):  see titan-data-refresh.timer.example
+#
+# This unit is a one-shot — it runs `docker compose exec` against the
+# titan-portfolio container to fire the refresh script inside it. The
+# strategy container holds the IBKR connection and the data/ bind mount,
+# so refreshing inside it is the cleanest path.
+
+[Unit]
+Description=Titan-IBKR Champion Portfolio data refresh
+Documentation=file:///home/titan/Titan-IBKR/directives/Market%20Data%20Refresh%20Strategy.md
+After=docker.service
+Requires=docker.service
+# Don't run if the strategy container is down — there's nothing to exec into
+ConditionPathExists=/home/titan/Titan-IBKR/.env.docker
+
+[Service]
+Type=oneshot
+User=titan
+Group=titan
+WorkingDirectory=/home/titan/Titan-IBKR
+
+# Wait up to 30s for the container to be ready (e.g. after a Sunday restart)
+ExecStartPre=/bin/bash -c 'for i in {1..30}; do docker compose ps --status running titan-portfolio | grep -q titan-portfolio && exit 0; sleep 1; done; echo "titan-portfolio not running" >&2; exit 1'
+
+ExecStart=/usr/bin/docker compose exec -T titan-portfolio bash /app/scripts/refresh_market_data.sh
+
+# Don't restart on failure — the timer will fire again tomorrow.
+# A persistent failure would mean systemd restarts every 30s; not desired.
+Restart=no
+
+# Capture all output to journal — view with: journalctl -u titan-data-refresh.service
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=titan-data-refresh
+
+# 5-minute hard timeout — refresh shouldn't take this long
+TimeoutStartSec=300s
+
+[Install]
+WantedBy=multi-user.target

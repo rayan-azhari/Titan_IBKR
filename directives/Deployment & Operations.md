@@ -374,6 +374,107 @@ stays connected. Strategy process runs but receives no bar events. Normal behavi
 
 ---
 
+## 8b. Daily Market Data Refresh (cron)
+
+Strategy warmup parquets must stay current so that on every restart
+indicators boot from recent history, not stale data. See
+`directives/Market Data Refresh Strategy.md` for the full design and the
+options considered. Phase 1 (current state) is a daily systemd timer.
+
+### What it does
+
+Once a day at 02:00 America/New_York:
+1. systemd timer fires `titan-data-refresh.service`
+2. Service runs `docker compose exec titan-portfolio bash scripts/refresh_market_data.sh`
+3. Script calls `download_data_mtf.py --pair AUD_JPY --years 15` (IBKR, merge-safe)
+4. Script calls `download_data_yfinance.py --symbols CSPX IHYU --interval D --start 2015-01-01` (Yahoo, full re-download each run)
+5. Output captured to journal: `journalctl -u titan-data-refresh.service`
+
+The strategy itself does not have to restart — `data/` is bind-mounted,
+so the next time `run_portfolio.py` warms up (e.g. on watchdog restart
+or a user-initiated `docker compose restart titan-portfolio`) it reads
+the freshly-updated parquets.
+
+### Install on a Linux VPS
+
+```bash
+# 1. Copy the templates into systemd's directory (drop the .example suffix)
+sudo cp directives/operations/titan-data-refresh.service.example \
+       /etc/systemd/system/titan-data-refresh.service
+sudo cp directives/operations/titan-data-refresh.timer.example \
+       /etc/systemd/system/titan-data-refresh.timer
+
+# 2. Edit WorkingDirectory in the .service file to match your repo path
+sudo nano /etc/systemd/system/titan-data-refresh.service
+#   WorkingDirectory=/home/titan/Titan-IBKR
+
+# 3. Reload + enable
+sudo systemctl daemon-reload
+sudo systemctl enable --now titan-data-refresh.timer
+
+# 4. Verify the timer is scheduled
+sudo systemctl list-timers | grep titan-data-refresh
+sudo systemctl status titan-data-refresh.timer
+```
+
+### Force an immediate test run
+
+```bash
+sudo systemctl start titan-data-refresh.service
+sudo journalctl -u titan-data-refresh.service -n 200 --no-pager
+```
+
+The script logs each step plus a summary table of file sizes and
+modification times. A successful run takes 10-60s depending on how
+much new data there is to fetch.
+
+### Confirm it's actually working
+
+Each strategy startup runs `_check_data_freshness()` and logs each
+required parquet's age. After the cron has run at least once:
+
+```bash
+docker compose restart titan-portfolio
+docker compose logs --tail=80 titan-portfolio | grep "freshness"
+```
+
+Expected: every line says `fresh` (≤2 days). If any line says `stale`
+or `VERY stale`, the cron has been failing — check
+`journalctl -u titan-data-refresh.service` for the cause.
+
+### What if cron is broken for a few days?
+
+The freshness check is non-blocking — strategies still start, just with
+older indicator state. For the H1 mr_audjpy strategy, the live bar feed
+catches up the 17-week percentile window over ~3 weeks of trading
+regardless of warmup state. For the daily bond_equity strategy, anything
+older than ~14 days starts to materially distort the z-score.
+
+If you see ERROR-level freshness warnings, run a manual refresh:
+
+```bash
+docker compose exec titan-portfolio bash /app/scripts/refresh_market_data.sh
+docker compose restart titan-portfolio
+```
+
+### Switching ETF data source
+
+Default is yfinance (free). To switch to Databento (paid, more reliable):
+
+```bash
+# Add to .env.docker:
+DATABENTO_API_KEY=db-xxxxxxxxxx
+REFRESH_SOURCE_ETF=databento
+
+# Restart the timer-driven service
+sudo systemctl restart titan-data-refresh.timer
+```
+
+The script reads `REFRESH_SOURCE_ETF` and falls back to yfinance if
+Databento is selected but the API key is missing.
+
+---
+
 ## 9. Emergency Stop
 
 > [!CAUTION]

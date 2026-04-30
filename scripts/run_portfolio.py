@@ -57,6 +57,86 @@ from nautilus_trader.live.node import TradingNode
 
 LOGS_DIR = PROJECT_ROOT / ".tmp" / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR = PROJECT_ROOT / "data"
+
+
+# ── Warmup file map (per strategy → list of required parquet basenames) ──
+# Used by `_check_data_freshness` to warn if cron-refreshed parquets have
+# gone stale. Add an entry for any new strategy that reads from data/ at
+# startup. A strategy without an entry here is silently skipped (no warn).
+
+_STRATEGY_WARMUP_FILES: dict[str, list[str]] = {
+    "mr_audjpy": [
+        "AUD_JPY_H1.parquet",
+        "AUD_JPY_H4.parquet",
+        "AUD_JPY_D.parquet",
+        "AUD_JPY_W.parquet",
+    ],
+    "mr_audusd": [
+        "AUD_USD_H1.parquet",
+        "AUD_USD_H4.parquet",
+        "AUD_USD_D.parquet",
+        "AUD_USD_W.parquet",
+    ],
+    "bond_equity_ihyu_cspx": [
+        "CSPX_D.parquet",
+        "IHYU_D.parquet",
+    ],
+}
+
+
+def _check_data_freshness(logger: logging.Logger, selected: list[str]) -> None:
+    """Inspect warmup parquets for selected strategies; warn if stale.
+
+    Non-blocking — only logs. Strategy startup proceeds either way (a
+    missing or stale file just means cold-start indicators).
+
+    Thresholds (against the file's most recent bar timestamp):
+      *  <= 2 days old : INFO  (fresh)
+      *  3-7 days      : WARN  (cron may have failed once)
+      *  > 7 days      : ERROR (consider refreshing before trading)
+      *  missing       : WARN  (strategy will boot with cold indicators)
+    """
+    import pandas as pd
+
+    now = datetime.now(timezone.utc)
+    files_seen: set[str] = set()
+    for strategy_name in selected:
+        files = _STRATEGY_WARMUP_FILES.get(strategy_name)
+        if not files:
+            logger.debug(f"  [freshness] no warmup mapping for '{strategy_name}'")
+            continue
+        for fname in files:
+            if fname in files_seen:
+                continue
+            files_seen.add(fname)
+            path = DATA_DIR / fname
+            if not path.exists():
+                logger.warning(
+                    f"  [freshness] {fname:30s} MISSING — strategy will boot with cold indicators"
+                )
+                continue
+            try:
+                df = pd.read_parquet(path)
+                if "timestamp" in df.columns:
+                    last_ts = pd.to_datetime(df["timestamp"]).max()
+                else:
+                    last_ts = pd.to_datetime(df.index).max()
+                if last_ts.tzinfo is None:
+                    last_ts = last_ts.tz_localize("UTC")
+                else:
+                    last_ts = last_ts.tz_convert("UTC")
+                age_days = (now - last_ts.to_pydatetime()).days
+            except Exception as e:
+                logger.warning(f"  [freshness] {fname:30s} could not be read: {e}")
+                continue
+            line = f"  [freshness] {fname:30s} age={age_days:>3}d  last_bar={last_ts.date()}"
+            if age_days <= 2:
+                logger.info(f"{line}  fresh")
+            elif age_days <= 7:
+                logger.warning(f"{line}  stale (cron may have failed)")
+            else:
+                logger.error(f"{line}  VERY stale — refresh before trading")
 
 
 # ── Strategy Registry ────────────────────────────────────────────────────────
@@ -358,6 +438,10 @@ def main() -> None:
     logger.info(f"  Strategies: {len(selected)}")
     for s in selected:
         logger.info(f"    - {s}")
+    logger.info("=" * 60)
+
+    logger.info("  Warmup data freshness:")
+    _check_data_freshness(logger, selected)
     logger.info("=" * 60)
 
     # Collect all contracts from selected strategies
