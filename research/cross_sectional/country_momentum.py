@@ -29,10 +29,23 @@ Result dict keys mirror `run_bond_wfo`:
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+# Library imports — calling code is expected to have set sys.path correctly,
+# but as a fallback insert the project root so direct invocations work too.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from titan.research.metrics import (  # noqa: E402
+    BARS_PER_YEAR,
+    bootstrap_sharpe_ci,
+)
+from titan.research.metrics import sharpe as _sharpe  # noqa: E402
 
 
 def _rank_momentum(
@@ -44,7 +57,7 @@ def _rank_momentum(
     logp = np.log(prices)
     mom = logp - logp.shift(lookback)
 
-    n = prices.shape[1]
+    prices.shape[1]
     weights = pd.DataFrame(0.0, index=prices.index, columns=prices.columns)
     for ts, row in mom.iterrows():
         vals = row.dropna()
@@ -117,7 +130,7 @@ def _stitched_oos_returns(
         sd = port_rets_net.std()
         if sd > 1e-12:
             fold_sharpes.append(
-                float(port_rets_net.mean() / sd * np.sqrt(252))
+                _sharpe(port_rets_net, periods_per_year=BARS_PER_YEAR["D"])
             )
         oos_start += oos_days
 
@@ -141,12 +154,6 @@ def run_country_wfo(
       stitched_sharpe, sharpe_ci_95_lo, sharpe_ci_95_hi, stitched_dd_pct,
       n_folds, pct_positive, total_trades, stitched_returns.
     """
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from titan.research.metrics import BARS_PER_YEAR, bootstrap_sharpe_ci
-    from titan.research.metrics import sharpe as _sharpe
-
     # Align all series on common index.
     prices = pd.concat(instruments, axis=1)
     prices = prices.dropna(how="all")

@@ -74,7 +74,7 @@ def get_bond_equity_returns(
         spread_bps=5.0,
     )
     s = r["stitched_returns"]
-    s.name = f"{bond.lower()}_{target.lower()}_lb{lookback}_h{hold_days}_t{int(threshold * 100):03d}"
+    s.name = f"{bond.lower()}_{target.lower()}_lb{lookback}_h{hold_days}_t{int(threshold * 100):03d}"  # noqa: E501
     return s
 
 

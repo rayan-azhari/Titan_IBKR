@@ -162,7 +162,8 @@ def main() -> None:
             if er > br:
                 wins += 1
         p_better = wins / n_b
-        bps = lambda x: x * 1e4
+        def bps(x):
+            return x * 1e4
         print(f"{h:>5}d  {len(s):>9d}  "
               f"{bps(s_mean):>+17.2f}   "
               f"[{bps(s_lo):>+6.2f}, {bps(s_hi):>+6.2f}]   "

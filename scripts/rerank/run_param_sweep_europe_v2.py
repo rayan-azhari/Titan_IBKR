@@ -171,7 +171,7 @@ def run_experiment(
         if r is None:
             continue
         r.update(
-            {"experiment": name, "signal": sig, "target": tgt, "lookback": lb, "hold": hold, "threshold": th}
+            {"experiment": name, "signal": sig, "target": tgt, "lookback": lb, "hold": hold, "threshold": th}  # noqa: E501
         )
         rows.append(r)
         if tested % 200 == 0:

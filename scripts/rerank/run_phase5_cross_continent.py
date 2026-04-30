@@ -196,7 +196,7 @@ def main() -> None:
 
     if not bonf.empty:
         lines.append("## Bonferroni survivors\n")
-        lines.append("| # | Signal | Target | Direction | LB | Hold | Th | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")
+        lines.append("| # | Signal | Target | Direction | LB | Hold | Th | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")  # noqa: E501
         lines.append("|--:|---|---|---|--:|--:|---:|---:|---:|---:|---:|--:|--:|")
         for i, r in bonf.sort_values("ci_lo", ascending=False).reset_index(drop=True).iterrows():
             lines.append(
@@ -212,7 +212,7 @@ def main() -> None:
     lines.append("## Top 10 by CI_lo\n")
     if not df.empty:
         top = df.sort_values("ci_lo", ascending=False).head(10).reset_index(drop=True)
-        lines.append("| # | Signal | Target | Direction | LB | Hold | Th | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")
+        lines.append("| # | Signal | Target | Direction | LB | Hold | Th | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")  # noqa: E501
         lines.append("|--:|---|---|---|--:|--:|---:|---:|---:|---:|---:|--:|--:|")
         for i, r in top.iterrows():
             lines.append(

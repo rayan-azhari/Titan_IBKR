@@ -17,12 +17,11 @@ import numpy as np
 import pandas as pd
 
 from research.parabolic_short.strategy import (
+    COST_BPS,
     EXT_PCT,
     GAP_PCT,
     SMA_LEN,
     VOL_MULT,
-    COST_BPS,
-    RISK_PCT,
 )
 
 EXIT_HORIZON = 3  # trading days

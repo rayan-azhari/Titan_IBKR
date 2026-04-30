@@ -27,8 +27,8 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from research.mss_trend.swing import detect_swings, trend_state_series  # noqa: E402
 from research.mss_trend.strategy import daily_trend_at_15m  # noqa: E402
+from research.mss_trend.swing import detect_swings, trend_state_series  # noqa: E402
 
 DATA_DIR = PROJECT_ROOT / "data"
 PAIRS = ["EUR_USD", "GBP_USD", "AUD_USD", "USD_CHF", "USD_JPY"]
@@ -207,7 +207,8 @@ def main() -> None:
             if er > br:
                 wins += 1
         p_better = wins / n_b
-        bps = lambda x: x * 1e4
+        def bps(x):
+            return x * 1e4
         print(f"{h:>9}h  {len(e):>9d}  "
               f"{bps(e_mean):>+17.2f}   "
               f"[{bps(e_lo):>+6.2f}, {bps(e_hi):>+6.2f}]   "

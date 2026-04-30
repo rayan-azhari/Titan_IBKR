@@ -158,7 +158,7 @@ def main() -> None:
     cl = load_series("CL=F")
     gdaxi = load_series("GDAXI")
     gld = load_series("GLD")
-    spy = load_series("SPY")
+    load_series("SPY")
     spread_igov_ief = build_spread("IGOV", "IEF")
     ratio_gdaxi_spy = build_ratio("GDAXI", "SPY")
 

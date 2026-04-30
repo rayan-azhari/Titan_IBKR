@@ -130,7 +130,9 @@ def _parse_and_save(app: IBKRHistoricalDataApp, output_path: Path) -> pd.DataFra
         existing = pd.read_parquet(output_path)
         if "timestamp" not in existing.columns:
             # timestamp lives in the index — promote it to a column
-            existing = existing.reset_index().rename(columns={existing.index.name or "index": "timestamp"})
+            existing = existing.reset_index().rename(
+                columns={existing.index.name or "index": "timestamp"}
+            )
             if "timestamp" not in existing.columns:
                 # last-resort: assume the leftmost column is the timestamp
                 existing = existing.rename(columns={existing.columns[0]: "timestamp"})

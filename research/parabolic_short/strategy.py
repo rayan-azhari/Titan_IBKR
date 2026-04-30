@@ -63,7 +63,7 @@ def detect_setups(df: pd.DataFrame) -> pd.Series:
 
     The signal at day t means "short at open of t+1 the next session."
     """
-    o, h, l, c, v = df["open"], df["high"], df["low"], df["close"], df["volume"]
+    o, _h, _l, c, v = df["open"], df["high"], df["low"], df["close"], df["volume"]
     sma10 = c.rolling(SMA_LEN, min_periods=SMA_LEN).mean()
     avg_v20 = v.rolling(20, min_periods=20).mean()
 
@@ -82,13 +82,12 @@ def simulate_trades(df: pd.DataFrame, symbol: str) -> list[Trade]:
     """Walk the daily series, generate trades for every setup. Trades do not
     overlap (one open trade at a time per symbol — typical for swing trading)."""
     setups = detect_setups(df)
-    o, h, l, c = df["open"], df["high"], df["low"], df["close"]
+    o, h, c = df["open"], df["high"], df["close"]
     sma10 = c.rolling(SMA_LEN, min_periods=SMA_LEN).mean()
 
     idx = df.index
     open_arr = o.to_numpy()
     high_arr = h.to_numpy()
-    low_arr = l.to_numpy()
     close_arr = c.to_numpy()
     sma_arr = sma10.to_numpy()
 

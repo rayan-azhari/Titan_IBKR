@@ -28,15 +28,14 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from research.parabolic_short.strategy_v2 import (  # noqa: E402
+    TradeV2,
+    simulate_trades_v2,
+)
 from titan.research.metrics import (  # noqa: E402
     bootstrap_sharpe_ci,
     sharpe,
     trade_sharpe,
-)
-
-from research.parabolic_short.strategy_v2 import (  # noqa: E402
-    TradeV2,
-    simulate_trades_v2,
 )
 
 DATA_DIR = PROJECT_ROOT / "data"
@@ -131,9 +130,8 @@ def main() -> None:
 
     # Trade-level summary
     rs = np.array([t.r_multiple for t in all_trades])
-    rets = np.array([t.return_pct for t in all_trades])
     wins = (rs > 0).sum()
-    print(f"\n  Trade R-multiple stats (sanctuary):")
+    print("\n  Trade R-multiple stats (sanctuary):")
     print(f"    mean R         : {rs.mean():+.3f}")
     print(f"    median R       : {np.median(rs):+.3f}")
     print(f"    win rate       : {wins / len(rs):.1%}  ({wins}/{len(rs)})")

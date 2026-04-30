@@ -21,17 +21,15 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from research.parabolic_short.strategy import (  # noqa: E402
+    Trade,
+    simulate_trades,
+)
 from titan.research.metrics import (  # noqa: E402
     bootstrap_sharpe_ci,
     max_drawdown,
     sharpe,
     trade_sharpe,
-)
-
-from research.parabolic_short.strategy import (  # noqa: E402
-    Trade,
-    simulate_trades,
-    trades_to_bar_returns,
 )
 
 DATA_DIR = PROJECT_ROOT / "data"
@@ -185,7 +183,7 @@ def main() -> None:
     oos_trades = [t for t in all_trades
                   if oos_start <= t.entry_date < sanctuary_start]
 
-    print(f"\n  Trade R-multiple summary (full):")
+    print("\n  Trade R-multiple summary (full):")
     rs = np.array([t.r_multiple for t in all_trades])
     print(f"    mean R   : {rs.mean():+.3f}")
     print(f"    median R : {np.median(rs):+.3f}")
@@ -198,7 +196,7 @@ def main() -> None:
     print(f"    exit mix : tp={er['tp']}  sl={er['sl']}  time={er['time']}")
 
     print()
-    res_is = report("IS", pooled[is_mask], is_trades)
+    report("IS", pooled[is_mask], is_trades)
     print()
     res_oos = report("OOS", pooled[oos_mask], oos_trades)
 

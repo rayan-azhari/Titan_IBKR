@@ -125,7 +125,7 @@ def main() -> None:
     t0 = time.time()
 
     rows: list[dict] = []
-    combos = [(p, v, f, g) for p in PAIRS for v in VWAP_ANCHORS for f in FILTERS for g in TIER_GRIDS]
+    combos = [(p, v, f, g) for p in PAIRS for v in VWAP_ANCHORS for f in FILTERS for g in TIER_GRIDS]  # noqa: E501
     print(f"  Combos: {len(combos)}")
 
     tested = 0
@@ -158,8 +158,8 @@ def main() -> None:
         "{donchian/rsi disagreement, atr-only, no_filter}, and tier grid "
         "{standard, conservative}.",
         "",
-        f"**Reference**: AUD/JPY at vwap_anchor=24 / conf_donchian_pos_20 / conservative "
-        f"produces OOS Sharpe +1.05 (CI_lo +0.21).",
+        "**Reference**: AUD/JPY at vwap_anchor=24 / conf_donchian_pos_20 / conservative "
+        "produces OOS Sharpe +1.05 (CI_lo +0.21).",
         "",
         f"**Gate**: CI_lo >= {BONF_CI_LO}, folds >= {MIN_FOLDS}, pos >= {int(MIN_POS * 100)}%.",
         "",
@@ -183,7 +183,7 @@ def main() -> None:
 
     if not bonf.empty:
         lines.append("## Bonferroni survivors\n")
-        lines.append("| # | Pair | vwap | Filter | Grid | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")
+        lines.append("| # | Pair | vwap | Filter | Grid | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")  # noqa: E501
         lines.append("|--:|---|--:|---|---|---:|---:|---:|---:|--:|--:|")
         for i, r in bonf.sort_values("ci_lo", ascending=False).reset_index(drop=True).iterrows():
             lines.append(
@@ -198,7 +198,7 @@ def main() -> None:
     lines.append("## Top 10 by CI_lo\n")
     if not df.empty:
         top = df.sort_values("ci_lo", ascending=False).head(10).reset_index(drop=True)
-        lines.append("| # | Pair | vwap | Filter | Grid | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")
+        lines.append("| # | Pair | vwap | Filter | Grid | Sharpe | CI_lo | CI_hi | DD | Folds | Pos% |")  # noqa: E501
         lines.append("|--:|---|--:|---|---|---:|---:|---:|---:|--:|--:|")
         for i, r in top.iterrows():
             lines.append(

@@ -23,21 +23,19 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from research.mss_trend.strategy import (  # noqa: E402
+    generate_trades,
+    trades_to_bar_returns,
+)
 from titan.research.metrics import (  # noqa: E402
     bootstrap_sharpe_ci,
     max_drawdown,
     sharpe,
-)
-
-from research.mss_trend.strategy import (  # noqa: E402
-    generate_trades,
-    trades_to_bar_returns,
 )
 
 DATA_DIR = PROJECT_ROOT / "data"

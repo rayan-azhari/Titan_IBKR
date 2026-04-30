@@ -21,15 +21,14 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from research.mss_trend.strategy import (  # noqa: E402
+    generate_trades,
+    trades_to_bar_returns,
+)
 from titan.research.metrics import (  # noqa: E402
     bootstrap_sharpe_ci,
     max_drawdown,
     sharpe,
-)
-
-from research.mss_trend.strategy import (  # noqa: E402
-    generate_trades,
-    trades_to_bar_returns,
 )
 
 DATA_DIR = PROJECT_ROOT / "data"
@@ -105,7 +104,7 @@ def main() -> None:
     # IS / OOS / Sanctuary split
     sanctuary_start = m15.index[-1] - pd.DateOffset(years=1)
     oos_start = pd.Timestamp("2021-01-01", tz="UTC")
-    print(f"\n[2/4] Split:")
+    print("\n[2/4] Split:")
     print(f"      IS         : {m15.index[0]} → {oos_start}")
     print(f"      OOS        : {oos_start} → {sanctuary_start}")
     print(f"      Sanctuary  : {sanctuary_start} → {m15.index[-1]}  (UNTOUCHED)")

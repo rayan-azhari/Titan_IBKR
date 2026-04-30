@@ -147,7 +147,7 @@ def main() -> None:
     lines.append("|---|---:|---:|---:|")
     # Pick the best-matching config from Phase 1: CL lb=40 hold=20 th=0.25
     p1_cl_best = {"sharpe": 0.735, "ci_lo": 0.316}  # from Phase 1 leaderboard
-    cl_ewg = df[(df.signal == "CL=F") & (df.lookback == 40) & (df.hold == 20) & (df.threshold == 0.25)]
+    cl_ewg = df[(df.signal == "CL=F") & (df.lookback == 40) & (df.hold == 20) & (df.threshold == 0.25)]  # noqa: E501
     if not cl_ewg.empty:
         r = cl_ewg.iloc[0]
         lines.append(
