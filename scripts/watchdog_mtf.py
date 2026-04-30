@@ -5,6 +5,11 @@ Autonomous watchdog for the MTF live strategy.
 Runs run_live_mtf.py in a subprocess. If it exits for any reason
 (crash, IB disconnect, maintenance window), waits briefly and restarts.
 
+# TODO: this is a near-duplicate of scripts/watchdog_portfolio.py. When a
+# third deployment lands, extract the loop into titan/ops/watchdog.py and
+# leave thin CLI wrappers here. With N=2 the duplication is cheaper than
+# the abstraction.
+
 Usage:
     uv run python scripts/watchdog_mtf.py
 

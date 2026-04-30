@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtualenvs (we install into the image, not from host)
+.venv/
+venv/
+
+# VCS
+.git/
+.gitignore
+.gitattributes
+
+# Local runtime state — runtime mounts a named volume for this
+.tmp/
+
+# Image archives produced by scripts/build_image.sh — never bake them
+# back into the build context (would create circular bloat)
+dist/
+
+# Data and models — bind-mounted at runtime, don't bake several GB into image
+data/
+models/
+
+# Research, tests, notebooks — never run in production container
+research/
+tests/
+notebooks/
+*.ipynb
+
+# Docs / runbooks — operators read these on the host, not in-container
+directives/
+docs/
+README.md
+*.md
+
+# Secrets and local env files
+.env
+.env.docker
+.env.local
+.env.*.local
+
+# IDE / OS noise
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Plans / project memory
+plans/
+.claude/
+
+# Compose / docker artifacts (don't recursively include themselves)
+docker-compose*.yml
+Dockerfile*
+.dockerignore

@@ -1,8 +1,14 @@
-# Environment
+# Environment — never commit any populated env file (contains creds)
 .env
+.env.docker
+.env.local
+.env.*.local
 
 # Intermediates (regeneratable)
 .tmp/
+
+# Claude Code internal state
+.claude/scheduled_tasks.lock
 
 # Python
 __pycache__/
