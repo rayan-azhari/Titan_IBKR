@@ -36,6 +36,11 @@ from titan.research.metrics import BARS_PER_YEAR, ewm_vol_last
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
 from titan.risk.strategy_equity import StrategyEquityTracker, report_equity_and_check
+from titan.utils.notification import (
+    notify_order_event,
+    notify_position_closed,
+    notify_signal,
+)
 
 
 class BondGoldConfig(StrategyConfig):
@@ -239,6 +244,32 @@ class BondGoldStrategy(Strategy):
                     quantity=qty,
                     time_in_force=TimeInForce.DAY,
                 )
+                # Notify before submission so message lands even if IBKR rejects.
+                try:
+                    eq = (
+                        self._equity_tracker.current_equity()
+                        if self._equity_tracker is not None
+                        else None
+                    )
+                    notify_signal(
+                        strategy=self._prm_id,
+                        action="BUY",
+                        instrument=str(self.instrument_id),
+                        qty=int(units),
+                        price=px,
+                        notional=units * px,
+                        notional_ccy=self.config.base_ccy,
+                        equity=eq,
+                        equity_ccy=self.config.base_ccy,
+                        reason={
+                            "ief_z": z,
+                            "threshold": self.config.threshold,
+                            "lookback": self.config.lookback,
+                            "hold_days": self.config.hold_days,
+                        },
+                    )
+                except Exception as e:
+                    self.log.warning(f"notify_signal failed: {e}")
                 self.submit_order(order)
                 self._current_pos = 1
                 self._bars_held = 0
@@ -285,14 +316,67 @@ class BondGoldStrategy(Strategy):
     def on_position_closed(self, event) -> None:
         self._current_pos = 0
         self._bars_held = 0
+        pnl_usd = None
         if self._equity_tracker is not None:
             try:
                 # GLD/IWB/CSPX etc are USD-quoted -- no FX conversion needed.
-                pnl = float(event.realized_pnl.as_double())
-                self._equity_tracker.on_position_closed(pnl, fx_to_base=1.0)
+                pnl_usd = float(event.realized_pnl.as_double())
+                self._equity_tracker.on_position_closed(pnl_usd, fx_to_base=1.0)
             except Exception as e:
                 self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(f"CLOSED: PnL={event.realized_pnl}")
+        try:
+            eq_after = (
+                self._equity_tracker.current_equity() if self._equity_tracker is not None else None
+            )
+            notify_position_closed(
+                strategy=self._prm_id,
+                instrument=str(self.instrument_id),
+                direction="LONG",  # bond_gold is long-only
+                realized_pnl=pnl_usd,
+                realized_pnl_ccy=self.config.base_ccy,
+                entry_price=getattr(event, "avg_px_open", None),
+                exit_price=getattr(event, "avg_px_close", None),
+                equity_after=eq_after,
+                initial_equity=self.config.initial_equity,
+                equity_ccy=self.config.base_ccy,
+            )
+        except Exception as e:
+            self.log.warning(f"notify_position_closed failed: {e}")
+
+    def on_order_accepted(self, event) -> None:
+        try:
+            order = self.cache.order(event.client_order_id)
+            side = str(getattr(order, "side", "?")).split(".")[-1] if order else "?"
+            qty = int(order.quantity) if order and order.quantity else 0
+            order_type = str(getattr(order, "order_type", "?")).split(".")[-1] if order else None
+            notify_order_event(
+                strategy=self._prm_id,
+                event_type="accepted",
+                instrument=str(self.instrument_id),
+                side=side,
+                qty=qty,
+                order_type=order_type,
+                venue_order_id=str(getattr(event, "venue_order_id", "") or ""),
+                client_order_id=str(getattr(event, "client_order_id", "") or ""),
+            )
+        except Exception as e:
+            self.log.warning(f"notify_order_event(accepted) failed: {e}")
 
     def on_order_rejected(self, event) -> None:
         self.log.error(f"REJECTED: {event.client_order_id} -- {event.reason}")
+        try:
+            order = self.cache.order(event.client_order_id)
+            side = str(getattr(order, "side", "?")).split(".")[-1] if order else "?"
+            qty = int(order.quantity) if order and order.quantity else 0
+            notify_order_event(
+                strategy=self._prm_id,
+                event_type="rejected",
+                instrument=str(self.instrument_id),
+                side=side,
+                qty=qty,
+                client_order_id=str(getattr(event, "client_order_id", "") or ""),
+                note=str(getattr(event, "reason", "") or ""),
+            )
+        except Exception as e:
+            self.log.warning(f"notify_order_event(rejected) failed: {e}")

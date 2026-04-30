@@ -60,7 +60,11 @@ services:
       IBKR_CLIENT_ID: ${IBKR_CLIENT_ID:-7}
       IBKR_ACCOUNT_ID: ${IBKR_ACCOUNT_ID}
       DATABENTO_API_KEY: ${DATABENTO_API_KEY:-}
+      # Notifications: Slack (single webhook) and/or Telegram (bot+chat).
+      # Either / both / neither — see .env.docker.example for setup details.
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       TZ: America/New_York
     volumes:
       - titan-tmp:/app/.tmp              # halt.json + logs persist via named volume

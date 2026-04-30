@@ -458,6 +458,100 @@ You do NOT need to rebuild when you change:
 - `data/*.parquet` — bind-mounted
 - `.env.docker` — read at compose-up time, restart sufficient
 
+### Notifications (Slack and/or Telegram)
+
+The strategies emit a notification on **four** events:
+
+| Event | When | What |
+|---|---|---|
+| 🎯 Signal | Right before `submit_order` | Strategy id, side, qty, price, indicator readings, equity, risk |
+| 📝 Order accepted | IBKR `OrderAccepted` event | venue_order_id, client_order_id, side, qty, type |
+| 🚫 Order rejected | IBKR `OrderRejected` event | client_order_id, reason from IBKR |
+| ✅ Position closed | NautilusTrader `PositionClosed` | Direction, entry/exit, PnL, equity-after, cumulative-% |
+
+Two backends supported. **Either, both, or neither** — set the env vars in
+`.env.docker` and the notification module dispatches to whichever is
+configured. If neither is set, the calls are a silent no-op (no errors, no
+logs after the first warning).
+
+#### Slack (recommended — simplest)
+
+1. Open <https://api.slack.com/messaging/webhooks> and create an Incoming
+   Webhook for the channel you want messages in.
+2. Copy the URL (it looks like `https://hooks.slack.com/services/T.../B.../...`).
+3. Paste into `.env.docker`:
+   ```ini
+   SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../...
+   ```
+4. `docker compose --env-file .env.docker up -d` (or `restart titan-portfolio`).
+
+#### Telegram (alternative or in addition)
+
+1. In Telegram, message `@BotFather`, send `/newbot`, follow the prompts.
+   Save the **bot token** it gives you.
+2. Send any message to your new bot from your personal Telegram account.
+3. Visit `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser.
+   Find your chat in the JSON response and copy `result[0].message.chat.id`.
+4. Paste into `.env.docker`:
+   ```ini
+   TELEGRAM_BOT_TOKEN=123456789:ABC-DEF...
+   TELEGRAM_CHAT_ID=987654321
+   ```
+5. `docker compose --env-file .env.docker up -d`.
+
+Both `BOT_TOKEN` and `CHAT_ID` must be set; either alone is treated as
+unconfigured.
+
+#### Send a test message without waiting for a real signal
+
+```bash
+docker compose exec titan-portfolio python -m titan.utils.notification signal
+docker compose exec titan-portfolio python -m titan.utils.notification order
+docker compose exec titan-portfolio python -m titan.utils.notification position
+```
+
+Each fires a sample message of that type to whichever backend(s) are
+configured. Use this to verify the webhook before any real trading.
+
+#### What the messages look like
+
+```
+🎯 *Signal* — `bond_gold_CSPX`
+`BUY` 36 CSPX.LSEETF
+  • Price: 770.5000   Notional: +27,738.00 USD
+  • Reason: ief_z=-0.8900  threshold=+0.5000  lookback=60  hold_days=20
+  • Risk: +1.00% of +10,000.00 USD = +100.00 USD
+  • Account: `DUP958545`
+
+📝 *Order accepted* — `bond_gold_CSPX`
+`BUY` 36 CSPX.LSEETF (MARKET) @ 770.5000
+  • venue_order_id: `101`
+  • client_order_id: `O-20260430-164248-PORTFOLIO-001-1`
+
+✅ *Position closed* — `bond_gold_CSPX`
+`LONG` CSPX.LSEETF
+  • Held: 8.0d
+  • Entry: 770.5000   Exit: 785.2000
+  • PnL: +528.40 USD   Strategy equity: +10,528.40 USD
+  • Cumulative: +5.28% on +10,000.00 USD initial
+```
+
+#### Failure handling — important
+
+Notifications are **fire-and-forget with a 2-second timeout**. If Slack
+or Telegram is down, the strategy logs a one-line `notify failed: ...`
+warning and keeps trading. The trade itself never depends on a successful
+notification.
+
+This means:
+
+- The trade log in `.tmp/logs/portfolio_live_*.log` is the source of
+  truth, not your phone.
+- You can lose individual messages to network blips with no operational
+  impact.
+- For critical events (kill switch fires, PRM halts the portfolio), the
+  log file is the only guaranteed record. Monitor the logs separately.
+
 ---
 
 ## 4. The weekly restart (what "healthy" looks like)

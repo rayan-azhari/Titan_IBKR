@@ -57,6 +57,11 @@ from titan.risk.strategy_equity import (
     report_equity_and_check,
     split_fx_pair,
 )
+from titan.utils.notification import (
+    notify_order_event,
+    notify_position_closed,
+    notify_signal,
+)
 
 # Donchian period at H1 scale; higher scales multiply this
 DONCHIAN_PERIOD = 20
@@ -266,10 +271,36 @@ class MRAUDJPYStrategy(Strategy):
                         quantity=qty,
                         time_in_force=TimeInForce.GTC,
                     )
+                    side_str = "SELL" if direction == OrderSide.SELL else "BUY"
+                    # Notify before submission so a Slack/Telegram message is
+                    # visible even if IBKR rejects the order.
+                    try:
+                        eq = (
+                            self._equity_tracker.current_equity()
+                            if self._equity_tracker is not None
+                            else None
+                        )
+                        notify_signal(
+                            strategy=self._prm_id,
+                            action=side_str,
+                            instrument=str(self.instrument_id),
+                            qty=int(units),
+                            price=px,
+                            equity=eq,
+                            equity_ccy=self.config.base_ccy,
+                            reason={
+                                "tier": tier_idx + 1,
+                                "deviation": abs_dev,
+                                "level": level,
+                                "vwap_anchor": self.config.vwap_anchor,
+                            },
+                        )
+                    except Exception as e:
+                        self.log.warning(f"notify_signal failed: {e}")
                     self.submit_order(order)
                     self._tiers_hit.add(tier_idx)
                     self.log.info(
-                        f"TIER {tier_idx + 1} {'SELL' if direction == OrderSide.SELL else 'BUY'}"
+                        f"TIER {tier_idx + 1} {side_str}"
                         f" {qty} @ ~{px:.5f} | dev={abs_dev:.6f} > level={level:.6f}"
                     )
 
@@ -359,15 +390,71 @@ class MRAUDJPYStrategy(Strategy):
 
     def on_position_closed(self, event) -> None:
         self._tiers_hit = set()
+        pnl_base = None
+        fx = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
         if self._equity_tracker is not None:
             try:
                 # realized_pnl is in the instrument's quote ccy (JPY for AUD/JPY)
                 pnl_quote = float(event.realized_pnl.as_double())
-                fx = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
+                pnl_base = pnl_quote * fx
                 self._equity_tracker.on_position_closed(pnl_quote, fx_to_base=fx)
             except Exception as e:
                 self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(f"CLOSED: PnL={event.realized_pnl}")
+        try:
+            eq_after = (
+                self._equity_tracker.current_equity() if self._equity_tracker is not None else None
+            )
+            side = getattr(event, "entry", None) or getattr(event, "side", None)
+            direction = "LONG" if (side and "BUY" in str(side).upper()) else "SHORT"
+            notify_position_closed(
+                strategy=self._prm_id,
+                instrument=str(self.instrument_id),
+                direction=direction,
+                realized_pnl=pnl_base,
+                realized_pnl_ccy=self.config.base_ccy,
+                entry_price=getattr(event, "avg_px_open", None),
+                exit_price=getattr(event, "avg_px_close", None),
+                equity_after=eq_after,
+                initial_equity=self.config.initial_equity,
+                equity_ccy=self.config.base_ccy,
+            )
+        except Exception as e:
+            self.log.warning(f"notify_position_closed failed: {e}")
+
+    def on_order_accepted(self, event) -> None:
+        try:
+            order = self.cache.order(event.client_order_id)
+            side = str(getattr(order, "side", "?")).split(".")[-1] if order else "?"
+            qty = int(order.quantity) if order and order.quantity else 0
+            order_type = str(getattr(order, "order_type", "?")).split(".")[-1] if order else None
+            notify_order_event(
+                strategy=self._prm_id,
+                event_type="accepted",
+                instrument=str(self.instrument_id),
+                side=side,
+                qty=qty,
+                order_type=order_type,
+                venue_order_id=str(getattr(event, "venue_order_id", "") or ""),
+                client_order_id=str(getattr(event, "client_order_id", "") or ""),
+            )
+        except Exception as e:
+            self.log.warning(f"notify_order_event(accepted) failed: {e}")
 
     def on_order_rejected(self, event) -> None:
         self.log.error(f"REJECTED: {event.client_order_id} -- {event.reason}")
+        try:
+            order = self.cache.order(event.client_order_id)
+            side = str(getattr(order, "side", "?")).split(".")[-1] if order else "?"
+            qty = int(order.quantity) if order and order.quantity else 0
+            notify_order_event(
+                strategy=self._prm_id,
+                event_type="rejected",
+                instrument=str(self.instrument_id),
+                side=side,
+                qty=qty,
+                client_order_id=str(getattr(event, "client_order_id", "") or ""),
+                note=str(getattr(event, "reason", "") or ""),
+            )
+        except Exception as e:
+            self.log.warning(f"notify_order_event(rejected) failed: {e}")
