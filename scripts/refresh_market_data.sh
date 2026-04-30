@@ -32,9 +32,12 @@ ANY_FAILED=0
 FAILED_STEPS=()
 
 # ── Step 1: AUD/JPY all timeframes via IBKR ──────────────────────────────
+# Use a high client_id (80) to dodge any half-open connection on lower IDs.
+# IBKR_CLIENT_ID_DOWNLOAD is read by download_data_mtf.py.
 echo ""
 echo "[1/2] Refreshing AUD_JPY at H1, H4, D, W (IBKR via ib-gateway)..."
-if uv run python scripts/download_data_mtf.py --pair AUD_JPY --years 15; then
+if IBKR_CLIENT_ID_DOWNLOAD="${IBKR_CLIENT_ID_DOWNLOAD:-80}" \
+        uv run python scripts/download_data_mtf.py --pair AUD_JPY --years 15; then
     echo "  ✓ AUD_JPY refresh complete"
 else
     echo "  ✗ AUD_JPY refresh FAILED" >&2
@@ -56,8 +59,11 @@ fi
 
 case "$SOURCE" in
     yfinance)
+        # CSPX and IHYU are LSE-listed UCITS ETFs; Yahoo serves them under
+        # the .L suffix. Use the LOCAL=YAHOO mapping syntax so the parquets
+        # land at data/CSPX_D.parquet and data/IHYU_D.parquet.
         if uv run python scripts/download_data_yfinance.py \
-                --symbols CSPX IHYU \
+                --symbols CSPX=CSPX.L IHYU=IHYU.L \
                 --interval D \
                 --start 2015-01-01; then
             echo "  ✓ CSPX/IHYU refresh complete (yfinance)"

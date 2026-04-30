@@ -38,9 +38,11 @@ from ibapi.wrapper import EWrapper
 
 IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
 IBKR_PORT = int(os.getenv("IBKR_PORT", 4002))
-IBKR_CLIENT_ID = (
-    11  # Fixed — must not conflict with ORB (20), check_balance (99), download_data (10)
-)
+# Default 11; override via IBKR_CLIENT_ID_DOWNLOAD env to dodge stale-connection
+# issues without colliding with the strategy's own IBKR_CLIENT_ID. Avoid:
+# ORB (20), check_balance (99), kill_switch (98), download_data (10),
+# download_fx_m5 (12), download_index_h1 (13), download_gld_h1 (19).
+IBKR_CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID_DOWNLOAD", "11"))
 
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -87,6 +89,8 @@ class IBKRHistoricalDataApp(EWrapper, EClient):
         if errorCode not in [2104, 2106, 2108, 2158]:  # ignore info-only messages
             self.error_received = True
             self.error_msg = f"[{errorCode}] {errorString}"
+            # Always log non-info errors so connection-time issues are visible
+            print(f"  IBKR error [code={errorCode}, reqId={reqId}]: {errorString}", flush=True)
             if reqId > -1:
                 self.req_complete = True
 
@@ -119,9 +123,17 @@ def _parse_and_save(app: IBKRHistoricalDataApp, output_path: Path) -> pd.DataFra
     if df["timestamp"].dt.tz is None:
         df["timestamp"] = df["timestamp"].dt.tz_localize("UTC")
 
-    # Merge with existing file
+    # Merge with existing file. Handle both layouts: timestamp as a column
+    # (this script's own write convention) or timestamp as the index (other
+    # parts of the codebase, e.g. yfinance/databento writers).
     if output_path.exists():
         existing = pd.read_parquet(output_path)
+        if "timestamp" not in existing.columns:
+            # timestamp lives in the index — promote it to a column
+            existing = existing.reset_index().rename(columns={existing.index.name or "index": "timestamp"})
+            if "timestamp" not in existing.columns:
+                # last-resort: assume the leftmost column is the timestamp
+                existing = existing.rename(columns={existing.columns[0]: "timestamp"})
         if not pd.api.types.is_datetime64_any_dtype(existing["timestamp"]):
             existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
         df = pd.concat([existing, df]).drop_duplicates(subset="timestamp").sort_values("timestamp")

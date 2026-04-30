@@ -29,6 +29,23 @@ DATA_DIR.mkdir(exist_ok=True)
 DEFAULT_SYMBOLS = ["SPY"]
 DEFAULT_START = "1993-01-01"
 
+
+def _parse_symbol_arg(arg: str) -> tuple[str, str]:
+    """Split a symbol arg into (yahoo_query_ticker, local_save_name).
+
+    Plain ticker:        "SPY"          -> ("SPY", "SPY")
+    Mapped form:         "CSPX=CSPX.L"  -> ("CSPX.L", "CSPX")
+                         (so query Yahoo for "CSPX.L" but save as "CSPX_D.parquet")
+
+    Lets us pull LSE-listed UCITS ETFs (which Yahoo serves under the .L
+    suffix) while keeping the local file name aligned with what the
+    strategy code expects.
+    """
+    if "=" in arg:
+        local, yahoo = arg.split("=", 1)
+        return yahoo.strip(), local.strip()
+    return arg, arg
+
 # Interval mappings: our name -> yfinance name, output suffix
 _INTERVAL_MAP = {
     "D": ("1d", "D"),
@@ -130,18 +147,19 @@ def main() -> None:
     print("=" * 60)
 
     failed: list[str] = []
-    for symbol in args.symbols:
+    for sym_arg in args.symbols:
+        yahoo_ticker, local_name = _parse_symbol_arg(sym_arg)
         try:
-            df = download_symbol(symbol, args.start, args.end, args.interval)
+            df = download_symbol(yahoo_ticker, args.start, args.end, args.interval)
             if df.empty:
-                failed.append(symbol)
+                failed.append(sym_arg)
                 continue
-            out_path = DATA_DIR / f"{symbol}_{suffix}.parquet"
+            out_path = DATA_DIR / f"{local_name}_{suffix}.parquet"
             df.to_parquet(out_path)
             print(f"  Saved: {out_path.relative_to(PROJECT_ROOT)}")
         except Exception as exc:
-            print(f"  ERROR downloading {symbol}: {exc}")
-            failed.append(symbol)
+            print(f"  ERROR downloading {sym_arg}: {exc}")
+            failed.append(sym_arg)
 
     print("=" * 60)
     if failed:
