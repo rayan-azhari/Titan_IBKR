@@ -182,8 +182,12 @@ def _query_account_equity_usd(
             EClient.__init__(self, self)
             self.ready = False
             self.done = False
-            self.base_nlv: float | None = None
-            self.fx_usd_to_base: float | None = None
+            # IBKR returns one NetLiquidation row per ledger currency (e.g.
+            # 'GBP', 'USD'), one ExchangeRate row per currency (rate to
+            # convert that ccy to BASE), and per-segment 'GBP-C' style rows
+            # (which we skip via the dash filter).
+            self.nlv_by_ccy: dict[str, float] = {}
+            self.fx_by_ccy: dict[str, float] = {}
 
         def nextValidId(self, oid: int) -> None:  # type: ignore[override]
             self.ready = True
@@ -191,14 +195,19 @@ def _query_account_equity_usd(
         def updateAccountValue(  # type: ignore[override]
             self, key: str, val: str, currency: str, accountName: str
         ) -> None:
-            if key == "NetLiquidation" and currency == "BASE":
+            # Skip per-segment breakdowns ("GBP-C", "USD-C", ...) and the
+            # synthetic "BASE" aggregate (we'll identify the real base ccy
+            # from ExchangeRate==1.0 instead).
+            if "-" in currency or currency == "BASE":
+                return
+            if key == "NetLiquidation":
                 try:
-                    self.base_nlv = float(val)
+                    self.nlv_by_ccy[currency] = float(val)
                 except (TypeError, ValueError):
                     pass
-            elif key == "ExchangeRate" and currency == "USD":
+            elif key == "ExchangeRate":
                 try:
-                    self.fx_usd_to_base = float(val)
+                    self.fx_by_ccy[currency] = float(val)
                 except (TypeError, ValueError):
                     pass
 
@@ -252,13 +261,36 @@ def _query_account_equity_usd(
     except Exception:
         pass
 
-    if app.base_nlv is None or app.base_nlv <= 0:
+    if not app.nlv_by_ccy:
         return None
-    # If FX rate is missing (rare; happens when base ccy is already USD),
-    # the BASE NLV is already a USD figure.
-    if app.fx_usd_to_base is None or app.fx_usd_to_base <= 0:
-        return float(app.base_nlv)
-    return float(app.base_nlv) / float(app.fx_usd_to_base)
+
+    # Identify the account base currency: the one whose ExchangeRate ≈ 1.0
+    # (e.g. GBP for a UK paper account, USD for a US account). Fall back to
+    # whichever NLV row we have if the FX table is empty.
+    base_ccy: str | None = None
+    for ccy, rate in app.fx_by_ccy.items():
+        if abs(rate - 1.0) < 1e-3:
+            base_ccy = ccy
+            break
+    if base_ccy is None:
+        # No FX dump (e.g. single-ledger USD account): pick the only NLV ccy.
+        if len(app.nlv_by_ccy) == 1:
+            base_ccy = next(iter(app.nlv_by_ccy))
+        else:
+            return None
+
+    base_nlv = app.nlv_by_ccy.get(base_ccy)
+    if base_nlv is None or base_nlv <= 0:
+        return None
+
+    # ExchangeRate USD = "USD per BASE-ccy unit" — i.e. how much BASE you get
+    # per 1 USD. So USD_NLV = base_nlv (in BASE units) / fx_USD_to_BASE.
+    # When base ccy IS USD, fx_USD_to_BASE = 1.0 and the conversion is a no-op.
+    fx_usd_to_base = app.fx_by_ccy.get("USD")
+    if fx_usd_to_base is None or fx_usd_to_base <= 0:
+        # Base must already be USD if there's no USD FX row.
+        return float(base_nlv) if base_ccy == "USD" else None
+    return float(base_nlv) / float(fx_usd_to_base)
 
 
 def _auto_allocate_initial_equity(
