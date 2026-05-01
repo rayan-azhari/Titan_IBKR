@@ -16,12 +16,12 @@ Usage:
     uv run python scripts/run_portfolio.py
     uv run python scripts/run_portfolio.py --strategies all
     uv run python scripts/run_portfolio.py --strategies daily_only
-    uv run python scripts/run_portfolio.py --strategies gld_confluence bond_gold
+    uv run python scripts/run_portfolio.py --strategies bond_gold mr_audjpy
 
 Strategy sets:
     all          -- all available strategies
     daily_only   -- daily-timeframe strategies only (lower bar volume)
-    gold_core    -- gold-focused strategies (confluence + macro + bond_gold)
+    gold_core    -- gold-focused strategies (gold_macro + bond_gold)
     custom       -- specify individual strategy names
 """
 
@@ -224,25 +224,13 @@ STRATEGY_REGISTRY = {
         },
     },
     # H1 strategies
-    "gld_confluence": {
-        "module": "titan.strategies.gld_confluence.strategy",
-        "config_cls": "GLDConfluenceConfig",
-        "strategy_cls": "GLDConfluenceStrategy",
-        "contracts": [
-            IBContract(
-                secType="STK",
-                symbol="GLD",
-                exchange="SMART",
-                primaryExchange="ARCA",
-                currency="USD",
-            ),
-        ],
-        "config_kwargs": {
-            "instrument_id": "GLD.ARCA",
-            "bar_type_h1": "GLD.ARCA-1-HOUR-LAST-EXTERNAL",
-            "ticker": "GLD",
-        },
-    },
+    # ``gld_confluence`` removed from registry on 2026-05-01 after fresh-sweep
+    # re-validation: full-history WFO Sharpe collapsed to +0.14 (documented
+    # +1.46 not reproducible). Best of 16 sweep combos was Sharpe +0.35 with
+    # 34% positive folds and -27% DD — well below the deployment gate. Code
+    # stays in titan/strategies/gld_confluence/ for future reference; do not
+    # add back without re-validating signal selection. See memory:
+    # project_gld_confluence_uk_substitute.md.
     "mr_audjpy": {
         "module": "titan.strategies.mr_audjpy.strategy",
         "config_cls": "MRAUDJPYConfig",
@@ -367,8 +355,9 @@ STRATEGY_SETS = {
         "fx_carry_audjpy",
         "ic_equity_noc",
     ],
-    "gold_core": ["gld_confluence", "gold_macro", "bond_gold"],
-    "h1_only": ["gld_confluence", "mr_audjpy"],
+    # gld_confluence dropped 2026-05-01 (see comment near registry).
+    "gold_core": ["gold_macro", "bond_gold"],
+    "h1_only": ["mr_audjpy"],
     # AUD/USD MR removed 2026-04-21 after post-remediation re-validation:
     # CI_lo = -0.180 < 0 fails the deployment gate. See directives/Deprecated
     # Strategies.md.

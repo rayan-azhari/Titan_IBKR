@@ -1,9 +1,19 @@
 """gld_confluence/strategy.py -- GLD AND-Gated Multi-Scale Confluence.
 
+DEPRECATED 2026-05-01. The historically-documented Sharpe +1.46 / 80%
+positive folds is NOT reproducible on the current full-history GLD H1
+data. Fresh sweep across 6 signal families × 5 thresholds at the
+documented IS=5000/OOS=1250 settings produces best Sharpe +0.35 with
+34% positive folds and -27% DD — well below the deployment gate.
+
+Removed from STRATEGY_REGISTRY in scripts/run_portfolio.py to prevent
+accidental deployment. Code preserved here for future reference. See
+memory: project_gld_confluence_uk_substitute.md for the re-validation
+audit. Do NOT add back to the registry without a new validation showing
+CI_lo > 0 on a held-out sanctuary window.
+
 Computes trend_mom signal at H1/H4/D/W virtual scales on single H1 stream.
 Only enters when ALL 4 scales agree on direction (AND-gate).
-
-WFO validated: Sharpe +1.46, 80% positive folds.
 
 Signal:
     trend_mom = sign(ma_spread_5_20) * |rsi_14_dev| / 50
@@ -12,6 +22,7 @@ Signal:
     AND-gate: only enter when all 4 scales agree on sign.
     Z-score normalised, entry at threshold.
 
+Original validation (no longer reproducible): Sharpe +1.46.
 April 2026. Research: research/ic_analysis/run_confluence_wfo.py
 """
 
