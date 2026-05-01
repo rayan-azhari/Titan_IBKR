@@ -119,17 +119,23 @@ class BondGoldStrategy(Strategy):
         )
 
     def _rehydrate_position_from_broker(self) -> None:
-        """If IBKR shows an open position we have no in-memory record of
-        (typical after a container restart), adopt it.
+        """If IBKR shows an open position **opened by THIS strategy instance**,
+        adopt it. The ``strategy_id`` filter is critical: when multiple
+        strategies trade the same instrument (e.g. two bond->equity variants
+        both targeting an S&P UCITS), we must not adopt the other strategy's
+        position. NautilusTrader tags positions with the opening strategy's
+        ID; ``cache.positions(strategy_id=self.id)`` returns only ours.
 
         Sets ``_current_pos`` to 1 and ``_bars_held`` to ``hold_days`` (so
         the strategy is immediately eligible to exit on the next bar where
         ``z <= threshold`` — we don't know the precise entry date, but
-        treating it as fully-aged is the safe default: we skip the
-        min-hold guard rather than re-arm it from zero).
+        treating it as fully-aged is the safe default).
         """
         try:
-            positions = self.cache.positions(instrument_id=self.instrument_id)
+            positions = self.cache.positions(
+                instrument_id=self.instrument_id,
+                strategy_id=self.id,
+            )
             open_pos = [p for p in positions if not p.is_closed]
             if not open_pos:
                 return
@@ -138,17 +144,19 @@ class BondGoldStrategy(Strategy):
                 self._current_pos = 1
                 self._bars_held = self.config.hold_days
                 self.log.info(
-                    f"REHYDRATED: existing LONG {qty} {self.instrument_id} on "
-                    f"broker; treating as past min-hold (eligible to exit on next "
-                    f"z<={self.config.threshold} bar)."
+                    f"REHYDRATED: existing LONG {qty} {self.instrument_id} "
+                    f"opened by THIS strategy ({self.id}); treating as past "
+                    f"min-hold (eligible to exit on next z<="
+                    f"{self.config.threshold} bar)."
                 )
             elif qty < 0:
                 # bond_gold is long-only by design; a short here is a state
                 # corruption we should NOT silently adopt.
                 self.log.error(
                     f"REHYDRATED: SHORT {qty} {self.instrument_id} found on "
-                    f"broker but bond_gold is long-only. Manual review needed; "
-                    f"strategy state left as flat."
+                    f"broker for strategy {self.id} but bond_gold is "
+                    f"long-only. Manual review needed; strategy state left "
+                    f"as flat."
                 )
         except Exception as e:
             self.log.warning(f"_rehydrate_position_from_broker failed: {e}")

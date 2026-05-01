@@ -37,7 +37,7 @@ HOLDS = [5, 10, 20]
 THRESHOLDS = [0.25, 0.50, 1.00]
 
 # Bonferroni gate (conservative, applied to UNADJUSTED 95% CI lo).
-BONF_CI_LO_GATE = 0.30   # Approx Bonferroni-equivalent for N=27 tests
+BONF_CI_LO_GATE = 0.30  # Approx Bonferroni-equivalent for N=27 tests
 BONF_SHARPE_GATE = 0.70  # Tightened from 0.5 to compensate for selection
 MIN_FOLDS = 20
 MIN_POS = 0.55
@@ -58,16 +58,24 @@ def main() -> None:
 
     ibgm_eval = ibgm[ibgm.index < SANCTUARY_START]
     xdax_eval = xdax[xdax.index < SANCTUARY_START]
-    print(f"  IBGM eval bars : {len(ibgm_eval):,} ({ibgm_eval.index[0].date()}..{ibgm_eval.index[-1].date()})")
+    print(
+        f"  IBGM eval bars : {len(ibgm_eval):,} ({ibgm_eval.index[0].date()}..{ibgm_eval.index[-1].date()})"
+    )
     print(f"  XDAX eval bars : {len(xdax_eval):,}")
     print(f"  Sanctuary start: {SANCTUARY_START.date()} (held out)")
-    print(f"  Grid           : {len(LOOKBACKS) * len(HOLDS) * len(THRESHOLDS)} cells "
-          f"({len(LOOKBACKS)} lb x {len(HOLDS)} hold x {len(THRESHOLDS)} th)")
-    print(f"  Bonferroni gate: Sharpe > {BONF_SHARPE_GATE}, CI lo > {BONF_CI_LO_GATE}, "
-          f"folds >= {MIN_FOLDS}, pos% >= {MIN_POS:.0%}")
+    print(
+        f"  Grid           : {len(LOOKBACKS) * len(HOLDS) * len(THRESHOLDS)} cells "
+        f"({len(LOOKBACKS)} lb x {len(HOLDS)} hold x {len(THRESHOLDS)} th)"
+    )
+    print(
+        f"  Bonferroni gate: Sharpe > {BONF_SHARPE_GATE}, CI lo > {BONF_CI_LO_GATE}, "
+        f"folds >= {MIN_FOLDS}, pos% >= {MIN_POS:.0%}"
+    )
     print()
-    print(f"{'lb':>3} {'hold':>4} {'th':>5}  | {'Sharpe':>7} {'CI_lo':>7} {'CI_hi':>7}"
-          f"  | {'DD%':>6} {'Pos%':>5} {'Folds':>5} {'Trd':>4}  {'Gate':>6}")
+    print(
+        f"{'lb':>3} {'hold':>4} {'th':>5}  | {'Sharpe':>7} {'CI_lo':>7} {'CI_hi':>7}"
+        f"  | {'DD%':>6} {'Pos%':>5} {'Folds':>5} {'Trd':>4}  {'Gate':>6}"
+    )
     print("-" * 92)
 
     results: list[dict] = []
@@ -75,9 +83,13 @@ def main() -> None:
         for hd in HOLDS:
             for th in THRESHOLDS:
                 r = run_bond_wfo(
-                    ibgm_eval, xdax_eval,
-                    lookback=lb, hold_days=hd, threshold=th,
-                    is_days=504, oos_days=126,
+                    ibgm_eval,
+                    xdax_eval,
+                    lookback=lb,
+                    hold_days=hd,
+                    threshold=th,
+                    is_days=504,
+                    oos_days=126,
                 )
                 sh = r.get("stitched_sharpe", 0.0)
                 ci_lo = r.get("sharpe_ci_95_lo", 0.0)
@@ -95,16 +107,26 @@ def main() -> None:
                 passed = gate_sh and gate_ci and gate_folds and gate_pos
                 marker = "PASS" if passed else " "
 
-                results.append({
-                    "lookback": lb, "hold": hd, "threshold": th,
-                    "sharpe": sh, "ci_lo": ci_lo, "ci_hi": ci_hi,
-                    "dd": dd, "pos": pos, "folds": folds, "trades": trades,
-                    "ret": ret, "passed": passed,
-                })
+                results.append(
+                    {
+                        "lookback": lb,
+                        "hold": hd,
+                        "threshold": th,
+                        "sharpe": sh,
+                        "ci_lo": ci_lo,
+                        "ci_hi": ci_hi,
+                        "dd": dd,
+                        "pos": pos,
+                        "folds": folds,
+                        "trades": trades,
+                        "ret": ret,
+                        "passed": passed,
+                    }
+                )
                 print(
                     f"{lb:>3} {hd:>4} {th:>5.2f}  | "
                     f"{sh:>+7.3f} {ci_lo:>+7.3f} {ci_hi:>+7.3f}"
-                    f"  | {dd:>+6.1f} {pos*100:>5.0f}% {folds:>5} {trades:>4}  "
+                    f"  | {dd:>+6.1f} {pos * 100:>5.0f}% {folds:>5} {trades:>4}  "
                     f"{marker:>6}"
                 )
 
@@ -116,30 +138,38 @@ def main() -> None:
     df = pd.DataFrame(results)
     n_passed = df["passed"].sum()
     print(f"  Cells testing : {len(df)}")
-    print(f"  Cells passing : {n_passed} ({n_passed/len(df)*100:.0f}%)")
-    print(f"  Best by CI_lo : ", end="")
+    print(f"  Cells passing : {n_passed} ({n_passed / len(df) * 100:.0f}%)")
+    print("  Best by CI_lo : ", end="")
     best_ci = df.loc[df["ci_lo"].idxmax()]
-    print(f"lb={int(best_ci['lookback'])} hold={int(best_ci['hold'])} "
-          f"th={best_ci['threshold']:.2f} -> Sharpe {best_ci['sharpe']:+.3f}, "
-          f"CI lo {best_ci['ci_lo']:+.3f}")
-    print(f"  Best by Sharpe: ", end="")
+    print(
+        f"lb={int(best_ci['lookback'])} hold={int(best_ci['hold'])} "
+        f"th={best_ci['threshold']:.2f} -> Sharpe {best_ci['sharpe']:+.3f}, "
+        f"CI lo {best_ci['ci_lo']:+.3f}"
+    )
+    print("  Best by Sharpe: ", end="")
     best_sh = df.loc[df["sharpe"].idxmax()]
-    print(f"lb={int(best_sh['lookback'])} hold={int(best_sh['hold'])} "
-          f"th={best_sh['threshold']:.2f} -> Sharpe {best_sh['sharpe']:+.3f}, "
-          f"CI lo {best_sh['ci_lo']:+.3f}")
+    print(
+        f"lb={int(best_sh['lookback'])} hold={int(best_sh['hold'])} "
+        f"th={best_sh['threshold']:.2f} -> Sharpe {best_sh['sharpe']:+.3f}, "
+        f"CI lo {best_sh['ci_lo']:+.3f}"
+    )
 
     if n_passed > 0:
         # Sanctuary check on the best Bonferroni-passing cell
         best = df[df["passed"]].sort_values("ci_lo", ascending=False).iloc[0]
         print()
-        print(f"  Sanctuary check on best PASS cell: lb={int(best['lookback'])}, "
-              f"hold={int(best['hold'])}, th={best['threshold']:.2f}")
+        print(
+            f"  Sanctuary check on best PASS cell: lb={int(best['lookback'])}, "
+            f"hold={int(best['hold'])}, th={best['threshold']:.2f}"
+        )
         r_sanc = run_bond_wfo(
-            ibgm, xdax,  # full data including sanctuary
+            ibgm,
+            xdax,  # full data including sanctuary
             lookback=int(best["lookback"]),
             hold_days=int(best["hold"]),
             threshold=float(best["threshold"]),
-            is_days=504, oos_days=126,
+            is_days=504,
+            oos_days=126,
         )
         # Compute sanctuary-only stats
         rets_full = r_sanc.get("stitched_returns", pd.Series(dtype=float))
@@ -147,12 +177,15 @@ def main() -> None:
             sanc = rets_full[rets_full.index >= SANCTUARY_START]
             if len(sanc) > 5:
                 from titan.research.metrics import bootstrap_sharpe_ci, max_drawdown, sharpe
+
                 sanc_sh = sharpe(sanc, periods_per_year=252)
                 sanc_lo, sanc_hi = bootstrap_sharpe_ci(sanc, periods_per_year=252, n_resamples=2000)
                 sanc_dd = max_drawdown(sanc)
                 sanc_total = float((1.0 + sanc).prod() - 1.0)
-                print(f"    bars: {len(sanc)} | Sharpe {sanc_sh:+.3f}  CI [{sanc_lo:+.3f}, {sanc_hi:+.3f}]"
-                      f"  DD {sanc_dd*100:+.1f}%  total {sanc_total*100:+.1f}%")
+                print(
+                    f"    bars: {len(sanc)} | Sharpe {sanc_sh:+.3f}  CI [{sanc_lo:+.3f}, {sanc_hi:+.3f}]"
+                    f"  DD {sanc_dd * 100:+.1f}%  total {sanc_total * 100:+.1f}%"
+                )
                 if sanc_sh > 0:
                     print("    sanctuary: POSITIVE — strategy survives held-out window")
                 else:

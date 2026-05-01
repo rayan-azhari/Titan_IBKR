@@ -170,7 +170,12 @@ class MRAUDJPYStrategy(Strategy):
         flatten it and reset tiers naturally.
         """
         try:
-            positions = self.cache.positions(instrument_id=self.instrument_id)
+            # Filter by strategy_id so we only adopt positions THIS strategy
+            # opened — prevents cross-strategy attribution on shared instruments.
+            positions = self.cache.positions(
+                instrument_id=self.instrument_id,
+                strategy_id=self.id,
+            )
             open_pos = [p for p in positions if not p.is_closed]
             if not open_pos:
                 return
@@ -179,9 +184,9 @@ class MRAUDJPYStrategy(Strategy):
                 # Mark every tier as already hit so on_bar will not enter again.
                 self._tiers_hit = set(range(len(TIER_SIZES)))
                 self.log.info(
-                    f"REHYDRATED: existing {qty:+.0f} {self.instrument_id} on broker; "
-                    f"all {len(TIER_SIZES)} tiers marked hit (no new entries until "
-                    f"position closes)."
+                    f"REHYDRATED: existing {qty:+.0f} {self.instrument_id} opened by "
+                    f"THIS strategy ({self.id}); all {len(TIER_SIZES)} tiers marked "
+                    f"hit (no new entries until position closes)."
                 )
         except Exception as e:
             self.log.warning(f"_rehydrate_position_from_broker failed: {e}")

@@ -82,8 +82,8 @@ _STRATEGY_WARMUP_FILES: dict[str, list[str]] = {
         "CSPX_D.parquet",
         "IHYU_D.parquet",
     ],
-    "bond_equity_ihyg_cspx": [
-        "CSPX_D.parquet",
+    "bond_equity_ihyg_vusa": [
+        "VUSA_D.parquet",
         "IHYG_D.parquet",
     ],
 }
@@ -310,20 +310,22 @@ STRATEGY_REGISTRY = {
             "max_leverage": 2.0,
         },
     },
-    "bond_equity_ihyg_cspx": {
-        # IHYG (€ HY credit UCITS) -> CSPX (S&P 500 UCITS) cross-asset.
-        # Discovered May 2026: pre-sanctuary Sharpe +1.17 (CI lo +0.49,
-        # 94% pos folds 15/16, DD -13%); sanctuary 2025+ Sharpe +1.33.
-        # 0.56 correlation with bond_equity_ihyu_cspx -> ensemble of the
-        # two has Sharpe +1.05 with DD only -8.6%.
-        # See: project_ihyg_cspx_discovery.md
+    "bond_equity_ihyg_vusa": {
+        # IHYG (€ HY credit UCITS) -> VUSA (Vanguard S&P 500 UCITS) cross-asset.
+        # Discovered May 2026 with CSPX target (pre-sanctuary Sharpe +1.17,
+        # sanctuary +1.33). Switched to VUSA target so the strategy holds a
+        # broker position distinct from the live bond_equity_ihyu_cspx
+        # strategy (which trades CSPX) — avoids position-attribution conflict.
+        # VUSA tracks the same S&P 500 underlying as CSPX (different issuer).
+        # Re-validated on VUSA: Sharpe +0.97, CI lo +0.34, 94% pos folds, DD -13.7%.
+        # See: project_ihyg_cspx_discovery.md.
         "module": "titan.strategies.bond_gold.strategy",
         "config_cls": "BondGoldConfig",
         "strategy_cls": "BondGoldStrategy",
         "contracts": [
             IBContract(
                 secType="STK",
-                symbol="CSPX",
+                symbol="VUSA",
                 exchange="SMART",
                 primaryExchange="LSEETF",
                 currency="USD",
@@ -337,13 +339,12 @@ STRATEGY_REGISTRY = {
             ),
         ],
         "config_kwargs": {
-            "instrument_id": "CSPX.LSEETF",
+            "instrument_id": "VUSA.LSEETF",
             "signal_instrument_id": "IHYG.LSEETF",
-            "bar_type_d": "CSPX.LSEETF-1-DAY-LAST-EXTERNAL",
+            "bar_type_d": "VUSA.LSEETF-1-DAY-LAST-EXTERNAL",
             "signal_bar_type_d": "IHYG.LSEETF-1-DAY-LAST-EXTERNAL",
-            "ticker_gld": "CSPX",
+            "ticker_gld": "VUSA",
             "ticker_ief": "IHYG",  # warmup reads data/IHYG_D.parquet
-            # Discovered champion params (different from IHYU/CSPX!).
             "lookback": 5,
             "threshold": 0.25,
             "hold_days": 5,
@@ -408,7 +409,7 @@ STRATEGY_SETS = {
     "champion_portfolio": [
         "mr_audjpy",
         "bond_equity_ihyu_cspx",
-        "bond_equity_ihyg_cspx",  # added 2026-05-01 (see project_ihyg_cspx_discovery.md)
+        "bond_equity_ihyg_vusa",  # added 2026-05-01 (see project_ihyg_cspx_discovery.md)
         "daily_summary",
     ],
 }
