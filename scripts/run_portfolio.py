@@ -147,6 +147,185 @@ def _check_data_freshness(logger: logging.Logger, selected: list[str]) -> None:
                 logger.error(f"{line}  VERY stale — refresh before trading")
 
 
+# ── Account-equity auto-allocation ──────────────────────────────────────────
+# Each strategy's BondGoldConfig / MRAUDJPYConfig defaults to
+# initial_equity=$10,000 (a placeholder seed used for vol-targeted sizing).
+# When the actual account is smaller (or larger) than N × $10k, sizing is
+# mis-calibrated. We fix this at startup by querying the broker's
+# NetLiquidation, expressing it in USD (the strategies' implicit base ccy),
+# and dividing equally among the active TRADING strategies.
+
+
+def _query_account_equity_usd(
+    host: str,
+    port: int,
+    account_id: str,
+    timeout: float = 12.0,
+) -> float | None:
+    """Open a brief IBKR connection (client_id=96) and return total
+    NetLiquidation expressed in USD.
+
+    Returns ``None`` on any failure — caller falls back to env override or
+    registry defaults. Adds at most ``timeout`` seconds to startup.
+    """
+    import threading
+    import time
+
+    try:
+        from ibapi.client import EClient
+        from ibapi.wrapper import EWrapper
+    except ImportError:
+        return None
+
+    class _AcctApp(EWrapper, EClient):
+        def __init__(self) -> None:
+            EClient.__init__(self, self)
+            self.ready = False
+            self.done = False
+            self.base_nlv: float | None = None
+            self.fx_usd_to_base: float | None = None
+
+        def nextValidId(self, oid: int) -> None:  # type: ignore[override]
+            self.ready = True
+
+        def updateAccountValue(  # type: ignore[override]
+            self, key: str, val: str, currency: str, accountName: str
+        ) -> None:
+            if key == "NetLiquidation" and currency == "BASE":
+                try:
+                    self.base_nlv = float(val)
+                except (TypeError, ValueError):
+                    pass
+            elif key == "ExchangeRate" and currency == "USD":
+                try:
+                    self.fx_usd_to_base = float(val)
+                except (TypeError, ValueError):
+                    pass
+
+        def accountDownloadEnd(self, accountName: str) -> None:  # type: ignore[override]
+            self.done = True
+
+        def error(  # type: ignore[override]
+            self, reqId, errorCode, errorString, advancedOrderRejectJson=""
+        ) -> None:
+            # Suppress 21xx info messages; everything else is a noisy debug.
+            return None
+
+    app = _AcctApp()
+    try:
+        app.connect(host, port, 96)
+    except Exception:
+        return None
+
+    threading.Thread(target=app.run, daemon=True).start()
+
+    deadline = time.time() + timeout
+    while not app.ready and time.time() < deadline:
+        time.sleep(0.05)
+    if not app.ready:
+        try:
+            app.disconnect()
+        except Exception:
+            pass
+        return None
+
+    try:
+        app.reqAccountUpdates(True, account_id)
+    except Exception:
+        try:
+            app.disconnect()
+        except Exception:
+            pass
+        return None
+
+    deadline = time.time() + timeout
+    while not app.done and time.time() < deadline:
+        time.sleep(0.1)
+
+    try:
+        app.reqAccountUpdates(False, account_id)
+    except Exception:
+        pass
+    time.sleep(0.3)
+    try:
+        app.disconnect()
+    except Exception:
+        pass
+
+    if app.base_nlv is None or app.base_nlv <= 0:
+        return None
+    # If FX rate is missing (rare; happens when base ccy is already USD),
+    # the BASE NLV is already a USD figure.
+    if app.fx_usd_to_base is None or app.fx_usd_to_base <= 0:
+        return float(app.base_nlv)
+    return float(app.base_nlv) / float(app.fx_usd_to_base)
+
+
+def _auto_allocate_initial_equity(
+    selected: list[str],
+    host: str,
+    port: int,
+    account_id: str,
+    logger: logging.Logger,
+) -> None:
+    """Override each trading strategy's ``initial_equity`` based on actual
+    account NLV. Uses ``TITAN_PORTFOLIO_USD_EQUITY`` env override if set,
+    else queries the broker. On any failure, registry defaults are kept.
+
+    Mutates ``STRATEGY_REGISTRY[name]["config_kwargs"]["initial_equity"]``
+    in place for each strategy ``name`` flagged ``trading=True``.
+    """
+    trading = [s for s in selected if STRATEGY_REGISTRY.get(s, {}).get("trading", True)]
+    n = len(trading)
+    if n == 0:
+        logger.info("  Auto-equity: no trading strategies in selection; skipped")
+        return
+
+    total_usd: float | None = None
+    override = os.getenv("TITAN_PORTFOLIO_USD_EQUITY")
+    if override:
+        try:
+            total_usd = float(override)
+            logger.info(
+                f"  Auto-equity: using env override TITAN_PORTFOLIO_USD_EQUITY=${total_usd:,.2f}"
+            )
+        except ValueError:
+            logger.warning(
+                f"  Auto-equity: invalid TITAN_PORTFOLIO_USD_EQUITY={override!r}; "
+                "ignoring and querying broker"
+            )
+
+    if total_usd is None:
+        if not account_id:
+            logger.warning(
+                "  Auto-equity: IBKR_ACCOUNT_ID not set; falling back to "
+                "registry-default initial_equity. Strategies will be sized "
+                "as if each had its own $10k."
+            )
+            return
+        logger.info(f"  Auto-equity: querying NLV from {host}:{port}...")
+        total_usd = _query_account_equity_usd(host, port, account_id)
+        if total_usd is None:
+            logger.warning(
+                "  Auto-equity: broker query failed or timed out; falling back "
+                "to registry-default initial_equity. Set "
+                "TITAN_PORTFOLIO_USD_EQUITY in .env.docker to override."
+            )
+            return
+
+    per_strategy = total_usd / n
+    logger.info(
+        f"  Auto-equity: account NLV = ${total_usd:,.2f} (USD), "
+        f"divided across {n} trading strategies = ${per_strategy:,.2f} each"
+    )
+    for name in trading:
+        entry = STRATEGY_REGISTRY[name]
+        old = entry["config_kwargs"].get("initial_equity")
+        entry["config_kwargs"]["initial_equity"] = per_strategy
+        old_str = f"${old:,.2f}" if isinstance(old, (int, float)) else "(default)"
+        logger.info(f"    {name:<30} initial_equity {old_str} → ${per_strategy:,.2f}")
+
+
 # ── Strategy Registry ────────────────────────────────────────────────────────
 
 STRATEGY_REGISTRY = {
@@ -413,6 +592,7 @@ STRATEGY_REGISTRY = {
         # Passive strategy: posts a daily Slack/Telegram rollup at the
         # configured time-of-day. Doesn't trade. Subscribes to AUD/JPY H1
         # bars (already in champion portfolio) as a clock-tick source.
+        "trading": False,  # passive — excluded from auto-equity allocation
         "module": "titan.strategies.daily_summary.strategy",
         "config_cls": "DailySummaryConfig",
         "strategy_cls": "DailySummaryStrategy",
@@ -556,6 +736,13 @@ def main() -> None:
 
     logger.info("  Warmup data freshness:")
     _check_data_freshness(logger, selected)
+    logger.info("=" * 60)
+
+    # Auto-allocate initial_equity across active trading strategies, sized
+    # to the actual broker account NLV (in USD). Set
+    # TITAN_PORTFOLIO_USD_EQUITY=<value> to bypass the broker query.
+    logger.info("  Per-strategy seed equity (auto-allocated from account NLV):")
+    _auto_allocate_initial_equity(selected, ib_host, ib_port, ib_account_id, logger)
     logger.info("=" * 60)
 
     # Collect all contracts from selected strategies
