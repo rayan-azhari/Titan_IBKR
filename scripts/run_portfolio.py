@@ -82,6 +82,10 @@ _STRATEGY_WARMUP_FILES: dict[str, list[str]] = {
         "CSPX_D.parquet",
         "IHYU_D.parquet",
     ],
+    "bond_equity_ihyg_cspx": [
+        "CSPX_D.parquet",
+        "IHYG_D.parquet",
+    ],
 }
 
 
@@ -306,6 +310,46 @@ STRATEGY_REGISTRY = {
             "max_leverage": 2.0,
         },
     },
+    "bond_equity_ihyg_cspx": {
+        # IHYG (€ HY credit UCITS) -> CSPX (S&P 500 UCITS) cross-asset.
+        # Discovered May 2026: pre-sanctuary Sharpe +1.17 (CI lo +0.49,
+        # 94% pos folds 15/16, DD -13%); sanctuary 2025+ Sharpe +1.33.
+        # 0.56 correlation with bond_equity_ihyu_cspx -> ensemble of the
+        # two has Sharpe +1.05 with DD only -8.6%.
+        # See: project_ihyg_cspx_discovery.md
+        "module": "titan.strategies.bond_gold.strategy",
+        "config_cls": "BondGoldConfig",
+        "strategy_cls": "BondGoldStrategy",
+        "contracts": [
+            IBContract(
+                secType="STK",
+                symbol="CSPX",
+                exchange="SMART",
+                primaryExchange="LSEETF",
+                currency="USD",
+            ),
+            IBContract(
+                secType="STK",
+                symbol="IHYG",
+                exchange="SMART",
+                primaryExchange="LSEETF",
+                currency="EUR",
+            ),
+        ],
+        "config_kwargs": {
+            "instrument_id": "CSPX.LSEETF",
+            "signal_instrument_id": "IHYG.LSEETF",
+            "bar_type_d": "CSPX.LSEETF-1-DAY-LAST-EXTERNAL",
+            "signal_bar_type_d": "IHYG.LSEETF-1-DAY-LAST-EXTERNAL",
+            "ticker_gld": "CSPX",
+            "ticker_ief": "IHYG",  # warmup reads data/IHYG_D.parquet
+            # Discovered champion params (different from IHYU/CSPX!).
+            "lookback": 5,
+            "threshold": 0.25,
+            "hold_days": 5,
+            "max_leverage": 2.0,
+        },
+    },
     # IC Equity (example -- add more as needed)
     "daily_summary": {
         # Passive strategy: posts a daily Slack/Telegram rollup at the
@@ -361,7 +405,12 @@ STRATEGY_SETS = {
     # AUD/USD MR removed 2026-04-21 after post-remediation re-validation:
     # CI_lo = -0.180 < 0 fails the deployment gate. See directives/Deprecated
     # Strategies.md.
-    "champion_portfolio": ["mr_audjpy", "bond_equity_ihyu_cspx", "daily_summary"],
+    "champion_portfolio": [
+        "mr_audjpy",
+        "bond_equity_ihyu_cspx",
+        "bond_equity_ihyg_cspx",  # added 2026-05-01 (see project_ihyg_cspx_discovery.md)
+        "daily_summary",
+    ],
 }
 
 

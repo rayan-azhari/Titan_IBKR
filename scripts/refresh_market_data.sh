@@ -45,10 +45,10 @@ else
     FAILED_STEPS+=("AUD_JPY")
 fi
 
-# ── Step 2: CSPX_D and IHYU_D via Yahoo (or Databento if requested) ──────
+# ── Step 2: CSPX_D, IHYU_D, IHYG_D via Yahoo (or Databento if requested) ─
 echo ""
 SOURCE="${REFRESH_SOURCE_ETF:-yfinance}"
-echo "[2/2] Refreshing CSPX_D and IHYU_D via ${SOURCE}..."
+echo "[2/2] Refreshing CSPX_D, IHYU_D, IHYG_D via ${SOURCE}..."
 
 if [ "$SOURCE" = "databento" ]; then
     if [ -z "${DATABENTO_API_KEY:-}" ]; then
@@ -59,29 +59,29 @@ fi
 
 case "$SOURCE" in
     yfinance)
-        # CSPX and IHYU are LSE-listed UCITS ETFs; Yahoo serves them under
-        # the .L suffix. Use the LOCAL=YAHOO mapping syntax so the parquets
-        # land at data/CSPX_D.parquet and data/IHYU_D.parquet.
+        # CSPX (S&P UCITS), IHYU ($-HY UCITS), IHYG (€-HY UCITS) — all
+        # LSE-listed; Yahoo serves them under the .L suffix. Use the
+        # LOCAL=YAHOO mapping syntax so parquets land with clean names.
         if uv run python scripts/download_data_yfinance.py \
-                --symbols CSPX=CSPX.L IHYU=IHYU.L \
+                --symbols CSPX=CSPX.L IHYU=IHYU.L IHYG=IHYG.L \
                 --interval D \
                 --start 2015-01-01; then
-            echo "  ✓ CSPX/IHYU refresh complete (yfinance)"
+            echo "  ✓ CSPX/IHYU/IHYG refresh complete (yfinance)"
         else
-            echo "  ✗ CSPX/IHYU refresh FAILED (yfinance)" >&2
+            echo "  ✗ CSPX/IHYU/IHYG refresh FAILED (yfinance)" >&2
             ANY_FAILED=1
-            FAILED_STEPS+=("CSPX/IHYU")
+            FAILED_STEPS+=("CSPX/IHYU/IHYG")
         fi
         ;;
     databento)
         if uv run python scripts/download_data_databento.py \
-                --symbols CSPX IHYU \
+                --symbols CSPX IHYU IHYG \
                 --start 2018-05-01; then
-            echo "  ✓ CSPX/IHYU refresh complete (databento)"
+            echo "  ✓ CSPX/IHYU/IHYG refresh complete (databento)"
         else
-            echo "  ✗ CSPX/IHYU refresh FAILED (databento)" >&2
+            echo "  ✗ CSPX/IHYU/IHYG refresh FAILED (databento)" >&2
             ANY_FAILED=1
-            FAILED_STEPS+=("CSPX/IHYU")
+            FAILED_STEPS+=("CSPX/IHYU/IHYG")
         fi
         ;;
     *)
@@ -109,7 +109,7 @@ if command -v stat >/dev/null 2>&1; then
     echo ""
     echo "Parquet timestamps (UTC):"
     for f in data/AUD_JPY_H1.parquet data/AUD_JPY_D.parquet \
-             data/CSPX_D.parquet data/IHYU_D.parquet; do
+             data/CSPX_D.parquet data/IHYU_D.parquet data/IHYG_D.parquet; do
         if [ -f "$f" ]; then
             mtime=$(stat -c "%y" "$f" 2>/dev/null || stat -f "%Sm" "$f" 2>/dev/null)
             size=$(du -h "$f" 2>/dev/null | cut -f1)
