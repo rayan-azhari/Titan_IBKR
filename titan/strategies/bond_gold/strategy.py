@@ -106,13 +106,52 @@ class BondGoldStrategy(Strategy):
         self._warmup()
         self.subscribe_bars(self.bar_type_d)
         self.subscribe_bars(self.signal_bar_type_d)
+        # Rehydrate state from broker so a container restart doesn't
+        # leave us thinking we're flat when IBKR shows we're long.
+        self._rehydrate_position_from_broker()
         self.log.info(
             f"BondGold started | IEF LB={self.config.lookback}"
             f" | threshold={self.config.threshold}"
             f" | hold={self.config.hold_days}d"
             f" | GLD bars={len(self._gld_closes)}"
             f" | IEF bars={len(self._ief_closes)}"
+            f" | rehydrated_pos={self._current_pos}"
         )
+
+    def _rehydrate_position_from_broker(self) -> None:
+        """If IBKR shows an open position we have no in-memory record of
+        (typical after a container restart), adopt it.
+
+        Sets ``_current_pos`` to 1 and ``_bars_held`` to ``hold_days`` (so
+        the strategy is immediately eligible to exit on the next bar where
+        ``z <= threshold`` — we don't know the precise entry date, but
+        treating it as fully-aged is the safe default: we skip the
+        min-hold guard rather than re-arm it from zero).
+        """
+        try:
+            positions = self.cache.positions(instrument_id=self.instrument_id)
+            open_pos = [p for p in positions if not p.is_closed]
+            if not open_pos:
+                return
+            qty = sum(float(p.signed_qty) for p in open_pos)
+            if qty > 0:
+                self._current_pos = 1
+                self._bars_held = self.config.hold_days
+                self.log.info(
+                    f"REHYDRATED: existing LONG {qty} {self.instrument_id} on "
+                    f"broker; treating as past min-hold (eligible to exit on next "
+                    f"z<={self.config.threshold} bar)."
+                )
+            elif qty < 0:
+                # bond_gold is long-only by design; a short here is a state
+                # corruption we should NOT silently adopt.
+                self.log.error(
+                    f"REHYDRATED: SHORT {qty} {self.instrument_id} found on "
+                    f"broker but bond_gold is long-only. Manual review needed; "
+                    f"strategy state left as flat."
+                )
+        except Exception as e:
+            self.log.warning(f"_rehydrate_position_from_broker failed: {e}")
 
     def _warmup(self) -> None:
         """Load daily parquet for warmup."""
@@ -362,6 +401,31 @@ class BondGoldStrategy(Strategy):
             )
         except Exception as e:
             self.log.warning(f"notify_order_event(accepted) failed: {e}")
+
+    def on_order_filled(self, event) -> None:
+        self.log.info(
+            f"FILLED: {event.client_order_id} "
+            f"@ {getattr(event, 'last_px', '?')} x {getattr(event, 'last_qty', '?')}"
+        )
+        try:
+            order = self.cache.order(event.client_order_id)
+            side = str(getattr(order, "side", "?")).split(".")[-1] if order else "?"
+            qty = int(getattr(event, "last_qty", 0) or 0) or (
+                int(order.quantity) if order and order.quantity else 0
+            )
+            fill_px = float(getattr(event, "last_px", 0) or 0) or None
+            notify_order_event(
+                strategy=self._prm_id,
+                event_type="filled",
+                instrument=str(self.instrument_id),
+                side=side,
+                qty=qty,
+                price=fill_px,
+                venue_order_id=str(getattr(event, "venue_order_id", "") or ""),
+                client_order_id=str(getattr(event, "client_order_id", "") or ""),
+            )
+        except Exception as e:
+            self.log.warning(f"notify_order_event(filled) failed: {e}")
 
     def on_order_rejected(self, event) -> None:
         self.log.error(f"REJECTED: {event.client_order_id} -- {event.reason}")

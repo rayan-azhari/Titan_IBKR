@@ -147,12 +147,44 @@ class MRAUDJPYStrategy(Strategy):
 
         self._warmup()
         self.subscribe_bars(self.bar_type_h1)
+        # Rehydrate state from broker so a container restart doesn't leave us
+        # thinking we have no open tiers when IBKR shows we're long/short.
+        self._rehydrate_position_from_broker()
         self.log.info(
             f"MR AUD/JPY champion started | vwap_anchor={self.config.vwap_anchor}"
             f" | pct_window={self.config.pct_window}"
             f" | max_leverage={self.config.max_leverage}x"
             f" | warmup_bars={len(self._closes)}"
+            f" | rehydrated_tiers={sorted(self._tiers_hit)}"
         )
+
+    def _rehydrate_position_from_broker(self) -> None:
+        """If IBKR shows a position the strategy has no in-memory record of
+        (typical after a container restart), mark all tiers as 'hit' so the
+        strategy will not try to add another grid layer on top of an existing
+        position. The exit logic (NY-close hard-flat + reversion TP) will
+        still fire normally — those are bar-driven, not state-driven.
+
+        Conservative default: a hot existing position is treated as
+        fully-tiered (4/4 tiers used). The next NY-close or reversion will
+        flatten it and reset tiers naturally.
+        """
+        try:
+            positions = self.cache.positions(instrument_id=self.instrument_id)
+            open_pos = [p for p in positions if not p.is_closed]
+            if not open_pos:
+                return
+            qty = sum(float(p.signed_qty) for p in open_pos)
+            if abs(qty) > 0:
+                # Mark every tier as already hit so on_bar will not enter again.
+                self._tiers_hit = set(range(len(TIER_SIZES)))
+                self.log.info(
+                    f"REHYDRATED: existing {qty:+.0f} {self.instrument_id} on broker; "
+                    f"all {len(TIER_SIZES)} tiers marked hit (no new entries until "
+                    f"position closes)."
+                )
+        except Exception as e:
+            self.log.warning(f"_rehydrate_position_from_broker failed: {e}")
 
     def _warmup(self) -> None:
         project_root = Path(__file__).resolve().parents[3]
@@ -440,6 +472,31 @@ class MRAUDJPYStrategy(Strategy):
             )
         except Exception as e:
             self.log.warning(f"notify_order_event(accepted) failed: {e}")
+
+    def on_order_filled(self, event) -> None:
+        self.log.info(
+            f"FILLED: {event.client_order_id} "
+            f"@ {getattr(event, 'last_px', '?')} x {getattr(event, 'last_qty', '?')}"
+        )
+        try:
+            order = self.cache.order(event.client_order_id)
+            side = str(getattr(order, "side", "?")).split(".")[-1] if order else "?"
+            qty = int(getattr(event, "last_qty", 0) or 0) or (
+                int(order.quantity) if order and order.quantity else 0
+            )
+            fill_px = float(getattr(event, "last_px", 0) or 0) or None
+            notify_order_event(
+                strategy=self._prm_id,
+                event_type="filled",
+                instrument=str(self.instrument_id),
+                side=side,
+                qty=qty,
+                price=fill_px,
+                venue_order_id=str(getattr(event, "venue_order_id", "") or ""),
+                client_order_id=str(getattr(event, "client_order_id", "") or ""),
+            )
+        except Exception as e:
+            self.log.warning(f"notify_order_event(filled) failed: {e}")
 
     def on_order_rejected(self, event) -> None:
         self.log.error(f"REJECTED: {event.client_order_id} -- {event.reason}")
