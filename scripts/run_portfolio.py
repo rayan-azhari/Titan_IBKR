@@ -86,8 +86,8 @@ _STRATEGY_WARMUP_FILES: dict[str, list[str]] = {
         "VUSD_D.parquet",
         "IHYG_D.parquet",
     ],
-    "bond_equity_ihyg_emim": [
-        "EMIM_D.parquet",
+    "bond_equity_ihyg_eimi": [
+        "EIMI_D.parquet",
         "IHYG_D.parquet",
     ],
 }
@@ -360,19 +360,21 @@ STRATEGY_REGISTRY = {
             "max_leverage": 2.0,
         },
     },
-    "bond_equity_ihyg_emim": {
-        # IHYG (€ HY credit UCITS) -> EMIM (iShares Core MSCI EM IMI UCITS)
-        # cross-asset. Same EU-credit signal as bond_equity_ihyg_vusd, routed
-        # to emerging-markets equity instead of US large-cap. Discovered
-        # May 2 2026 in the post-VUSD diversification hunt: 5/27 sweep cells
-        # have CI lo > 0; champion (lb=5, hold=5, th=0.25 — same as VUSD)
-        # gives Sharpe +0.97, CI lo +0.23, 88% pos folds (15/17), DD -13.7%.
-        # Sanctuary 2025+ (held out, 1 year): Sharpe +1.97, total +14.7%,
-        # DD -4.9% — out-of-sample edge actually strengthens.
-        # Correlation with deployed IHYG -> VUSD = 0.52 (moderate; meaningful
-        # diversification, not a clone). Borderline on strict Bonferroni
-        # gate (CI lo +0.23 vs +0.30 required) but very strong sanctuary
-        # justifies deployment to paper for verification.
+    "bond_equity_ihyg_eimi": {
+        # IHYG (€ HY credit UCITS) -> EIMI (iShares Core MSCI EM IMI UCITS,
+        # USD line on LSE) cross-asset. Same EU-credit signal as
+        # bond_equity_ihyg_vusd, routed to emerging-markets equity instead
+        # of US large-cap. Discovered May 1 2026 in the post-VUSD
+        # diversification hunt: 5/27 sweep cells have CI lo > 0.
+        # Re-validated on EIMI (USD line; original sweep used EMIM=GBP-pence
+        # data which carried a GBP/USD overlay — IBKR rejects symbol=EMIM
+        # currency=USD because that line is GBP, just like VUSA→VUSD lesson):
+        # champion (lb=5, hold=5, th=0.25 — same as VUSD) gives Sharpe
+        # **+1.09, CI lo +0.32**, 94% pos folds, DD -10.8%. CI lo is now
+        # ABOVE the strict Bonferroni gate (+0.30 required). Sanctuary
+        # 2025+ on EMIM showed Sharpe +1.97 — strong out-of-sample.
+        # Correlation with deployed IHYG -> VUSD ≈ 0.52 (meaningful
+        # diversification).
         # See: project_ihyg_emim_discovery.md.
         "module": "titan.strategies.bond_gold.strategy",
         "config_cls": "BondGoldConfig",
@@ -380,7 +382,7 @@ STRATEGY_REGISTRY = {
         "contracts": [
             IBContract(
                 secType="STK",
-                symbol="EMIM",
+                symbol="EIMI",
                 exchange="SMART",
                 primaryExchange="LSEETF",
                 currency="USD",
@@ -394,11 +396,11 @@ STRATEGY_REGISTRY = {
             ),
         ],
         "config_kwargs": {
-            "instrument_id": "EMIM.LSEETF",
+            "instrument_id": "EIMI.LSEETF",
             "signal_instrument_id": "IHYG.LSEETF",
-            "bar_type_d": "EMIM.LSEETF-1-DAY-LAST-EXTERNAL",
+            "bar_type_d": "EIMI.LSEETF-1-DAY-LAST-EXTERNAL",
             "signal_bar_type_d": "IHYG.LSEETF-1-DAY-LAST-EXTERNAL",
-            "ticker_gld": "EMIM",
+            "ticker_gld": "EIMI",
             "ticker_ief": "IHYG",  # warmup reads data/IHYG_D.parquet
             "lookback": 5,
             "threshold": 0.25,
@@ -465,7 +467,7 @@ STRATEGY_SETS = {
         "mr_audjpy",
         "bond_equity_ihyu_cspx",
         "bond_equity_ihyg_vusd",  # added 2026-05-01 (see project_ihyg_cspx_discovery.md)
-        "bond_equity_ihyg_emim",  # added 2026-05-01 (see project_ihyg_emim_discovery.md)
+        "bond_equity_ihyg_eimi",  # added 2026-05-01 (see project_ihyg_emim_discovery.md)
         "daily_summary",
     ],
 }
