@@ -69,6 +69,9 @@ services:
       DAILY_SUMMARY_HOUR: ${DAILY_SUMMARY_HOUR:-9}
       DAILY_SUMMARY_MINUTE: ${DAILY_SUMMARY_MINUTE:-0}
       DAILY_SUMMARY_TZ: ${DAILY_SUMMARY_TZ:-Europe/London}
+      # Total account NLV in USD — divided across active trading strategies
+      # at startup to size each strategy's initial_equity correctly.
+      TITAN_PORTFOLIO_USD_EQUITY: ${TITAN_PORTFOLIO_USD_EQUITY:-}
       TZ: America/New_York
     volumes:
       - titan-tmp:/app/.tmp              # halt.json + logs persist via named volume
