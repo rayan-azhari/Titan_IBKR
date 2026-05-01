@@ -59,33 +59,35 @@ fi
 
 case "$SOURCE" in
     yfinance)
-        # CSPX (S&P UCITS, iShares), VUSA (S&P UCITS, Vanguard),
+        # CSPX (S&P UCITS, iShares, USD), VUSD (S&P UCITS, Vanguard, USD line),
         # IHYU ($-HY UCITS), IHYG (€-HY UCITS). All LSE-listed; Yahoo
         # serves them under the .L suffix. Use LOCAL=YAHOO mapping so
-        # parquets land with clean names. CSPX and VUSA both track S&P
+        # parquets land with clean names. CSPX and VUSD both track S&P
         # 500 but trade as separate broker symbols (avoids strategy
         # position-attribution conflict between bond_equity_ihyu_cspx
-        # and bond_equity_ihyg_vusa).
+        # and bond_equity_ihyg_vusd). VUSD (not VUSA) is used because
+        # IBKR's USD-denominated Vanguard line on LSEETF is VUSD; VUSA
+        # is the GBP line.
         if uv run python scripts/download_data_yfinance.py \
-                --symbols CSPX=CSPX.L VUSA=VUSA.L IHYU=IHYU.L IHYG=IHYG.L \
+                --symbols CSPX=CSPX.L VUSD=VUSD.L IHYU=IHYU.L IHYG=IHYG.L \
                 --interval D \
                 --start 2015-01-01; then
-            echo "  ✓ CSPX/VUSA/IHYU/IHYG refresh complete (yfinance)"
+            echo "  ✓ CSPX/VUSD/IHYU/IHYG refresh complete (yfinance)"
         else
-            echo "  ✗ CSPX/VUSA/IHYU/IHYG refresh FAILED (yfinance)" >&2
+            echo "  ✗ CSPX/VUSD/IHYU/IHYG refresh FAILED (yfinance)" >&2
             ANY_FAILED=1
-            FAILED_STEPS+=("CSPX/VUSA/IHYU/IHYG")
+            FAILED_STEPS+=("CSPX/VUSD/IHYU/IHYG")
         fi
         ;;
     databento)
         if uv run python scripts/download_data_databento.py \
-                --symbols CSPX VUSA IHYU IHYG \
+                --symbols CSPX VUSD IHYU IHYG \
                 --start 2018-05-01; then
-            echo "  ✓ CSPX/VUSA/IHYU/IHYG refresh complete (databento)"
+            echo "  ✓ CSPX/VUSD/IHYU/IHYG refresh complete (databento)"
         else
-            echo "  ✗ CSPX/VUSA/IHYU/IHYG refresh FAILED (databento)" >&2
+            echo "  ✗ CSPX/VUSD/IHYU/IHYG refresh FAILED (databento)" >&2
             ANY_FAILED=1
-            FAILED_STEPS+=("CSPX/VUSA/IHYU/IHYG")
+            FAILED_STEPS+=("CSPX/VUSD/IHYU/IHYG")
         fi
         ;;
     *)
@@ -113,7 +115,7 @@ if command -v stat >/dev/null 2>&1; then
     echo ""
     echo "Parquet timestamps (UTC):"
     for f in data/AUD_JPY_H1.parquet data/AUD_JPY_D.parquet \
-             data/CSPX_D.parquet data/VUSA_D.parquet \
+             data/CSPX_D.parquet data/VUSD_D.parquet \
              data/IHYU_D.parquet data/IHYG_D.parquet; do
         if [ -f "$f" ]; then
             mtime=$(stat -c "%y" "$f" 2>/dev/null || stat -f "%Sm" "$f" 2>/dev/null)

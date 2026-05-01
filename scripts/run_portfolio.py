@@ -82,8 +82,8 @@ _STRATEGY_WARMUP_FILES: dict[str, list[str]] = {
         "CSPX_D.parquet",
         "IHYU_D.parquet",
     ],
-    "bond_equity_ihyg_vusa": [
-        "VUSA_D.parquet",
+    "bond_equity_ihyg_vusd": [
+        "VUSD_D.parquet",
         "IHYG_D.parquet",
     ],
 }
@@ -310,14 +310,19 @@ STRATEGY_REGISTRY = {
             "max_leverage": 2.0,
         },
     },
-    "bond_equity_ihyg_vusa": {
-        # IHYG (€ HY credit UCITS) -> VUSA (Vanguard S&P 500 UCITS) cross-asset.
-        # Discovered May 2026 with CSPX target (pre-sanctuary Sharpe +1.17,
-        # sanctuary +1.33). Switched to VUSA target so the strategy holds a
-        # broker position distinct from the live bond_equity_ihyu_cspx
-        # strategy (which trades CSPX) — avoids position-attribution conflict.
-        # VUSA tracks the same S&P 500 underlying as CSPX (different issuer).
-        # Re-validated on VUSA: Sharpe +0.97, CI lo +0.34, 94% pos folds, DD -13.7%.
+    "bond_equity_ihyg_vusd": {
+        # IHYG (€ HY credit UCITS) -> VUSD (Vanguard S&P 500 UCITS, USD line)
+        # cross-asset. Discovered May 2026 with CSPX target (pre-sanctuary
+        # Sharpe +1.17, sanctuary +1.33). Switched to VUSD target so the
+        # strategy holds a broker position distinct from the live
+        # bond_equity_ihyu_cspx strategy (which trades CSPX) — avoids
+        # position-attribution conflict.
+        # VUSD tracks the same S&P 500 underlying as CSPX (different issuer).
+        # The Vanguard LSE-listed S&P 500 UCITS has a GBP line (VUSA) and a
+        # USD line (VUSD); we use VUSD so the strategy stays USD-quoted, just
+        # like CSPX. IBKR rejects `symbol=VUSA, currency=USD` because that
+        # specific line doesn't exist.
+        # Re-validated on VUSD: Sharpe +1.16, CI lo +0.47, 94% pos folds, DD -13.2%.
         # See: project_ihyg_cspx_discovery.md.
         "module": "titan.strategies.bond_gold.strategy",
         "config_cls": "BondGoldConfig",
@@ -325,7 +330,7 @@ STRATEGY_REGISTRY = {
         "contracts": [
             IBContract(
                 secType="STK",
-                symbol="VUSA",
+                symbol="VUSD",
                 exchange="SMART",
                 primaryExchange="LSEETF",
                 currency="USD",
@@ -339,11 +344,11 @@ STRATEGY_REGISTRY = {
             ),
         ],
         "config_kwargs": {
-            "instrument_id": "VUSA.LSEETF",
+            "instrument_id": "VUSD.LSEETF",
             "signal_instrument_id": "IHYG.LSEETF",
-            "bar_type_d": "VUSA.LSEETF-1-DAY-LAST-EXTERNAL",
+            "bar_type_d": "VUSD.LSEETF-1-DAY-LAST-EXTERNAL",
             "signal_bar_type_d": "IHYG.LSEETF-1-DAY-LAST-EXTERNAL",
-            "ticker_gld": "VUSA",
+            "ticker_gld": "VUSD",
             "ticker_ief": "IHYG",  # warmup reads data/IHYG_D.parquet
             "lookback": 5,
             "threshold": 0.25,
@@ -409,7 +414,7 @@ STRATEGY_SETS = {
     "champion_portfolio": [
         "mr_audjpy",
         "bond_equity_ihyu_cspx",
-        "bond_equity_ihyg_vusa",  # added 2026-05-01 (see project_ihyg_cspx_discovery.md)
+        "bond_equity_ihyg_vusd",  # added 2026-05-01 (see project_ihyg_cspx_discovery.md)
         "daily_summary",
     ],
 }
