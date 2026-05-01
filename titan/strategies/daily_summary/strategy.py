@@ -175,9 +175,14 @@ class DailySummaryStrategy(Strategy):
 
             for ccy, bal in balances.items():
                 try:
-                    total = float(account.balance_total(ccy).as_double())
-                    free = float(account.balance_free(ccy).as_double())
-                    locked = float(account.balance_locked(ccy).as_double())
+                    # Read attributes off the AccountBalance object directly.
+                    # The research-math AST guardrail forbids the alternative
+                    # account-method form outside titan/risk/strategy_equity.py
+                    # (a defence against the ``keys()[0]`` anti-pattern from
+                    # the April 2026 audit).
+                    total = float(bal.total.as_double())
+                    free = float(bal.free.as_double())
+                    locked = float(bal.locked.as_double())
                     out.append(
                         f"  • {ccy}: NLV {total:,.2f}   free {free:,.2f}   locked {locked:,.2f}"
                     )
