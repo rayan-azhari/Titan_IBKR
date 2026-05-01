@@ -319,6 +319,23 @@ STRATEGY_REGISTRY = {
         },
     },
     # IC Equity (example -- add more as needed)
+    "daily_summary": {
+        # Passive strategy: posts a daily Slack/Telegram rollup at the
+        # configured time-of-day. Doesn't trade. Subscribes to AUD/JPY H1
+        # bars (already in champion portfolio) as a clock-tick source.
+        "module": "titan.strategies.daily_summary.strategy",
+        "config_cls": "DailySummaryConfig",
+        "strategy_cls": "DailySummaryStrategy",
+        "contracts": [
+            IBContract(secType="CASH", symbol="AUD", exchange="IDEALPRO", currency="JPY"),
+        ],
+        "config_kwargs": {
+            "bar_type": "AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL",
+            "summary_hour": int(os.getenv("DAILY_SUMMARY_HOUR", "9")),
+            "summary_minute": int(os.getenv("DAILY_SUMMARY_MINUTE", "0")),
+            "summary_tz": os.getenv("DAILY_SUMMARY_TZ", "Europe/London"),
+        },
+    },
     "ic_equity_noc": {
         "module": "titan.strategies.ic_equity_daily.strategy",
         "config_cls": "ICEquityDailyConfig",
@@ -355,7 +372,7 @@ STRATEGY_SETS = {
     # AUD/USD MR removed 2026-04-21 after post-remediation re-validation:
     # CI_lo = -0.180 < 0 fails the deployment gate. See directives/Deprecated
     # Strategies.md.
-    "champion_portfolio": ["mr_audjpy", "bond_equity_ihyu_cspx"],
+    "champion_portfolio": ["mr_audjpy", "bond_equity_ihyu_cspx", "daily_summary"],
 }
 
 

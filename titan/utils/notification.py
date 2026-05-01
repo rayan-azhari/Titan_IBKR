@@ -319,6 +319,16 @@ def _fmt_value(v: Any) -> str:
     return str(v)
 
 
+def notify_daily_summary(body: str) -> int:
+    """Send a free-form daily summary message.
+
+    The strategy assembles the body (account state, positions, per-strategy
+    equity, halt status, etc) and passes it here as a pre-formatted string.
+    We just prefix the 📊 header and dispatch.
+    """
+    return _dispatch(f"📊 *Daily Portfolio Summary*\n{body}")
+
+
 # ── CLI for quick smoke testing ───────────────────────────────────────────────
 
 

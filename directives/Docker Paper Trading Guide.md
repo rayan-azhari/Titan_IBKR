@@ -536,6 +536,62 @@ configured. Use this to verify the webhook before any real trading.
   • Cumulative: +5.28% on +10,000.00 USD initial
 ```
 
+Plus a **once-per-day portfolio rollup** at the configured time:
+
+```
+📊 *Daily Portfolio Summary*
+_2026-05-02 09:00 BST_
+
+*Account*
+  • Account ID: `INTERACTIVE_BROKERS-DUP958545`
+  • GBP: NLV 9,977.69   free 4,056.94   locked 5,920.75
+
+*Open positions* (1)
+  • `CSPX.LSEETF`  +36 @ avg 776.9583
+
+*Strategies (PRM)*
+  • Total equity: 20,015.30   scale: 1.00   halt: no
+  • `bond_gold_CSPX`: equity 10,015.30   DD -0.05%   weight 50.0%
+  • `mr_audjpy_AUD_JPY`: equity 10,000.00   DD 0.00%   weight 50.0%
+
+*Health*
+  • Halt file present: False
+  • Tick source: `AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL`
+```
+
+#### Configuring the daily summary
+
+Default is **09:00 Europe/London**. Tune via three env vars in `.env.docker`:
+
+```ini
+DAILY_SUMMARY_HOUR=9               # 0-23
+DAILY_SUMMARY_MINUTE=0             # 0-59
+DAILY_SUMMARY_TZ=Europe/London     # any IANA timezone
+```
+
+The summary is sent at the first H1 bar close at or after the configured
+local-time. If the system was offline at the configured time, the next
+H1 bar after restart triggers it. The last-sent date is persisted in
+`.tmp/daily_summary_last.txt` so a container restart never causes a
+duplicate same-day summary.
+
+To disable the daily summary, remove `daily_summary` from the
+`champion_portfolio` set in `scripts/run_portfolio.py`. To force one
+on demand for testing (without waiting until 09:00), set
+`DAILY_SUMMARY_HOUR` in `.env.docker` to the current local hour or one
+slightly behind it, also clear the state file, then restart:
+
+```bash
+# In .env.docker, e.g. if it's 14:30 right now:
+#   DAILY_SUMMARY_HOUR=14
+#   DAILY_SUMMARY_MINUTE=0
+docker compose exec titan-portfolio rm -f /app/.tmp/daily_summary_last.txt
+docker compose --env-file .env.docker up -d
+```
+
+The next H1 bar after the configured time will fire a summary. Restore
+the env var after testing.
+
 #### Failure handling — important
 
 Notifications are **fire-and-forget with a 2-second timeout**. If Slack

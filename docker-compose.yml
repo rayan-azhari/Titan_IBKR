@@ -65,6 +65,10 @@ services:
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      # Daily summary timing — see .env.docker.example for setup
+      DAILY_SUMMARY_HOUR: ${DAILY_SUMMARY_HOUR:-9}
+      DAILY_SUMMARY_MINUTE: ${DAILY_SUMMARY_MINUTE:-0}
+      DAILY_SUMMARY_TZ: ${DAILY_SUMMARY_TZ:-Europe/London}
       TZ: America/New_York
     volumes:
       - titan-tmp:/app/.tmp              # halt.json + logs persist via named volume
