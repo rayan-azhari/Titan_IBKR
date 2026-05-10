@@ -1,8 +1,25 @@
 # Titan-IBKR System Status and Roadmap
 
-**Last updated:** 2026-04-21
+**Last updated:** 2026-05-10
 **Author:** Architect (Claude Code)
 **Status:** Active development, 5+ live strategies, **portfolio-risk layer rewritten (April 21, 2026)** to use timestamped per-strategy equity + wall-clock gating + halt persistence. Champion portfolio live on paper. Multi-scale confluence + MR-FX research complete.
+
+> [!NOTE]
+> **2026-05-10 — Broker migration assessment under consideration.**
+> User exploring move from IBKR (taxable) to a UK spread betting broker
+> (tax-free profits). Three-broker comparison done: OANDA, Pepperstone,
+> IG Markets. **No migration in progress.** Findings:
+> - **OANDA**: existing NautilusTrader adapter (Titan-Oanda-Enhanced
+>   repo), but spread betting account has no ETFs/stocks — only FX,
+>   indices, commodities, bonds. Loses bond_equity champion + Samir-Stack.
+> - **Pepperstone**: 90+ ETFs and 1,100+ stocks as spread bets, but
+>   cTrader API is gRPC/protobuf — hardest adapter build (4–8 weeks).
+> - **IG Markets**: 17,000+ markets, **CSPX.L and IGLT confirmed as
+>   spread bets** — bond_equity and Samir-Stack may migrate directly.
+>   `trading-ig` Python lib mature; adapter build ~4–6 weeks.
+> - **Recommended path**: Hybrid — OANDA for FX strategies immediately,
+>   build IG adapter in parallel for equity/UCITS strategies.
+> - Full assessment: [Broker Migration Assessment.md](./Broker%20Migration%20Assessment.md).
 
 > [!CAUTION]
 > **April 2026 quant audit remediation — revised performance numbers.**
