@@ -1,0 +1,69 @@
+# Samir-Stack live configuration — IBKR UK paper account.
+#
+# Research lineage: research/samir_stack/
+# WFO 5/5 folds positive, mean Calmar 0.655, sanctuary 1.05.
+# P(MaxDD > 50%) = 0.0% (RoR-acceptable per user spec).
+#
+# Validated against research/samir_stack/ using SPY (US) + IEF (USD 7-10y Treasuries).
+# Live mapping for IBKR UK:
+#   * 3USL.LSEETF — WisdomTree 3x S&P 500 UCITS (USD-quoted on LSE)
+#   * IGLT.LSEETF — iShares Core UK Gilts UCITS (GBP-quoted, no FX exposure)
+#
+# Account base ccy: GBP. The equity sleeve has FX exposure (USD), bond sleeve
+# is GBP-native. Historical analysis (research/samir_stack/) shows USD-haven
+# behaviour during crises typically reduces drawdown by 3-10pp for UK investors.
+# Net FX cost ~140bp/yr (volatility drag overwhelms slight currency tailwind).
+
+[strategy]
+# Trading instruments
+equity_instrument_id = "3USL.LSEETF"
+bond_instrument_id   = "IGLT.LSEETF"
+
+# Signal data sources (subscribed but not traded)
+signal_spy_id = "SPY.ARCA"
+signal_vix_id = "VIX.CBOE"
+signal_hyg_id = "HYG.ARCA"
+signal_ief_id = "IEF.NASDAQ"
+
+# Bar types (all daily) — note: IGLT bars used as bond return source AND
+# IEF bars subscribed separately for credit-spread indicator.
+bar_type_equity_d  = "3USL.LSEETF-1-DAY-LAST-EXTERNAL"
+bar_type_bond_d    = "IGLT.LSEETF-1-DAY-LAST-EXTERNAL"
+bar_type_spy_d     = "SPY.ARCA-1-DAY-LAST-EXTERNAL"
+bar_type_vix_d     = "VIX.CBOE-1-DAY-LAST-EXTERNAL"
+bar_type_hyg_d     = "HYG.ARCA-1-DAY-LAST-EXTERNAL"
+bar_type_ief_d     = "IEF.NASDAQ-1-DAY-LAST-EXTERNAL"
+
+# Per-instrument quote currency (must match what IB returns)
+equity_quote_ccy = "USD"   # 3USL.LSEETF is USD-quoted
+bond_quote_ccy   = "GBP"   # IGLT.LSEETF is GBP-native
+
+# FX rate seed (GBP base): 1 USD = how many GBP. Updated on each GBPUSD bar
+# if signal_gbpusd_id is set. Otherwise this static value is used and the
+# operator must update periodically.
+# At 2026-04-02: GBPUSD = 1.33 → 1 USD = 1/1.33 = 0.7519 GBP
+fx_rate_usd_to_gbp = 0.7519
+fx_rate_gbp_to_gbp = 1.0  # bond sleeve, no conversion
+
+# Strategy parameters (validated defaults — research/samir_stack/)
+equity_weight = 0.40
+bond_weight   = 0.60
+L_max         = 3.0
+tier_thresholds   = [0.30, 0.50, 0.75]
+hysteresis_buffer = 0.05
+re_entry_quiet_bars = 20
+
+# DD circuit breaker
+dd_throttle = 0.10
+dd_kill     = 0.15
+dd_re_entry_score = 0.70
+dd_re_entry_bars  = 5
+
+# Operational — base currency = GBP for IBKR UK paper
+initial_equity   = 10000.0
+base_ccy         = "GBP"
+warmup_bars      = 250
+rebalance_min_pct_change = 0.05
+
+# PortfolioRiskManager id (must match registration)
+prm_id = "samir_stack"
