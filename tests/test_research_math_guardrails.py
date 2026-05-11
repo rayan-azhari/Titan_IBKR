@@ -70,6 +70,7 @@ _ALLOWLIST_SQRT_252: dict[str, str] = {
     "research/samir_stack/stacked_strategy.py": "research script, daily bars",
     "research/samir_stack/strategy.py": "research script, daily bars",
     "research/samir_stack/benchmarks.py": "research script, daily bars",
+    "research/samir_stack/run_margin_variant.py": "research script, daily bars",
 }
 
 _ALLOWLIST_FILTER_THEN_STD: dict[str, str] = {
