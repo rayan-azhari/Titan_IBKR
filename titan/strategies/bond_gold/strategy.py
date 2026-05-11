@@ -119,34 +119,42 @@ class BondGoldStrategy(Strategy):
         )
 
     def _rehydrate_position_from_broker(self) -> None:
-        """If IBKR shows an open position **opened by THIS strategy instance**,
-        adopt it. The ``strategy_id`` filter is critical: when multiple
-        strategies trade the same instrument (e.g. two bond->equity variants
-        both targeting an S&P UCITS), we must not adopt the other strategy's
-        position. NautilusTrader tags positions with the opening strategy's
-        ID; ``cache.positions(strategy_id=self.id)`` returns only ours.
+        """Adopt any open broker position for our instrument as our own.
 
-        Sets ``_current_pos`` to 1 and ``_bars_held`` to ``hold_days`` (so
-        the strategy is immediately eligible to exit on the next bar where
-        ``z <= threshold`` — we don't know the precise entry date, but
-        treating it as fully-aged is the safe default).
+        On container restart, NautilusTrader's ExecEngine reconciles existing
+        broker positions and tags them ``position_id=*-EXTERNAL`` because the
+        prior session's ``strategy_id`` was lost on shutdown. A previous
+        ``strategy_id``-only filter (added for the May 2026 CSPX→VUSA pivot)
+        excluded those EXTERNAL positions, causing the strategy to think it
+        was flat and submit a fresh BUY on top of the existing inventory at
+        every restart. See ``directives/Rehydration Bug 2026-05-11.md``.
+
+        Each live ``bond_equity_*`` strategy targets a unique trade instrument
+        (CSPX, VUSD, EIMI), so EXTERNAL adoption is unambiguous. For
+        historical pivot scenarios where two strategies share an instrument,
+        the runbook must flatten the dead strategy's position before
+        deploying the replacement.
+
+        Sets ``_current_pos = 1`` and ``_bars_held = hold_days`` so the
+        strategy is immediately eligible to exit on the next bar where
+        ``z <= threshold``.
         """
         try:
-            positions = self.cache.positions(
-                instrument_id=self.instrument_id,
-                strategy_id=self.id,
-            )
+            # Match all open positions for our instrument, regardless of
+            # whether they're tagged with our strategy_id or EXTERNAL.
+            positions = self.cache.positions(instrument_id=self.instrument_id)
             open_pos = [p for p in positions if not p.is_closed]
             if not open_pos:
                 return
             qty = sum(float(p.signed_qty) for p in open_pos)
+            tags = sorted({str(p.strategy_id) for p in open_pos})
             if qty > 0:
                 self._current_pos = 1
                 self._bars_held = self.config.hold_days
                 self.log.info(
-                    f"REHYDRATED: existing LONG {qty} {self.instrument_id} "
-                    f"opened by THIS strategy ({self.id}); treating as past "
-                    f"min-hold (eligible to exit on next z<="
+                    f"REHYDRATED: adopted LONG {qty} {self.instrument_id} "
+                    f"from broker (strategy_id tags: {tags}); treating as "
+                    f"past min-hold (eligible to exit on next z<="
                     f"{self.config.threshold} bar)."
                 )
             elif qty < 0:
@@ -154,7 +162,7 @@ class BondGoldStrategy(Strategy):
                 # corruption we should NOT silently adopt.
                 self.log.error(
                     f"REHYDRATED: SHORT {qty} {self.instrument_id} found on "
-                    f"broker for strategy {self.id} but bond_gold is "
+                    f"broker (strategy_id tags: {tags}) but bond_gold is "
                     f"long-only. Manual review needed; strategy state left "
                     f"as flat."
                 )
