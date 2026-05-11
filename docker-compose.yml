@@ -68,7 +68,11 @@ services:
       # Daily summary timing — see .env.docker.example for setup
       DAILY_SUMMARY_HOUR: ${DAILY_SUMMARY_HOUR:-9}
       DAILY_SUMMARY_MINUTE: ${DAILY_SUMMARY_MINUTE:-0}
+      DAILY_EVENING_SUMMARY_HOUR: ${DAILY_EVENING_SUMMARY_HOUR:-22}
+      DAILY_EVENING_SUMMARY_MINUTE: ${DAILY_EVENING_SUMMARY_MINUTE:-0}
       DAILY_SUMMARY_TZ: ${DAILY_SUMMARY_TZ:-Europe/London}
+      # Initial GBP equity for P&L-since-inception in daily summary
+      TITAN_INITIAL_EQUITY_GBP: ${TITAN_INITIAL_EQUITY_GBP:-10000.0}
       # Total account NLV in USD — divided across active trading strategies
       # at startup to size each strategy's initial_equity correctly.
       TITAN_PORTFOLIO_USD_EQUITY: ${TITAN_PORTFOLIO_USD_EQUITY:-}

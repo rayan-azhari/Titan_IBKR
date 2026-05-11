@@ -635,7 +635,11 @@ STRATEGY_REGISTRY = {
             "bar_type": "AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL",
             "summary_hour": int(os.getenv("DAILY_SUMMARY_HOUR", "9")),
             "summary_minute": int(os.getenv("DAILY_SUMMARY_MINUTE", "0")),
+            "evening_summary_hour": int(os.getenv("DAILY_EVENING_SUMMARY_HOUR", "22")),
+            "evening_summary_minute": int(os.getenv("DAILY_EVENING_SUMMARY_MINUTE", "0")),
             "summary_tz": os.getenv("DAILY_SUMMARY_TZ", "Europe/London"),
+            "initial_equity": float(os.getenv("TITAN_INITIAL_EQUITY_GBP", "10000.0")),
+            "initial_equity_ccy": "GBP",
         },
     },
     "ic_equity_noc": {
