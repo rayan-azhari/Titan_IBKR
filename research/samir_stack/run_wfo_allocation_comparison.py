@@ -149,9 +149,7 @@ def main() -> int:
 
     # Print fold-by-fold Sharpe table
     print("\nPer-fold OOS Sharpe:")
-    header = f"{'fold':>4}  {'oos_start':<12}  " + "  ".join(
-        f"{label:>9}" for label, _ in splits
-    )
+    header = f"{'fold':>4}  {'oos_start':<12}  " + "  ".join(f"{label:>9}" for label, _ in splits)
     print(header)
     print("-" * len(header))
     for _, r in fold_df.iterrows():
