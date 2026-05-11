@@ -43,9 +43,7 @@ def build_global_basket(
     if weights is None:
         weights = {"spy": 0.60, "efa": 0.25, "eem": 0.15}
 
-    common = (
-        spy_close.index.intersection(efa_close.index).intersection(eem_close.index)
-    )
+    common = spy_close.index.intersection(efa_close.index).intersection(eem_close.index)
     if len(common) < 252:
         raise ValueError(f"Insufficient overlap: {len(common)} bars")
 
@@ -59,11 +57,7 @@ def build_global_basket(
     r_eem = eem.pct_change().fillna(0.0)
 
     # Daily-rebalanced basket return
-    r_basket = (
-        weights["spy"] * r_spy
-        + weights["efa"] * r_efa
-        + weights["eem"] * r_eem
-    )
+    r_basket = weights["spy"] * r_spy + weights["efa"] * r_efa + weights["eem"] * r_eem
     # Cumulate to a price-like series starting at 100
     basket_price = (1.0 + r_basket).cumprod() * 100.0
     basket_price.name = "global_basket"

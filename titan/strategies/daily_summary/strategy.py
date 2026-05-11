@@ -133,9 +133,7 @@ class DailySummaryStrategy(Strategy):
                 continue
             self._send_summary(local, local_date_str, slot, label)
 
-    def _send_summary(
-        self, local_dt: datetime, date_str: str, slot: str, label: str
-    ) -> None:
+    def _send_summary(self, local_dt: datetime, date_str: str, slot: str, label: str) -> None:
         try:
             body = self._build_body(local_dt, label)
         except Exception as e:
@@ -237,9 +235,7 @@ class DailySummaryStrategy(Strategy):
                     qty = float(p.signed_qty)
                     side_sign = "+" if qty > 0 else ""
                     avg = (
-                        float(p.avg_px_open)
-                        if getattr(p, "avg_px_open", None) is not None
-                        else 0.0
+                        float(p.avg_px_open) if getattr(p, "avg_px_open", None) is not None else 0.0
                     )
                     line = f"  • `{p.instrument_id}`  {side_sign}{qty:g} @ avg {avg:,.4f}"
 

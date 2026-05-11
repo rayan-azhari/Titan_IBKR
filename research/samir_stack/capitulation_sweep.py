@@ -92,8 +92,7 @@ def _evaluate(
         "COVID_recovery", False
     )
     helps_both = (
-        per_crisis.get("GFC_recovery", -1.0) > 0
-        and per_crisis.get("COVID_recovery", -1.0) > 0
+        per_crisis.get("GFC_recovery", -1.0) > 0 and per_crisis.get("COVID_recovery", -1.0) > 0
     )
     ror_acceptable = mc["prob_maxdd_gt_50pct"] - baseline_mc_p50 < 0.003  # < 0.3pp
     cagr_uplift = s["cagr"] - baseline_summary["cagr"]
@@ -142,11 +141,27 @@ def setup() -> tuple[pd.Series, pd.Series, pd.Series, pd.DataFrame, dict, pd.Ser
         rets = res_v1.loc[start:end, "ret_strategy"]
         baseline_per_crisis[label] = float((1 + rets).cumprod().iloc[-1] - 1) if len(rets) else 0.0
 
-    return data["spy"], data["ief"], score, panel, s_v1, res_v1["ret_strategy"], p50_v1, baseline_per_crisis
+    return (
+        data["spy"],
+        data["ief"],
+        score,
+        panel,
+        s_v1,
+        res_v1["ret_strategy"],
+        p50_v1,
+        baseline_per_crisis,
+    )
 
 
 def sensitivity_1d(
-    spy, ief, score, panel, base_summary, base_rets, base_p50, base_crisis,
+    spy,
+    ief,
+    score,
+    panel,
+    base_summary,
+    base_rets,
+    base_p50,
+    base_crisis,
     *,
     param: str,
     values: list,
@@ -169,7 +184,14 @@ def sensitivity_1d(
 
 
 def sweep_2d(
-    spy, ief, score, panel, base_summary, base_rets, base_p50, base_crisis,
+    spy,
+    ief,
+    score,
+    panel,
+    base_summary,
+    base_rets,
+    base_p50,
+    base_crisis,
     *,
     param_a: str,
     values_a: list,

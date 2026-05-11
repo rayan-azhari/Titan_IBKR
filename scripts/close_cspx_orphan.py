@@ -123,8 +123,7 @@ def main() -> int:
             target = (acct, c, pos, avg)
             flag = "  <-- TARGET"
         print(
-            f"  {c.symbol:<8} {c.primaryExchange:<10} {c.currency:<5}  "
-            f"pos={pos}  avg={avg}{flag}"
+            f"  {c.symbol:<8} {c.primaryExchange:<10} {c.currency:<5}  pos={pos}  avg={avg}{flag}"
         )
 
     if target is None:
@@ -150,8 +149,7 @@ def main() -> int:
         rc = 0
     else:
         print(
-            f"\nOrder {oid} terminal status: {app.order_terminal_status} "
-            f"(check TWS / Gateway log)."
+            f"\nOrder {oid} terminal status: {app.order_terminal_status} (check TWS / Gateway log)."
         )
         rc = 1
 

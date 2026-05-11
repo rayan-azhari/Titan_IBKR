@@ -46,8 +46,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 try:
     from titan.utils.notification import notify_health
 except Exception:  # noqa: BLE001
+
     def notify_health(*_args, **_kwargs) -> int:  # type: ignore[no-redef]
         return 0
+
 
 RESTART_DELAY_SECS = 180  # 3 min — covers IBKR maintenance / weekly restart
 QUICK_DEATH_SECS = 30  # if process dies in <30s, treat as config error
@@ -153,8 +155,7 @@ def main() -> int:
                 f"missing dependency. Backing off {delay}s before retry."
             )
             notify_health(
-                "Portfolio runner died quickly — likely config error or "
-                "IB Gateway unreachable",
+                "Portfolio runner died quickly — likely config error or IB Gateway unreachable",
                 severity="critical",
                 detail=(
                     f"Attempt {attempt}: exit code {exit_code} after "
