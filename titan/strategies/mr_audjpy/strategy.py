@@ -159,34 +159,35 @@ class MRAUDJPYStrategy(Strategy):
         )
 
     def _rehydrate_position_from_broker(self) -> None:
-        """If IBKR shows a position the strategy has no in-memory record of
-        (typical after a container restart), mark all tiers as 'hit' so the
-        strategy will not try to add another grid layer on top of an existing
-        position. The exit logic (NY-close hard-flat + reversion TP) will
-        still fire normally — those are bar-driven, not state-driven.
+        """Adopt any open broker position for our instrument and mark all
+        tiers as 'hit' so we don't layer another grid on top.
+
+        Includes EXTERNAL-tagged positions (NautilusTrader tags reconciled
+        broker positions as EXTERNAL on startup because the prior session's
+        strategy_id was lost). The previous ``strategy_id``-only filter
+        excluded these and left the strategy unable to reconcile a position
+        it had opened in a prior run. See
+        ``directives/Rehydration Bug 2026-05-11.md``.
 
         Conservative default: a hot existing position is treated as
-        fully-tiered (4/4 tiers used). The next NY-close or reversion will
-        flatten it and reset tiers naturally.
+        fully-tiered (4/4 tiers used). The next NY-close or reversion TP
+        will flatten it and reset tiers naturally.
         """
         try:
-            # Filter by strategy_id so we only adopt positions THIS strategy
-            # opened — prevents cross-strategy attribution on shared instruments.
-            positions = self.cache.positions(
-                instrument_id=self.instrument_id,
-                strategy_id=self.id,
-            )
+            positions = self.cache.positions(instrument_id=self.instrument_id)
             open_pos = [p for p in positions if not p.is_closed]
             if not open_pos:
                 return
             qty = sum(float(p.signed_qty) for p in open_pos)
+            tags = sorted({str(p.strategy_id) for p in open_pos})
             if abs(qty) > 0:
                 # Mark every tier as already hit so on_bar will not enter again.
                 self._tiers_hit = set(range(len(TIER_SIZES)))
                 self.log.info(
-                    f"REHYDRATED: existing {qty:+.0f} {self.instrument_id} opened by "
-                    f"THIS strategy ({self.id}); all {len(TIER_SIZES)} tiers marked "
-                    f"hit (no new entries until position closes)."
+                    f"REHYDRATED: adopted {qty:+.0f} {self.instrument_id} "
+                    f"from broker (strategy_id tags: {tags}); all "
+                    f"{len(TIER_SIZES)} tiers marked hit (no new entries "
+                    f"until position closes via reversion TP or NY-close)."
                 )
         except Exception as e:
             self.log.warning(f"_rehydrate_position_from_broker failed: {e}")
