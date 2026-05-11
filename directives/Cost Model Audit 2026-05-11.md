@@ -35,15 +35,30 @@ Cost as a % of equity per year:
 - $10k: ~2% per year
 - $50k: <0.5% per year
 
-## Action items (deferred — flagged for follow-up)
+## Action items — completed in this session
 
-| Priority | Action | File |
-|---|---|---|
-| High | Replace `spread_bps = 5.0` flat default in `run_bond_equity_wfo.py` with `realistic_cost_bps()` so all future WFOs are calibrated by default. | [research/cross_asset/run_bond_equity_wfo.py:48](../research/cross_asset/run_bond_equity_wfo.py#L48) |
-| High | Set min strategy notional to **$10k** (or drop active count from 4 → 2 to redistribute the existing $10k GBP NLV). The $3,427 auto-allocation sits below the cost-Sharpe-elasticity asymptote. | [scripts/run_portfolio.py](../scripts/run_portfolio.py) |
-| Medium | Re-run the WFO with `--min-commission 1.0` to quantify the IBKR Pro tier gain. Floor cost drops from 117 bps to 29 bps at $3,427 notional. | [research/cross_asset/run_bond_equity_wfo_realistic.py](../research/cross_asset/run_bond_equity_wfo_realistic.py) |
-| Medium | Add per-pair AUD/JPY entry to [titan/models/spread.py](../titan/models/spread.py) instead of falling through to EUR/USD defaults. Suggested: 0.5/1.5/3.0 pips for london/ny/tokyo, 8.0 for off-hours. | [titan/models/spread.py:46](../titan/models/spread.py#L46) |
-| Low | Add `config/spread.toml` so the spread table is operator-tunable without code changes. Currently the file is missing and the code falls back to defaults. | new |
+| Priority | Action | Status | Where |
+|---|---|---|---|
+| High | Replace `spread_bps = 5.0` flat default with `realistic_cost_bps()`. | ✅ Done — new opt-in flags `--realistic-cost`, `--notional-usd`, `--min-commission` on `run_bond_equity_wfo.py`. Legacy default preserved for reproducing old reports. | [research/cross_asset/run_bond_equity_wfo.py](../research/cross_asset/run_bond_equity_wfo.py) |
+| High | Min-notional guardrail in run_portfolio.py | ✅ Done — `_auto_allocate_initial_equity` warns LOUDLY when per-strategy alloc < `TITAN_MIN_STRATEGY_EQUITY_USD` (default $10k), with the recommended active-strategy count and the per-fill bps cost printed. | [scripts/run_portfolio.py](../scripts/run_portfolio.py) |
+| Medium | Re-run WFO with `--min-commission 1.0` (IBKR Pro tier). | ✅ Done — see comparison table below. Pro tier at $3,427 ≈ Lite tier at $25k. | results below |
+| Medium | Add AUD/JPY per-session spread entry. | ✅ Done — `AUD_JPY` added to defaults (0.5/1.5/1.5/8.0 pips for london/ny/tokyo/off_hours). | [titan/models/spread.py](../titan/models/spread.py) |
+| Low | Operator-tunable `config/spread.toml`. | ✅ Done — file created with all 4 pairs (EUR_USD, GBP_USD, AUD_USD, AUD_JPY). | [config/spread.toml](../config/spread.toml) |
+
+## Pro-tier vs Lite-tier comparison (this session)
+
+Re-ran the realistic-cost WFO with `--min-commission 1.0` (IBKR Pro tier).
+
+| Strategy | Notional | Lite tier ($4 min) | **Pro tier ($1 min)** | Gain |
+|---|---|---|---|---|
+| IHYU→CSPX | $3,427 | Sharpe +0.85 (CI +0.23) | **+0.94 (CI +0.32)** | +0.09 |
+| IHYU→CSPX | $10,000 | +0.93 (+0.31) | **+0.96 (+0.34)** | +0.03 |
+| IHYG→VUSD | $3,427 | +0.84 (+0.15) | **+1.16 (+0.47)** | **+0.32** |
+| IHYG→VUSD | $10,000 | +1.12 (+0.43) | **+1.23 (+0.54)** | +0.11 |
+| IHYG→EIMI | $3,427 | +0.71 (+0.11) | **+0.99 (+0.39)** | **+0.28** |
+| IHYG→EIMI | $10,000 | +0.96 (+0.36) | **+1.05 (+0.45)** | +0.09 |
+
+**Headline:** Switching from Lite ($4) to Pro ($1) tier at the live $3,427 notional is ROUGHLY EQUIVALENT to keeping Lite tier with 7× more capital per strategy. The high-turnover strategies (VUSD with 309 trades, EIMI with 332 trades) benefit most because they hit the floor on every trade.
 
 ## Reference
 

@@ -1,0 +1,44 @@
+# Per-pair, per-session bid/ask spreads in PRICE units (not bps).
+#
+# Loaded by titan.models.spread.load_spread_config(). When this file is
+# missing the code falls back to baked-in defaults; this file is the
+# operator-tunable overlay.
+#
+# Values represent typical bid/ask SPREAD WIDTH at the bar close.
+# Slippage on top of this is estimated separately via the
+# square-root market-impact model in estimate_slippage().
+#
+# Sessions (UTC hours):
+#   tokyo     00:00–09:00
+#   london    08:00–16:00
+#   new_york  13:00–21:00
+#   off_hours everything else
+#
+# Reference: directives/Cost Model Audit 2026-05-11.md
+
+[EUR_USD]
+london = 0.00012
+new_york = 0.00014
+tokyo = 0.00025
+off_hours = 0.00035
+
+[GBP_USD]
+london = 0.00015
+new_york = 0.00018
+tokyo = 0.00030
+off_hours = 0.00045
+
+[AUD_USD]
+london = 0.00016
+new_york = 0.00018
+tokyo = 0.00020
+off_hours = 0.00040
+
+# AUD/JPY observed on IBKR. mr_audjpy filters entries to 07:00–12:00 UTC
+# so the tight london/early-ny spreads dominate; off_hours value covers
+# any forced exit on the 21:00 UTC NY-close hard-flat.
+[AUD_JPY]
+london = 0.0050
+new_york = 0.0150
+tokyo = 0.0150
+off_hours = 0.0800

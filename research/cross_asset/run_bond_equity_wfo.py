@@ -46,8 +46,36 @@ def run_bond_wfo(
     is_days: int = 504,
     oos_days: int = 126,
     spread_bps: float = 5.0,
+    *,
+    target_symbol: str | None = None,
+    notional_usd: float | None = None,
+    min_commission_usd: float = 4.0,
+    use_realistic_cost: bool = False,
 ) -> dict:
-    """Rolling WFO for bond momentum signal."""
+    """Rolling WFO for bond momentum signal.
+
+    When ``use_realistic_cost=True`` the per-transition cost is computed
+    via :func:`research.cross_asset.run_bond_equity_wfo_realistic.realistic_cost_bps`
+    using ``target_symbol`` (for the per-instrument spread lookup) and
+    ``notional_usd`` (for the floor-vs-rate calculation). This is the
+    recommended default for production WFOs after the May 2026 cost audit.
+
+    Legacy callers that don't pass ``use_realistic_cost`` continue to get
+    the flat ``spread_bps`` so existing reports remain reproducible.
+    """
+    if use_realistic_cost:
+        if target_symbol is None or notional_usd is None:
+            raise ValueError("use_realistic_cost=True requires target_symbol and notional_usd")
+        from research.cross_asset.run_bond_equity_wfo_realistic import (
+            SPREAD_BPS_PER_SIDE,
+            realistic_cost_bps,
+        )
+
+        spread_bps = realistic_cost_bps(
+            notional_usd,
+            spread_bps_per_side=SPREAD_BPS_PER_SIDE.get(target_symbol, 5.0),
+            min_commission_usd=min_commission_usd,
+        )
     # Bond momentum
     bond_mom = np.log(bond_close / bond_close.shift(lookback)).dropna()
 
@@ -240,6 +268,27 @@ def main() -> None:
     parser.add_argument("--lookback", type=int, default=None)
     parser.add_argument("--is-days", type=int, default=504)
     parser.add_argument("--oos-days", type=int, default=126)
+    parser.add_argument(
+        "--realistic-cost",
+        action="store_true",
+        help=(
+            "Use realistic IBKR cost model: max($min-commission/notional, "
+            "per_share_bps) + per-instrument spread. Recommended for "
+            "production. See directives/Cost Model Audit 2026-05-11.md."
+        ),
+    )
+    parser.add_argument(
+        "--notional-usd",
+        type=float,
+        default=10_000.0,
+        help="Per-strategy notional for realistic-cost calc (default $10k).",
+    )
+    parser.add_argument(
+        "--min-commission",
+        type=float,
+        default=4.0,
+        help="IBKR per-fill minimum (USD). Paper=4.0; Pro tier=1.0.",
+    )
     args = parser.parse_args()
 
     print("=" * 70)
@@ -283,6 +332,10 @@ def main() -> None:
             threshold=threshold,
             is_days=args.is_days,
             oos_days=args.oos_days,
+            target_symbol=target_sym,
+            notional_usd=args.notional_usd,
+            min_commission_usd=args.min_commission,
+            use_realistic_cost=args.realistic_cost,
         )
         if "error" in r:
             print(

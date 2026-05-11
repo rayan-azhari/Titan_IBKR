@@ -350,6 +350,24 @@ def _auto_allocate_initial_equity(
         f"  Auto-equity: account NLV = ${total_usd:,.2f} (USD), "
         f"divided across {n} trading strategies = ${per_strategy:,.2f} each"
     )
+
+    # Min-notional guardrail (May 2026 cost audit). At IBKR's $4 minimum
+    # commission, per-fill cost is `$4 / per_strategy * 10_000` bps. Below
+    # ~$10k per strategy, costs eat 2%+ per year and erode the WFO-validated
+    # edge. Operator override via TITAN_MIN_STRATEGY_EQUITY_USD env.
+    # See: directives/Cost Model Audit 2026-05-11.md
+    min_floor = float(os.getenv("TITAN_MIN_STRATEGY_EQUITY_USD", "10000"))
+    if per_strategy < min_floor:
+        cost_bps_per_fill = 4.0 / per_strategy * 10_000
+        logger.warning(
+            f"  Auto-equity: per-strategy notional ${per_strategy:,.2f} is "
+            f"BELOW the ${min_floor:,.0f} floor (TITAN_MIN_STRATEGY_EQUITY_USD). "
+            f"At IBKR's $4 min commission this is {cost_bps_per_fill:.0f} bps "
+            f"per fill — likely eating 2-6% per year of strategy edge. "
+            f"Recommended: increase NLV or reduce active trading-strategy "
+            f"count from {n} to {max(1, int(total_usd / min_floor))}."
+        )
+
     for name in trading:
         entry = STRATEGY_REGISTRY[name]
         old = entry["config_kwargs"].get("initial_equity")

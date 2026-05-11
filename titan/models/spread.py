@@ -62,6 +62,17 @@ def load_spread_config() -> dict:
                 "tokyo": 0.00020,
                 "off_hours": 0.00040,
             },
+            # AUD/JPY observed on IBKR: London 0.5 pip, NY 1.5 pip, Tokyo
+            # 1.5 pip, off-hours up to 8 pips. mr_audjpy filters entries to
+            # 07:00–12:00 UTC (London/early NY) so it stays in the tight
+            # range, but the off-hours value drives any forced exit at NY
+            # close that runs past 21:00 UTC.
+            "AUD_JPY": {
+                "london": 0.0050,  # 0.5 pip on JPY-quoted pair (= 0.5 / 100)
+                "new_york": 0.0150,
+                "tokyo": 0.0150,
+                "off_hours": 0.0800,
+            },
         }
     with open(config_path, "rb") as f:
         return tomllib.load(f)
