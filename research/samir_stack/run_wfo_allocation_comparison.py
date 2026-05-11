@@ -81,7 +81,10 @@ def main() -> int:
     samir_score = regime_score_equal(panel)
 
     splits = [
+        ("10/90", 0.10),
+        ("15/85", 0.15),
         ("20/80", 0.20),
+        ("25/75", 0.25),
         ("30/70", 0.30),
         ("40/60 (current)", 0.40),
     ]
@@ -146,16 +149,15 @@ def main() -> int:
 
     # Print fold-by-fold Sharpe table
     print("\nPer-fold OOS Sharpe:")
-    print(
-        f"{'fold':>4}  {'oos_start':<12}  {'oos_end':<12}  {'20/80':>9}  {'30/70':>9}  {'40/60':>9}"
+    header = f"{'fold':>4}  {'oos_start':<12}  " + "  ".join(
+        f"{label:>9}" for label, _ in splits
     )
-    print("-" * 70)
+    print(header)
+    print("-" * len(header))
     for _, r in fold_df.iterrows():
-        print(
-            f"{int(r['fold']):>4}  {r['oos_start']:<12}  {r['oos_end']:<12}  "
-            f"{r['20/80_Sharpe']:>+9.3f}  {r['30/70_Sharpe']:>+9.3f}  "
-            f"{r['40/60 (current)_Sharpe']:>+9.3f}"
-        )
+        line = f"{int(r['fold']):>4}  {r['oos_start']:<12}  "
+        line += "  ".join(f"{r[f'{label}_Sharpe']:>+9.3f}" for label, _ in splits)
+        print(line)
 
     # Stitched aggregate stats
     print("\n" + "=" * 90)
@@ -193,22 +195,19 @@ def main() -> int:
 
     # Per-fold uplift summary (relative to 40/60 current)
     print("\nUplift vs current 40/60 (Sharpe diff per fold):")
-    fold_df["uplift_2080"] = fold_df["20/80_Sharpe"] - fold_df["40/60 (current)_Sharpe"]
-    fold_df["uplift_3070"] = fold_df["30/70_Sharpe"] - fold_df["40/60 (current)_Sharpe"]
-    print(
-        f"  20/80 vs 40/60: mean={fold_df['uplift_2080'].mean():+.3f}  "
-        f"median={fold_df['uplift_2080'].median():+.3f}  "
-        f"min={fold_df['uplift_2080'].min():+.3f}  "
-        f"max={fold_df['uplift_2080'].max():+.3f}  "
-        f"pos={float((fold_df['uplift_2080'] > 0).mean()):.0%}"
-    )
-    print(
-        f"  30/70 vs 40/60: mean={fold_df['uplift_3070'].mean():+.3f}  "
-        f"median={fold_df['uplift_3070'].median():+.3f}  "
-        f"min={fold_df['uplift_3070'].min():+.3f}  "
-        f"max={fold_df['uplift_3070'].max():+.3f}  "
-        f"pos={float((fold_df['uplift_3070'] > 0).mean()):.0%}"
-    )
+    baseline_col = "40/60 (current)_Sharpe"
+    for label, _ in splits:
+        if label == "40/60 (current)":
+            continue
+        col = f"{label}_Sharpe"
+        uplift = fold_df[col] - fold_df[baseline_col]
+        print(
+            f"  {label:<10} vs 40/60: mean={uplift.mean():+.3f}  "
+            f"median={uplift.median():+.3f}  "
+            f"min={uplift.min():+.3f}  "
+            f"max={uplift.max():+.3f}  "
+            f"pos={float((uplift > 0).mean()):.0%}"
+        )
 
     # Save
     out_csv = REPORTS_DIR / "wfo_allocation_comparison.csv"
