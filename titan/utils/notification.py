@@ -319,6 +319,27 @@ def _fmt_value(v: Any) -> str:
     return str(v)
 
 
+def notify_health(
+    event: str,
+    *,
+    severity: str = "warning",
+    detail: str | None = None,
+) -> int:
+    """Send an infrastructure-health alert (gateway restart, runner crash,
+    connection error, watchdog state change).
+
+    Goes to all configured backends (Slack + Telegram). Use ``severity`` to
+    set the emoji: ``info`` (ℹ️), ``warning`` (⚠️), ``critical`` (🚨), or
+    ``ok`` (✅) for recovery messages.
+    """
+    emoji_map = {"info": "ℹ️", "ok": "✅", "warning": "⚠️", "critical": "🚨"}
+    emoji = emoji_map.get(severity, "📢")
+    lines = [f"{emoji} *Titan health* — {event}"]
+    if detail:
+        lines.append(detail)
+    return _dispatch("\n".join(lines))
+
+
 def notify_daily_summary(body: str) -> int:
     """Send a free-form daily summary message.
 
@@ -376,6 +397,12 @@ def main() -> None:
             equity_after=10_528.40,
             initial_equity=10_000.0,
             exit_reason="TP",
+        )
+    elif test == "health":
+        n = notify_health(
+            "Test health alert — gateway disconnect simulated",
+            severity="warning",
+            detail="If you see this, watchdog alerts are wired up correctly.",
         )
     else:
         n = send_slack_message("This is a Guardian-style test alert.", severity="info")

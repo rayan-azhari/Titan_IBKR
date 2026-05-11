@@ -56,7 +56,7 @@ services:
         condition: service_healthy
     environment:
       IBKR_HOST: ib-gateway              # docker DNS resolves to gateway container
-      IBKR_PORT: ${IBKR_PORT:-4002}
+      IBKR_PORT: ${IBKR_PORT:-4004}
       IBKR_CLIENT_ID: ${IBKR_CLIENT_ID:-7}
       IBKR_ACCOUNT_ID: ${IBKR_ACCOUNT_ID}
       DATABENTO_API_KEY: ${DATABENTO_API_KEY:-}

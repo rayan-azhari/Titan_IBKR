@@ -40,6 +40,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOGS_DIR = PROJECT_ROOT / ".tmp" / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Make `titan.utils.notification` importable when running this script directly
+# (Docker entrypoint case: PYTHONPATH not yet set, no editable install).
+sys.path.insert(0, str(PROJECT_ROOT))
+try:
+    from titan.utils.notification import notify_health
+except Exception:  # noqa: BLE001
+    def notify_health(*_args, **_kwargs) -> int:  # type: ignore[no-redef]
+        return 0
+
 RESTART_DELAY_SECS = 180  # 3 min — covers IBKR maintenance / weekly restart
 QUICK_DEATH_SECS = 30  # if process dies in <30s, treat as config error
 QUICK_DEATH_DELAY_SECS = 60
@@ -72,6 +81,10 @@ def _handle_signal(signum: int, frame) -> None:  # noqa: ARG001
     global _shutdown
     _shutdown = True
     log.info(f"Watchdog received signal {signum}. Forwarding to child and stopping.")
+    notify_health(
+        f"Watchdog received signal {signum}; shutting down portfolio runner",
+        severity="info",
+    )
     if _current_proc is not None and _current_proc.poll() is None:
         try:
             _current_proc.terminate()
@@ -102,6 +115,10 @@ def main() -> int:
     log.info(
         f"Restart cooldown: {RESTART_DELAY_SECS}s normal, "
         f"{QUICK_DEATH_DELAY_SECS}s if child dies in <{QUICK_DEATH_SECS}s"
+    )
+    notify_health(
+        f"Watchdog started — strategies={args.strategies}",
+        severity="ok",
     )
 
     global _current_proc
@@ -135,8 +152,28 @@ def main() -> int:
                 f"Child died in <{QUICK_DEATH_SECS}s -- likely config error or "
                 f"missing dependency. Backing off {delay}s before retry."
             )
+            notify_health(
+                "Portfolio runner died quickly — likely config error or "
+                "IB Gateway unreachable",
+                severity="critical",
+                detail=(
+                    f"Attempt {attempt}: exit code {exit_code} after "
+                    f"{elapsed:.0f}s. Restarting in {delay}s. Check "
+                    f"`docker compose logs titan-portfolio` and "
+                    f"`docker compose ps ib-gateway`."
+                ),
+            )
         else:
             delay = RESTART_DELAY_SECS
+            notify_health(
+                "Portfolio runner exited — auto-restarting",
+                severity="warning",
+                detail=(
+                    f"Attempt {attempt}: exit code {exit_code} after "
+                    f"{elapsed / 60:.1f} min. Likely IB Gateway disconnect "
+                    f"or weekly maintenance. Restarting in {delay}s."
+                ),
+            )
 
         log.info(f"Restarting in {delay}s...")
         # Interruptible sleep so SIGTERM during cooldown takes effect immediately
@@ -146,6 +183,7 @@ def main() -> int:
             time.sleep(1)
 
     log.info("Watchdog stopped.")
+    notify_health("Watchdog stopped", severity="info")
     return 0
 
 
