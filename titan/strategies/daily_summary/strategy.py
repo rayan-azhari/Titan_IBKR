@@ -96,7 +96,8 @@ class DailySummaryStrategy(Strategy):
         self.log.info(
             f"DailySummary started | tick={self.bar_type} | "
             f"morning={self.config.summary_hour:02d}:{self.config.summary_minute:02d} "
-            f"evening={self.config.evening_summary_hour:02d}:{self.config.evening_summary_minute:02d} "
+            f"evening={self.config.evening_summary_hour:02d}"
+            f":{self.config.evening_summary_minute:02d} "
             f"{self.config.summary_tz} | last_sent={self._last_sent}"
         )
 
@@ -113,7 +114,12 @@ class DailySummaryStrategy(Strategy):
 
         for slot, hour, minute, label in (
             ("morning", self.config.summary_hour, self.config.summary_minute, "🌅 Morning"),
-            ("evening", self.config.evening_summary_hour, self.config.evening_summary_minute, "🌙 Evening"),
+            (
+                "evening",
+                self.config.evening_summary_hour,
+                self.config.evening_summary_minute,
+                "🌙 Evening",
+            ),
         ):
             # Skip if morning == evening (evening disabled)
             if slot == "evening" and (
@@ -230,7 +236,11 @@ class DailySummaryStrategy(Strategy):
                 try:
                     qty = float(p.signed_qty)
                     side_sign = "+" if qty > 0 else ""
-                    avg = float(p.avg_px_open) if getattr(p, "avg_px_open", None) is not None else 0.0
+                    avg = (
+                        float(p.avg_px_open)
+                        if getattr(p, "avg_px_open", None) is not None
+                        else 0.0
+                    )
                     line = f"  • `{p.instrument_id}`  {side_sign}{qty:g} @ avg {avg:,.4f}"
 
                     # Realized P&L (always available on Position)

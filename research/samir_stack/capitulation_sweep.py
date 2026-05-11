@@ -20,10 +20,8 @@ Sweep approach:
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from itertools import product
 
-import numpy as np
 import pandas as pd
 
 from research.samir_stack.capitulation import CapitulationConfig

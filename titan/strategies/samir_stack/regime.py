@@ -13,10 +13,13 @@ research version (`research/samir_stack/hmm_risk.py::hmm_benign_score_causal`).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+
+from titan.research.metrics import BARS_PER_YEAR
 
 # ── Indicator computations (snapshot-based) ────────────────────────────────
 
@@ -72,7 +75,9 @@ def realised_vol_regime_score(
         return float("nan")
     rets = spy_buffer.pct_change()
     rv_window_size = vol_window
-    rv_recent = rets.iloc[-percentile_window:].rolling(rv_window_size).std() * np.sqrt(252)
+    rv_recent = rets.iloc[-percentile_window:].rolling(rv_window_size).std() * math.sqrt(
+        BARS_PER_YEAR["D"]
+    )
     rv_recent = rv_recent.dropna()
     if len(rv_recent) < 50:
         return float("nan")

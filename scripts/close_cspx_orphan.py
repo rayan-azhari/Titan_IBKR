@@ -122,7 +122,10 @@ def main() -> int:
         ):
             target = (acct, c, pos, avg)
             flag = "  <-- TARGET"
-        print(f"  {c.symbol:<8} {c.primaryExchange:<10} {c.currency:<5}  pos={pos}  avg={avg}{flag}")
+        print(
+            f"  {c.symbol:<8} {c.primaryExchange:<10} {c.currency:<5}  "
+            f"pos={pos}  avg={avg}{flag}"
+        )
 
     if target is None:
         print(f"\nNo {TARGET_SYMBOL}.{TARGET_PRIMARY_EXCH} position found. Nothing to do.")

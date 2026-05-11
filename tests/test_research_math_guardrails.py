@@ -60,6 +60,16 @@ _ALLOWLIST_SQRT_252: dict[str, str] = {
     # phase_portfolio.py has the docstring mention but no bare sqrt(252)
     # call; it's already routed through the metrics module.
     "research/auto/phase_portfolio.py": "docstring mention only",
+    # Samir-Stack research scripts — daily-bar backtests; migration to
+    # titan.research.metrics pending. Live runtime is in
+    # titan/strategies/samir_stack/ which is already routed through the
+    # metrics module (BARS_PER_YEAR["D"]).
+    "research/samir_stack/indicators.py": "research script, daily bars",
+    "research/samir_stack/wfo.py": "research script, daily bars",
+    "research/samir_stack/wfo_stacked.py": "research script, daily bars",
+    "research/samir_stack/stacked_strategy.py": "research script, daily bars",
+    "research/samir_stack/strategy.py": "research script, daily bars",
+    "research/samir_stack/benchmarks.py": "research script, daily bars",
 }
 
 _ALLOWLIST_FILTER_THEN_STD: dict[str, str] = {
