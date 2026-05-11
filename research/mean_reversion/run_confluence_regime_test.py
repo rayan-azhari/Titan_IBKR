@@ -15,7 +15,6 @@ Usage:
 
 import argparse
 import sys
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -269,9 +268,12 @@ def backtest_mr(
     oos_daily = daily_pnl.iloc[int(len(daily_pnl) * is_ratio) :]
 
     def _sharpe(d):
+        from titan.research.metrics import BARS_PER_YEAR as _BPY
+        from titan.research.metrics import sharpe as _sh
+
         if len(d) < 10:
             return 0.0
-        return float(d.mean() / d.std() * sqrt(252)) if d.std() > 1e-9 else 0.0
+        return float(_sh(d, periods_per_year=_BPY["D"]))
 
     def _dd(d):
         if len(d) < 5:

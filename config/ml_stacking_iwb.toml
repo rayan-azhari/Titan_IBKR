@@ -1,0 +1,67 @@
+# ML Stacking Strategy -- IWB (Russell 1000)
+# Autoresearch winner: Exp86 (SCORE=4.5462, Sharpe=+3.996, DD=-3.0%)
+# Discovered 2026-04-06 via autonomous research loop (140+ experiments)
+
+instrument        = "IWB.ARCA"
+strategy          = "stacking"        # XGBoost + LSTM stacking ensemble
+timeframe         = "D"
+
+# --- XGBoost Parameters ---
+[xgb]
+n_estimators      = 300
+max_depth         = 4
+learning_rate     = 0.03
+subsample         = 0.8
+colsample_bytree  = 0.6
+random_state      = 42
+
+# --- LSTM Parameters ---
+[lstm]
+hidden_dim        = 32
+lookback          = 20
+epochs            = 30
+dropout           = 0.3
+
+# --- Stacking Meta-Learner ---
+[stacking]
+n_nested_folds    = 3                 # Temporal nested CV within IS window
+
+# --- Label Engineering ---
+# Regime+pullback labeler: SMA(50/200) trend + RSI pullback + confirmation
+# Key discovery: confirm_bars=5 (fast confirmation) is the critical parameter
+[[label_params]]
+rsi_oversold      = 45
+rsi_overbought    = 55
+confirm_bars      = 5                 # CRITICAL: 5 not 10. This is the breakthrough.
+confirm_pct       = 0.005
+
+[[label_params]]
+rsi_oversold      = 50
+rsi_overbought    = 50
+confirm_bars      = 5
+confirm_pct       = 0.003
+
+[[label_params]]
+rsi_oversold      = 48
+rsi_overbought    = 52
+confirm_bars      = 5
+confirm_pct       = 0.005
+
+# --- Position Sizing ---
+[sizing]
+signal_threshold  = 0.6               # P(long) > 0.6 = go long
+cost_bps          = 2.0               # Transaction cost assumption (basis points)
+
+# --- Walk-Forward Configuration ---
+[wfo]
+is_years          = 2                 # In-sample window
+oos_months        = 2                 # Out-of-sample window
+
+# --- Validation Metrics (Autoresearch Exp86) ---
+# SCORE:      4.5462
+# OOS Sharpe: +3.996
+# Max DD:     -3.0%
+# Parity:     6.572 (OOS >> IS, no overfit)
+# Pos Folds:  100% (5/5)
+# Worst Fold: +2.89
+# Trades:     5 (low frequency, high precision)

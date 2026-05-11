@@ -260,15 +260,16 @@ def regime_split(close: pd.Series, df: pd.DataFrame, n_sma: int = 250) -> dict[s
 
 
 def sharpe_in_regime(pf: "vbt.Portfolio", mask: pd.Series) -> float:
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
     ret = pf.returns()
     ret_masked = ret[mask.reindex(ret.index, fill_value=False)]
     if len(ret_masked) < 10:
         return float("nan")
-    mean_r = ret_masked.mean()
-    std_r = ret_masked.std()
-    if std_r < 1e-8:
+    if ret_masked.std() < 1e-8:
         return float("nan")
-    return float(mean_r / std_r * np.sqrt(252))
+    return float(_sh(ret_masked, periods_per_year=_BPY["D"]))
 
 
 def extract_stats(pf: "vbt.Portfolio") -> dict:

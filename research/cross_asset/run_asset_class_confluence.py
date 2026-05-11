@@ -20,7 +20,6 @@ Usage:
 """
 
 import sys
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -148,10 +147,13 @@ def backtest_confluence(
     oos_rets = pd.Series(strat_rets[is_n:])
 
     def _sharpe(r):
+        from titan.research.metrics import BARS_PER_YEAR as _BPY
+        from titan.research.metrics import sharpe as _sh
+
         r = r[r != 0.0]
         if len(r) < 20:
             return 0.0
-        return float(r.mean() / r.std() * sqrt(252)) if r.std() > 1e-9 else 0.0
+        return float(_sh(r, periods_per_year=_BPY["D"]))
 
     def _dd(r):
         r = r[r != 0.0]

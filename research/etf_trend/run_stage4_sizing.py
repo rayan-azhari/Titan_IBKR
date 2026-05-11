@@ -128,8 +128,10 @@ def compute_vol_target_sizes(
     In calm markets (realized_vol < target_vol), leverage > 1.0.
     In volatile markets, leverage < 1.0 (de-risked).
     """
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+
     rets = close.pct_change()
-    realized_vol = rets.rolling(vol_window).std().bfill() * np.sqrt(252)
+    realized_vol = rets.rolling(vol_window).std().bfill() * np.sqrt(_BPY["D"])
     leverage = (target_vol / realized_vol).clip(lower=0.5, upper=max_leverage)
     return leverage.where(in_regime, other=0.0).shift(1).fillna(0.0)
 
@@ -179,8 +181,10 @@ def run_vol_target_stats(
     dd = (equity - rolling_max) / rolling_max
     max_dd = float(dd.min())
 
-    std = strat_rets.std()
-    sharpe = float(strat_rets.mean() / std * np.sqrt(252)) if std > 1e-9 else 0.0
+    from titan.research.metrics import BARS_PER_YEAR as _BPY2
+    from titan.research.metrics import sharpe as _sh
+
+    sharpe = float(_sh(strat_rets, periods_per_year=_BPY2["D"]))
     # Match VectorBT calmar_ratio: annualized_return (365-basis) / abs(max_dd)
     n_bars = len(close)
     ann_ret = (1 + total_ret) ** (365 / n_bars) - 1

@@ -101,12 +101,15 @@ def monte_carlo_shuffle(pf: "vbt.Portfolio", n: int = MONTE_CARLO_N) -> dict:
 
     for _ in range(n):
         shuffled_pnl = rng.permutation(pnl)
+        from titan.research.metrics import BARS_PER_YEAR as _BPY
+        from titan.research.metrics import sharpe as _sh
+
         cum_eq = np.cumsum(np.insert(shuffled_pnl, 0, init_cash))
         daily_ret = np.diff(cum_eq) / cum_eq[:-1]
         if daily_ret.std() < 1e-8:
             sharpes.append(0.0)
             continue
-        sh = float(daily_ret.mean() / daily_ret.std() * np.sqrt(252))
+        sh = float(_sh(pd.Series(daily_ret), periods_per_year=_BPY["D"]))
         sharpes.append(sh)
         if cum_eq[-1] > init_cash:
             profitable_count += 1

@@ -27,7 +27,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -145,9 +144,13 @@ def compute_metrics(results: pd.DataFrame, label: str) -> dict:
     if len(pnl) < 20:
         return {"label": label, "error": "insufficient data"}
 
-    ann_ret = pnl.mean() * 252
-    ann_vol = pnl.std() * np.sqrt(252)
-    sharpe = ann_ret / ann_vol if ann_vol > 0 else 0.0
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import annualize_vol as _ann
+    from titan.research.metrics import sharpe as _sh
+
+    ann_ret = pnl.mean() * _BPY["D"]
+    ann_vol = _ann(float(pnl.std()), periods_per_year=_BPY["D"])
+    sharpe = float(_sh(pnl, periods_per_year=_BPY["D"]))
 
     equity = (1 + pnl).cumprod()
     hwm = equity.cummax()

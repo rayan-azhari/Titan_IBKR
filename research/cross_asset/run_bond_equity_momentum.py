@@ -17,7 +17,6 @@ Usage:
 """
 
 import sys
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -93,10 +92,13 @@ def backtest_momentum_signal(
     oos_rets = pd.Series(strat_rets[is_n:])
 
     def _sharpe(r):
+        from titan.research.metrics import BARS_PER_YEAR as _BPY
+        from titan.research.metrics import sharpe as _sh
+
         r = r[r != 0.0]
         if len(r) < 20:
             return 0.0
-        return float(r.mean() / r.std() * sqrt(252)) if r.std() > 1e-9 else 0.0
+        return float(_sh(r, periods_per_year=_BPY["D"]))
 
     def _dd(r):
         r = r[r != 0.0]
@@ -238,7 +240,10 @@ def main() -> None:
         n = len(close)
         is_n = int(n * 0.70)
         oos = close.iloc[is_n:].pct_change().dropna()
-        sh = float(oos.mean() / oos.std() * sqrt(252)) if oos.std() > 0 else 0
+        from titan.research.metrics import BARS_PER_YEAR as _BPY2
+        from titan.research.metrics import sharpe as _sh2
+
+        sh = float(_sh2(oos, periods_per_year=_BPY2["D"]))
         eq = (1 + oos).cumprod()
         dd = float(((eq - eq.cummax()) / eq.cummax()).min())
         print(f"    {name}: Sharpe {sh:+.3f} | DD {dd * 100:+.1f}%")

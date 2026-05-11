@@ -100,6 +100,8 @@ class TestMLSignalStrategy(unittest.TestCase):
         self.mock_config.max_position_pct = 0.03
         self.mock_config.vol_target_pct = 0.01
         self.mock_config.health_check_interval = 50
+        self.mock_config.initial_equity = 100_000.0
+        self.mock_config.base_ccy = "USD"
 
     def tearDown(self):
         self.modules_patcher.stop()
@@ -116,6 +118,13 @@ class TestMLSignalStrategy(unittest.TestCase):
         strategy.instrument_id.value = "TEST/USD"
 
         strategy._warmup_history()
+
+        # Wire up a tracker (normally done in on_start, but test bypasses it).
+        from titan.risk.strategy_equity import StrategyEquityTracker
+
+        strategy._equity_tracker = StrategyEquityTracker(
+            prm_id="ml_TEST_USD", initial_equity=100_000.0, base_ccy="USD"
+        )
 
         # Should have loaded 50 bars
         self.assertEqual(len(strategy.history), 50)

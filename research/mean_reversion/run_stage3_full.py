@@ -239,13 +239,15 @@ def run_full_pipeline(
 def monte_carlo_gate(daily_returns: pd.Series, n_shuffles: int, pct: float) -> dict:
     """Shuffle trade order n_shuffles times, compute Sharpe distribution."""
     sharpes = []
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
     vals = daily_returns.values.copy()
     for _ in range(n_shuffles):
         np.random.shuffle(vals)
         s = pd.Series(vals)
-        mu = s.mean()
-        sd = s.std()
-        sharpes.append(mu / sd * np.sqrt(252) if sd > 0 else np.nan)
+        sh = float(_sh(s, periods_per_year=_BPY["D"]))
+        sharpes.append(sh if s.std() > 0 else np.nan)
     sharpes = [s for s in sharpes if not np.isnan(s)]
     pct_sharpe = float(np.percentile(sharpes, pct))
     pct_profitable = float(np.mean([s > 0 for s in sharpes]))

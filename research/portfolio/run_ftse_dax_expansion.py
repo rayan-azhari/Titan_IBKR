@@ -317,16 +317,17 @@ def run_phase3_backtest(
             freq="d",
         )
 
+        from titan.research.metrics import BARS_PER_YEAR as _BPY
+        from titan.research.metrics import sharpe as _sh
+
         # IS stats
         is_val = pf.value().iloc[:is_n]
         is_ret = is_val.pct_change().dropna()
-        is_std = float(is_ret.std())
-        is_sharpe = float(is_ret.mean() / is_std * np.sqrt(252)) if is_std > 1e-9 else 0.0
+        is_sharpe = float(_sh(is_ret, periods_per_year=_BPY["D"]))
         # OOS stats
         oos_val = pf.value().iloc[is_n:]
         oos_ret = oos_val.pct_change().dropna()
-        oos_std = float(oos_ret.std())
-        oos_sharpe = float(oos_ret.mean() / oos_std * np.sqrt(252)) if oos_std > 1e-9 else 0.0
+        oos_sharpe = float(_sh(oos_ret, periods_per_year=_BPY["D"]))
         oos_dd = float((oos_val / oos_val.cummax() - 1).min())
         n_trades = int(pf.trades.count())
 

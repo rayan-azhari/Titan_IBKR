@@ -35,6 +35,12 @@ from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import (
+    StrategyEquityTracker,
+    convert_notional_to_units,
+    report_equity_and_check,
+    split_fx_pair,
+)
 from titan.strategies.ml.features import atr
 
 # ---------------------------------------------------------------------------
@@ -49,6 +55,10 @@ class MRFXConfig(StrategyConfig):
     bar_type_m5: str  # e.g. "EUR/USD.IDEALPRO-5-MINUTE-MID-EXTERNAL"
     config_path: str = "config/mr_fx_eurusd.toml"
     warmup_bars: int = 3000  # ~12.5 trading days of M5 data
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
+    # Required if quote_ccy != base_ccy. EUR/USD -> 1.0 by default.
+    fx_rate_quote_to_base: float = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +131,13 @@ class MRFXStrategy(Strategy):
         # ATR for sizing
         self._latest_atr: float = 0.0
 
+        # Per-strategy equity tracker (populated in on_start)
+        self._equity_tracker: StrategyEquityTracker | None = None
+
+        pair = split_fx_pair(config.instrument_id)
+        self._quote_ccy = pair[1] if pair else config.base_ccy
+        self._fx_rate_quote_to_base = float(config.fx_rate_quote_to_base)
+
     def _load_toml(self, path: str) -> dict:
         p = Path(path)
         if not p.exists():
@@ -143,7 +160,23 @@ class MRFXStrategy(Strategy):
 
         # Register with portfolio risk manager
         self._prm_id = "mr_fx_eurusd"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+
+        if (
+            self._quote_ccy != self.config.base_ccy
+            and abs(self._fx_rate_quote_to_base - 1.0) < 1e-12
+        ):
+            raise ValueError(
+                f"mr_fx: quote_ccy={self._quote_ccy!r} != "
+                f"base_ccy={self.config.base_ccy!r} but fx_rate_quote_to_base "
+                f"is still the default 1.0. Set an explicit rate in the config."
+            )
+
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
     def _warmup(self) -> None:
         """Pre-populate history from EUR_USD M5 parquet."""
@@ -239,15 +272,9 @@ class MRFXStrategy(Strategy):
             }
         )
 
-        # Portfolio risk manager: update equity every ~12 bars (hourly)
+        # Portfolio risk: per-strategy tracker equity, hourly cadence
         if len(self.history) % 12 == 0:
-            accounts = self.cache.accounts()
-            if accounts:
-                acct = accounts[0]
-                ccys = list(acct.balances().keys())
-                if ccys:
-                    equity = float(acct.balance_total(ccys[0]).as_double())
-                    portfolio_risk_manager.update(self._prm_id, equity)
+            report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
         if portfolio_risk_manager.halt_all:
             self.log.warning("Portfolio kill switch active -- flattening.")
             self._flatten_all()
@@ -361,14 +388,11 @@ class MRFXStrategy(Strategy):
 
     def _enter_tier(self, side: OrderSide, price: float, tier_size: int, tier: int) -> None:
         """Submit a market order for one grid tier."""
-        accounts = self.cache.accounts()
-        if not accounts:
+        if self._equity_tracker is None:
             return
-        acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
             return
-        equity = float(acct.balance_total(ccys[0]).as_double())
 
         # Size: risk_pct * equity / (ATR * leverage_cap), scaled by tier weight
         if self._latest_atr <= 0:
@@ -376,11 +400,28 @@ class MRFXStrategy(Strategy):
 
         total_tier_weight = sum(self.tier_sizes[: len(self.tiers_pct)])
         tier_fraction = tier_size / total_tier_weight if total_tier_weight > 0 else 0.25
-        risk_amount = equity * self.risk_pct * tier_fraction
-        raw_units = risk_amount / self._latest_atr
+        risk_base = equity * self.risk_pct * tier_fraction
+        # Convert risk_base into units: stop distance is ATR in quote ccy, so
+        # risk_base / (atr * fx) gives units in base currency of the pair.
+        fx_to_base = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
+        raw_units = risk_base / (self._latest_atr * fx_to_base)
 
-        max_units = (equity * self.leverage_cap) / price if price > 0 else 0
-        units = min(raw_units, max_units)
+        # Leverage cap applied to notional in base ccy
+        max_notional_base = equity * self.leverage_cap
+        max_units = (
+            convert_notional_to_units(
+                notional_base=max_notional_base,
+                price=price,
+                quote_ccy=self._quote_ccy,
+                base_ccy=self.config.base_ccy,
+                fx_rate_quote_to_base=(
+                    fx_to_base if self._quote_ccy != self.config.base_ccy else None
+                ),
+            )
+            if price > 0
+            else 0
+        )
+        units = min(raw_units, max_units) if max_units > 0 else raw_units
 
         # Apply portfolio-level scale factor
         units *= portfolio_risk_manager.scale_factor
@@ -518,3 +559,13 @@ class MRFXStrategy(Strategy):
 
     def on_order_rejected(self, event) -> None:
         self.log.error(f"ORDER REJECTED: {event.client_order_id} -- {event.reason}")
+
+    def on_position_closed(self, event) -> None:
+        if self._equity_tracker is not None:
+            try:
+                pnl_quote = float(event.realized_pnl.as_double())
+                fx = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
+                self._equity_tracker.on_position_closed(pnl_quote, fx_to_base=fx)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
+        self.log.info(f"CLOSED: PnL={event.realized_pnl}")

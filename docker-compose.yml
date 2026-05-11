@@ -1,0 +1,96 @@
+# Titan-IBKR Champion Portfolio — Paper Trading Stack
+#
+# Bring up:   docker compose --env-file .env.docker up -d --build
+# Tail logs:  docker compose logs -f titan-portfolio
+# Stop:       docker compose down       (graceful — SIGTERM to watchdog)
+# Kill:       docker compose down -v    (also wipes the named .tmp/ volume)
+#
+# See: directives/Docker Paper Trading Guide.md
+
+services:
+  ib-gateway:
+    image: gnzsnz/ib-gateway:stable
+    container_name: titan-ib-gateway
+    restart: unless-stopped
+    environment:
+      TWS_USERID: ${TWS_USERID}
+      TWS_PASSWORD: ${TWS_PASSWORD}
+      TRADING_MODE: ${TRADING_MODE:-paper}     # paper | live
+      READ_ONLY_API: "no"
+      # Weekly soft restart instead of daily IBKR-forced 23:45 ET hard restart.
+      # Sunday 03:00 in TIME_ZONE keeps weekday sessions uninterrupted.
+      AUTO_RESTART_TIME: "03:00 SUN"
+      # If 2FA push times out (live only — paper does not 2FA), restart the
+      # gateway rather than hang in a half-logged-in state that would still
+      # show the API port as open to the healthcheck.
+      TWOFA_TIMEOUT_ACTION: restart
+      TIME_ZONE: America/New_York
+      BYPASS_WARNING: "yes"
+    expose:
+      - "4004"   # paper API (via socat) — internal-only, not published to host
+      - "4003"   # live API (via socat)  — only used when TRADING_MODE=live
+    networks:
+      - titan-net
+    healthcheck:
+      # Plain TCP check on the paper port. Switch to 4001 when going live.
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/127.0.0.1/4002) >/dev/null 2>&1' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s   # gateway + IBC + Xvfb cold start is ~60-80s
+
+  titan-portfolio:
+    # Stable image tag — `docker compose up -d` pulls/uses this image without
+    # rebuilding. Override with `TITAN_IMAGE=titan-portfolio:1.2.3` in
+    # .env.docker to pin to a specific version.
+    # To rebuild: `docker compose build titan-portfolio` (uses the build:
+    # block below) or `scripts/build_image.sh [VERSION]`.
+    image: ${TITAN_IMAGE:-titan-portfolio:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: titan-portfolio
+    restart: unless-stopped
+    depends_on:
+      ib-gateway:
+        condition: service_healthy
+    environment:
+      IBKR_HOST: ib-gateway              # docker DNS resolves to gateway container
+      IBKR_PORT: ${IBKR_PORT:-4004}
+      IBKR_CLIENT_ID: ${IBKR_CLIENT_ID:-7}
+      IBKR_ACCOUNT_ID: ${IBKR_ACCOUNT_ID}
+      DATABENTO_API_KEY: ${DATABENTO_API_KEY:-}
+      # Notifications: Slack (single webhook) and/or Telegram (bot+chat).
+      # Either / both / neither — see .env.docker.example for setup details.
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      # Daily summary timing — see .env.docker.example for setup
+      DAILY_SUMMARY_HOUR: ${DAILY_SUMMARY_HOUR:-9}
+      DAILY_SUMMARY_MINUTE: ${DAILY_SUMMARY_MINUTE:-0}
+      DAILY_EVENING_SUMMARY_HOUR: ${DAILY_EVENING_SUMMARY_HOUR:-22}
+      DAILY_EVENING_SUMMARY_MINUTE: ${DAILY_EVENING_SUMMARY_MINUTE:-0}
+      DAILY_SUMMARY_TZ: ${DAILY_SUMMARY_TZ:-Europe/London}
+      # Initial GBP equity for P&L-since-inception in daily summary
+      TITAN_INITIAL_EQUITY_GBP: ${TITAN_INITIAL_EQUITY_GBP:-10000.0}
+      # Total account NLV in USD — divided across active trading strategies
+      # at startup to size each strategy's initial_equity correctly.
+      TITAN_PORTFOLIO_USD_EQUITY: ${TITAN_PORTFOLIO_USD_EQUITY:-}
+      TZ: America/New_York
+    volumes:
+      - titan-tmp:/app/.tmp              # halt.json + logs persist via named volume
+      - ./data:/app/data                 # warmup parquets — RW so refresh_market_data.sh
+                                         #   running inside the container can update them.
+                                         #   Strategies themselves only read from here.
+      - ./models:/app/models:ro          # ML artefacts (read-only at runtime)
+      - ./config:/app/config:ro          # TOMLs editable -> just `restart` to apply
+    networks:
+      - titan-net
+    stop_grace_period: 60s               # let watchdog forward SIGTERM cleanly
+
+networks:
+  titan-net:
+    driver: bridge
+
+volumes:
+  titan-tmp:

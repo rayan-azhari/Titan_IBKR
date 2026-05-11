@@ -19,7 +19,6 @@ Usage:
 
 import argparse
 import sys
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -222,9 +221,10 @@ def _fold_vbt(
     long_ret_s = pf_long.returns()
     short_ret_s = pf_short.returns()
     returns_series = (long_ret_s + short_ret_s) / 2
-    bl_mean = float(returns_series.mean())
-    bl_std = float(returns_series.std())
-    combined_sharpe = bl_mean / bl_std * sqrt(252) if bl_std > 1e-10 else 0.0
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
+    combined_sharpe = float(_sh(returns_series, periods_per_year=_BPY["D"]))
 
     return {
         "sharpe": combined_sharpe,
@@ -549,11 +549,11 @@ def run_wfo(
     # Sharpe is slightly overstated when folds are far apart in time. This is
     # a minor artefact of rolling WFO and is accepted as a known limitation.
     if oos_returns_list:
+        from titan.research.metrics import sharpe as _sh_stitched
+
         stitched = pd.concat(oos_returns_list).sort_index()
         bpy = float(bars_per_year)
-        ann_ret = float(stitched.mean()) * bpy
-        ann_vol = float(stitched.std()) * float(np.sqrt(bpy))
-        stitched_sharpe = ann_ret / ann_vol if ann_vol > 1e-10 else 0.0
+        stitched_sharpe = float(_sh_stitched(stitched, periods_per_year=int(bpy)))
     else:
         stitched = pd.Series(dtype=float)
         stitched_sharpe = 0.0

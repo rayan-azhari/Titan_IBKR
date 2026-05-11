@@ -17,7 +17,6 @@ import sys
 import tomllib
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -170,8 +169,10 @@ def compute_stats(rets: pd.Series) -> dict:
     rolling_max = eq.cummax()
     dd = (eq - rolling_max) / rolling_max
     max_dd = float(dd.min())
-    std = rets.std()
-    sharpe = float(rets.mean() / std * np.sqrt(252)) if std > 1e-9 else 0.0
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
+    sharpe = float(_sh(rets, periods_per_year=_BPY["D"]))
     n_bars = len(rets)
     ann_ret = (1 + total_ret) ** (365 / n_bars) - 1
     calmar = ann_ret / abs(max_dd) if max_dd < -1e-9 else 0.0

@@ -24,7 +24,6 @@ Directive: Backtesting & Validation.md
 
 import argparse
 import sys
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -254,11 +253,21 @@ def backtest(
     oos_daily = oos_daily[oos_daily != 0.0]
 
     def _metrics(daily: pd.Series, label: str) -> dict:
+        from titan.research.metrics import (
+            BARS_PER_YEAR as _BPY,
+        )
+        from titan.research.metrics import (
+            annualize_vol as _ann,
+        )
+        from titan.research.metrics import (
+            sharpe as _sh,
+        )
+
         if len(daily) < 20:
             return {"label": label, "sharpe": 0.0, "bars": len(daily)}
-        ann_ret = daily.mean() * 252
-        ann_vol = daily.std() * sqrt(252)
-        sharpe = ann_ret / ann_vol if ann_vol > 0 else 0.0
+        ann_ret = daily.mean() * _BPY["D"]
+        ann_vol = _ann(float(daily.std()), periods_per_year=_BPY["D"])
+        sharpe = float(_sh(daily, periods_per_year=_BPY["D"]))
         equity = (1 + daily).cumprod()
         hwm = equity.cummax()
         dd = (equity - hwm) / hwm
@@ -456,11 +465,12 @@ def _fast_backtest(
     is_daily = is_daily[is_daily != 0.0]
 
     def _sharpe(daily):
+        from titan.research.metrics import BARS_PER_YEAR as _BPY2
+        from titan.research.metrics import sharpe as _sh2
+
         if len(daily) < 20:
             return 0.0
-        m = daily.mean()
-        s = daily.std()
-        return float(m / s * sqrt(252)) if s > 1e-9 else 0.0
+        return float(_sh2(daily, periods_per_year=_BPY2["D"]))
 
     is_sharpe = _sharpe(is_daily)
     oos_sharpe = _sharpe(oos_daily)

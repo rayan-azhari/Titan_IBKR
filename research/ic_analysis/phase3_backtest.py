@@ -622,9 +622,10 @@ def _run_vbt(
     long_ret_s = pf_long.returns()
     short_ret_s = pf_short.returns()
     blended_daily = (long_ret_s + short_ret_s) / 2
-    bl_mean = float(blended_daily.mean())
-    bl_std = float(blended_daily.std())
-    combined_daily_sharpe = bl_mean / bl_std * np.sqrt(252) if bl_std > 1e-10 else 0.0
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
+    combined_daily_sharpe = float(_sh(blended_daily, periods_per_year=_BPY["D"]))
 
     # C2 FIX: Combined trade Sharpe from merged per-trade returns.
     all_trade_rets = []

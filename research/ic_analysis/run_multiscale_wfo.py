@@ -15,7 +15,6 @@ Directive: Backtesting & Validation.md
 import argparse
 import sys
 import time
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -109,9 +108,11 @@ def _fold_backtest(
     if len(daily) < 10:
         return {"sharpe": 0.0, "ret_pct": 0.0, "dd_pct": 0.0, "trades": 0, "days": 0}
 
-    ann_ret = float(daily.mean() * 252)
-    ann_vol = float(daily.std() * sqrt(252))
-    sharpe = ann_ret / ann_vol if ann_vol > 1e-9 else 0.0
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
+    ann_ret = float(daily.mean() * _BPY["D"])
+    sharpe = float(_sh(daily, periods_per_year=_BPY["D"]))
 
     equity = (1 + daily).cumprod()
     dd = float(((equity - equity.cummax()) / equity.cummax()).min())
@@ -278,7 +279,10 @@ def run_wfo(
     stitched_daily = stitched_daily[stitched_daily != 0.0]
 
     if len(stitched_daily) >= 20:
-        st_sharpe = float(stitched_daily.mean() / stitched_daily.std() * sqrt(252))
+        from titan.research.metrics import BARS_PER_YEAR as _BPY2
+        from titan.research.metrics import sharpe as _sh2
+
+        st_sharpe = float(_sh2(stitched_daily, periods_per_year=_BPY2["D"]))
         st_eq = (1 + stitched_daily).cumprod()
         st_dd = float(((st_eq - st_eq.cummax()) / st_eq.cummax()).min())
         st_ret = float(stitched_daily.mean() * 252)

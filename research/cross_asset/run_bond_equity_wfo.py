@@ -10,7 +10,6 @@ Usage:
 
 import argparse
 import sys
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -69,6 +68,8 @@ def run_bond_wfo(
 
     folds = []
     stitched = []
+    stitched_idx = []
+    stitched_trades: list[float] = []
     fold_idx = 0
     oos_start = is_days
 
@@ -82,23 +83,39 @@ def run_bond_wfo(
         if is_std < 1e-8:
             is_std = 1.0
 
-        # IS backtest
+        # IS backtest.
+        #
+        # CAUSALITY FIX (April 2026 audit). The previous line
+        #     is_strat = is_ret * is_pos
+        # was same-bar look-ahead: ``is_pos[t]`` depends on
+        # ``bond_close[t]`` (via bond_mom/z-score), but ``is_ret[t]`` is the
+        # target's return from ``t-1 -> t``. Multiplying them meant the
+        # strategy earned the ``t-1 -> t`` return using information only
+        # available at the close of ``t``.
+        #
+        # Correct: shift the position by one bar so ``pos[t-1]`` (decided at
+        # close of ``t-1``) earns the ``t-1 -> t`` return. The first bar of
+        # each slice has no prior position, so its strat return is zero.
         is_z = (is_mom - is_mean) / is_std
         is_pos = _position_with_hold(is_z, threshold, hold_days)
         is_ret = target_ret[is_start:oos_start]
-        is_strat = is_ret * is_pos
+        is_pos_lagged = np.concatenate(([0.0], is_pos[:-1]))
+        is_strat = is_ret * is_pos_lagged
         is_sh = _daily_sharpe(is_strat)
 
-        # OOS backtest
+        # OOS backtest (same shift applied).
         oos_end = oos_start + oos_days
         oos_mom = mom_vals[oos_start:oos_end]
         oos_z = (oos_mom - is_mean) / is_std  # frozen IS stats
         oos_pos = _position_with_hold(oos_z, threshold, hold_days)
         oos_ret = target_ret[oos_start:oos_end]
+        oos_pos_lagged = np.concatenate(([0.0], oos_pos[:-1]))
+        # Transitions counted on the *actual* positions held bar-to-bar
+        # (= shifted series). ``abs(pos_lagged[0]) == 0`` because the slice
+        # opens flat (previous fold's position does not carry over).
         oos_trans = np.zeros(oos_days)
-        oos_trans[0] = abs(oos_pos[0])
-        oos_trans[1:] = np.abs(oos_pos[1:] - oos_pos[:-1])
-        oos_strat = oos_ret * oos_pos - oos_trans * spread_bps / 10_000
+        oos_trans[1:] = np.abs(oos_pos_lagged[1:] - oos_pos_lagged[:-1])
+        oos_strat = oos_ret * oos_pos_lagged - oos_trans * spread_bps / 10_000
 
         oos_sh = _daily_sharpe(oos_strat)
         parity = oos_sh / is_sh if abs(is_sh) > 0.01 else 0.0
@@ -122,34 +139,71 @@ def run_bond_wfo(
             }
         )
         stitched.append(oos_strat)
+        stitched_idx.append(common[oos_start:oos_end])
+
+        # Extract per-trade returns: each contiguous block of non-zero
+        # ``oos_pos_lagged`` is one trade; its return is the sum of
+        # ``oos_strat`` over those bars (approximates trade P&L since bar
+        # returns are small).
+        in_trade = oos_pos_lagged != 0
+        if in_trade.any():
+            # Identify block starts
+            block_start = np.flatnonzero(in_trade & ~np.concatenate(([False], in_trade[:-1])))
+            block_end = np.flatnonzero(in_trade & ~np.concatenate((in_trade[1:], [False])))
+            for s_i, e_i in zip(block_start, block_end):
+                stitched_trades.append(float(oos_strat[s_i : e_i + 1].sum()))
 
         fold_idx += 1
         oos_start += oos_days
 
-    # Stitch
+    # Stitch. Shared metric — no nz-filter bias (April 2026 audit). The old
+    # implementation ``mean(nz)/std(nz) * sqrt(252)`` overstated Sharpe by
+    # ``sqrt(1/active_ratio)`` whenever the strategy was not always in the
+    # market.
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh_metric
+
     all_oos = np.concatenate(stitched) if stitched else np.array([])
-    all_oos_nz = all_oos[all_oos != 0.0]
-    if len(all_oos_nz) >= 20:
-        st_sh = float(np.mean(all_oos_nz) / np.std(all_oos_nz) * sqrt(252))
-        eq = np.cumprod(1 + all_oos_nz)
+    if len(all_oos) >= 20:
+        st_sh = _sh_metric(all_oos, periods_per_year=_BPY["D"])
+        from titan.research.metrics import bootstrap_sharpe_ci as _boot_ci
+
+        st_ci_lo, st_ci_hi = _boot_ci(
+            all_oos, periods_per_year=_BPY["D"], n_resamples=1000, seed=42
+        )
+        eq = np.cumprod(1 + all_oos)
         hwm = np.maximum.accumulate(eq)
         st_dd = float(((eq - hwm) / hwm).min())
-        st_ret = float(np.mean(all_oos_nz) * 252)
+        st_ret = float(np.mean(all_oos) * 252)
     else:
         st_sh = 0.0
+        st_ci_lo = 0.0
+        st_ci_hi = 0.0
         st_dd = 0.0
         st_ret = 0.0
 
     fold_df = pd.DataFrame(folds)
 
+    if stitched and stitched_idx:
+        all_dates = np.concatenate([idx.values for idx in stitched_idx])
+        raw_returns = pd.Series(all_oos, index=pd.DatetimeIndex(all_dates))
+    else:
+        raw_returns = pd.Series(dtype=float)
+
     return {
         "fold_df": fold_df,
         "stitched_sharpe": round(st_sh, 3),
+        # 95% bootstrap CI on the stitched Sharpe. Deployment gate: strategies
+        # whose lower bound <= 0 should be tagged tier=unconfirmed.
+        "sharpe_ci_95_lo": round(st_ci_lo, 3),
+        "sharpe_ci_95_hi": round(st_ci_hi, 3),
         "stitched_dd_pct": round(st_dd * 100, 2),
         "stitched_ret_pct": round(st_ret * 100, 2),
         "n_folds": len(folds),
         "pct_positive": round((fold_df["oos_sharpe"] > 0).mean(), 3) if len(fold_df) > 0 else 0,
         "total_trades": int(fold_df["oos_trades"].sum()) if len(fold_df) > 0 else 0,
+        "stitched_returns": raw_returns,
+        "stitched_trades": list(stitched_trades),
     }
 
 
@@ -173,10 +227,10 @@ def _position_with_hold(z: np.ndarray, threshold: float, hold_days: int) -> np.n
 
 
 def _daily_sharpe(rets: np.ndarray) -> float:
-    nz = rets[rets != 0.0]
-    if len(nz) < 20:
-        return 0.0
-    return float(np.mean(nz) / np.std(nz) * sqrt(252)) if np.std(nz) > 1e-9 else 0.0
+    """Daily Sharpe via the shared metrics helper (no nz-filter bias)."""
+    from titan.research.metrics import BARS_PER_YEAR, sharpe
+
+    return sharpe(rets, periods_per_year=BARS_PER_YEAR["D"])
 
 
 def main() -> None:

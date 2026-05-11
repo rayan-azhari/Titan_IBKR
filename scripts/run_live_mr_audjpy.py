@@ -1,18 +1,18 @@
-"""run_live_mr_audjpy.py -- Live runner for AUD/JPY MR + Confluence Regime Filter.
+"""run_live_mr_audjpy.py -- Live runner for AUD/JPY MR Champion Strategy.
 
-Intraday mean reversion on AUD/JPY using VWAP deviation grid with
-multi-scale confluence disagreement as regime filter.
+Post-audit champion (April 2026 remediation): vwap_anchor=24,
+donchian_pos_20 regime filter, conservative tier grid. On the corrected
+harness anchor=24 scores Sharpe +0.53 vs +0.32 at the pre-fix anchor=46
+value. See directives/Autoresearch Agent Loop 2026-04-21.md.
 
-Paper trading port:  4002  (IBKR Gateway paper)
-Live trading port:   4001  (IBKR Gateway live)
+Paper trading port:  7497  (TWS paper) or 4002 (IBKR Gateway paper)
+Live trading port:   7496  (TWS live)  or 4001 (IBKR Gateway live)
 
 Prerequisites:
-  1. IBKR Gateway running with the account logged in.
-  2. data/AUD_JPY_H1.parquet present (warmup data).
+  1. TWS or IBKR Gateway running with the account logged in.
+  2. data/AUD_JPY_H1.parquet present (3000+ bars for W-scale warmup).
+     Download: uv run python scripts/download_h1_fx.py --pair AUD_JPY --years 15
   3. IBKR_ACCOUNT_ID set in .env.
-
-Note: This runner requires the AUD/JPY MR strategy to be deployed
-in titan/strategies/mr_audjpy/. Until then, it will fail to import.
 
 Usage:
     uv run python scripts/run_live_mr_audjpy.py
@@ -137,10 +137,19 @@ def main() -> None:
         instrument_id="AUD/JPY.IDEALPRO",
         bar_type_h1="AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL",
         ticker="AUD_JPY",
+        # Post-audit champion params (April 2026 remediation)
+        vwap_anchor=24,  # 24-bar VWAP (~1 trading day); beats 46 on corrected harness
+        pct_window=500,  # Rolling percentile window
+        reversion_pct=0.50,  # Exit at 50% reversion
+        max_leverage=2.0,  # Paper trade: 2× (scale to 7× after validation)
+        warmup_bars=3000,  # Enough for W-scale donchian (2400 bars)
     )
     strategy = MRAUDJPYStrategy(strat_config)
     node.trader.add_strategy(strategy)
-    logger.info("AUD/JPY MR + Confluence Strategy attached for AUD/JPY.IDEALPRO (H1).")
+    logger.info(
+        "AUD/JPY MR Champion attached | vwap_anchor=24 | donchian regime | "
+        "max_leverage=2.0x (paper)"
+    )
 
     def _stop(*_args):
         print("\nStopping AUD/JPY MR Node...")

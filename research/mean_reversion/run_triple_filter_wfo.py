@@ -13,7 +13,6 @@ Usage:
 
 import argparse
 import sys
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -125,9 +124,12 @@ def _fold_backtest(
     daily_pnl = daily_pnl[daily_pnl != 0.0]
 
     def _sharpe(d):
+        from titan.research.metrics import BARS_PER_YEAR as _BPY
+        from titan.research.metrics import sharpe as _sh
+
         if len(d) < 10:
             return 0.0
-        return float(d.mean() / d.std() * sqrt(252)) if d.std() > 1e-9 else 0.0
+        return float(_sh(d, periods_per_year=_BPY["D"]))
 
     n_trades = len(trade_returns)
     wr = sum(1 for r in trade_returns if r > 0) / n_trades * 100 if n_trades > 0 else 0
@@ -273,14 +275,13 @@ def main() -> None:
 
         # Stitch
         if stitched:
+            from titan.research.metrics import BARS_PER_YEAR as _BPY
+            from titan.research.metrics import sharpe as _sh
+
             all_oos = pd.concat(stitched)
             all_oos = all_oos[all_oos != 0.0]
             if len(all_oos) >= 20:
-                st_sh = (
-                    float(all_oos.mean() / all_oos.std() * sqrt(252))
-                    if all_oos.std() > 1e-9
-                    else 0.0
-                )
+                st_sh = float(_sh(all_oos, periods_per_year=_BPY["D"]))
             else:
                 st_sh = 0.0
         else:

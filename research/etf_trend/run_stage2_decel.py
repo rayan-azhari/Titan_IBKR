@@ -118,8 +118,10 @@ def rv_signal(close: pd.Series, window: int = 20) -> pd.Series:
     Returns:
         Series in [-1, 1] -- positive = low vol (good), negative = high vol (warning).
     """
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+
     log_ret = np.log(close / close.shift(1))
-    rv_ann = log_ret.rolling(window).std() * np.sqrt(252)
+    rv_ann = log_ret.rolling(window).std() * np.sqrt(_BPY["D"])
     # Normalise: map 0-50% annual vol to [+1, -1]
     normalized = 1 - (rv_ann / 0.25).clip(0, 2)
     return normalized.clip(-1, 1)

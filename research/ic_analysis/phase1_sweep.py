@@ -304,8 +304,11 @@ def _compute_group_d(df: pd.DataFrame) -> pd.DataFrame:
 
     out = pd.DataFrame(index=close.index)
     out[_tag("norm_atr_14", "Vol")] = atr(df, 14) / close
-    out[_tag("realized_vol_5", "Vol")] = log_r.rolling(5).std() * np.sqrt(252)
-    out[_tag("realized_vol_20", "Vol")] = log_r.rolling(20).std() * np.sqrt(252)
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+
+    _D = np.sqrt(_BPY["D"])
+    out[_tag("realized_vol_5", "Vol")] = log_r.rolling(5).std() * _D
+    out[_tag("realized_vol_20", "Vol")] = log_r.rolling(20).std() * _D
     out[_tag("garman_klass", "Vol")] = gk_roll
     out[_tag("parkinson_vol", "Vol")] = pk_roll
     out[_tag("bb_width", "Vol")] = bollinger_bw(close, 20)
@@ -500,8 +503,11 @@ def _compute_group_d_scaled(df: pd.DataFrame, s: int, p: str) -> pd.DataFrame:
 
     out = pd.DataFrame(index=close.index)
     out[_tag(f"{p}norm_atr_14", "Vol")] = atr(df, 14 * s) / close
-    out[_tag(f"{p}realized_vol_5", "Vol")] = log_r.rolling(5 * s).std() * np.sqrt(252)
-    out[_tag(f"{p}realized_vol_20", "Vol")] = log_r.rolling(20 * s).std() * np.sqrt(252)
+    from titan.research.metrics import BARS_PER_YEAR as _BPY2
+
+    _D2 = np.sqrt(_BPY2["D"])
+    out[_tag(f"{p}realized_vol_5", "Vol")] = log_r.rolling(5 * s).std() * _D2
+    out[_tag(f"{p}realized_vol_20", "Vol")] = log_r.rolling(20 * s).std() * _D2
     out[_tag(f"{p}garman_klass", "Vol")] = gk_roll
     out[_tag(f"{p}parkinson_vol", "Vol")] = pk_roll
     out[_tag(f"{p}bb_width", "Vol")] = bollinger_bw(close, 20 * s)

@@ -33,6 +33,11 @@ from nautilus_trader.trading.strategy import Strategy
 
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import (
+    StrategyEquityTracker,
+    report_equity_and_check,
+    split_fx_pair,
+)
 
 # ── Session boundaries (UTC) ─────────────────────────────────────────────────
 
@@ -56,6 +61,10 @@ class GapFadeConfig(StrategyConfig):
     atr_period: int = 14
     warmup_bars: int = 300  # ~1 day of M5 bars
     use_am_filter: bool = False  # Enable AM/PM archetype confirmation
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
+    # Required when the instrument quote ccy != base ccy. For EUR/USD it's 1.0.
+    fx_rate_quote_to_base: float = 1.0
 
 
 # ── Strategy ──────────────────────────────────────────────────────────────────
@@ -83,12 +92,33 @@ class GapFadeStrategy(Strategy):
 
         # AM archetype signal (optional filter)
         self._am_signal: int = 0  # +1 long bias, -1 short bias, 0 neutral
+        self._equity_tracker: StrategyEquityTracker | None = None
+
+        pair = split_fx_pair(config.instrument_id)
+        self._quote_ccy = pair[1] if pair else config.base_ccy
+        self._fx_rate_quote_to_base = float(config.fx_rate_quote_to_base)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def on_start(self) -> None:
         self._prm_id = f"gap_fade_{self.instrument_id.value.replace('/', '_')}"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+
+        if (
+            self._quote_ccy != self.config.base_ccy
+            and abs(self._fx_rate_quote_to_base - 1.0) < 1e-12
+        ):
+            raise ValueError(
+                f"gap_fade: quote_ccy={self._quote_ccy!r} != "
+                f"base_ccy={self.config.base_ccy!r} but fx_rate_quote_to_base "
+                f"is still the default 1.0. Set an explicit rate in the config."
+            )
+
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         self.subscribe_bars(self.bar_type_m5)
         self.log.info(
@@ -137,21 +167,14 @@ class GapFadeStrategy(Strategy):
             self._lows = self._lows[-max_len:]
             self._closes = self._closes[-max_len:]
 
-        # Portfolio risk manager update
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # Portfolio risk: per-strategy tracker equity, explicit bar ts
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
+        if halted:
             self.log.warning("Portfolio kill switch — flattening.")
             self.close_all_positions(self.instrument_id)
             return
 
-        # Tick the allocator
-        portfolio_allocator.tick()
+        portfolio_allocator.tick(now=bar_utc.date())
 
         # ── Track NY close (21:00 UTC) ────────────────────────────────────
         if bar_utc.hour == 21 and bar_utc.minute == 0:
@@ -207,25 +230,29 @@ class GapFadeStrategy(Strategy):
         side = OrderSide.SELL if gap > 0 else OrderSide.BUY
         px = float(price)
 
-        # Size: risk_pct of equity / stop distance
-        accounts = self.cache.accounts()
-        if not accounts:
+        # Size: risk_pct of equity / stop distance, FX-aware unit conversion
+        if self._equity_tracker is None:
             return
-        acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
             return
-
-        equity = float(acct.balance_total(ccys[0]).as_double())
         stop_dist = self.config.stop_atr_mult * atr
         if stop_dist <= 0:
             return
 
-        raw_units = (equity * self.config.risk_pct) / stop_dist
-
-        # Apply portfolio allocation + risk scaling
+        # Notional sized so that a full stop-out costs risk_pct * equity in
+        # base ccy. stop_dist is in quote-ccy price units, so notional_base =
+        # risk_base * (px / stop_dist) * equity/px … simpler: the old formula
+        # was (equity * risk_pct) / stop_dist which yields *units* only when
+        # quote == base. For non-USD quotes we route through the helper.
+        risk_base = equity * self.config.risk_pct
         alloc = portfolio_allocator.get_weight(self._prm_id)
-        units = int(raw_units * alloc * portfolio_risk_manager.scale_factor)
+        risk_base *= alloc * portfolio_risk_manager.scale_factor
+        # Convert: units = risk_base / (stop_dist * fx). For USD-quoted pairs
+        # fx=1 so this collapses to the original formula.
+        fx_to_base = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
+        raw_units = risk_base / (stop_dist * fx_to_base)
+        units = int(raw_units)
 
         if units < 1:
             self.log.warning(f"Gap fade size < 1 (units={raw_units:.1f}) — skip.")
@@ -239,13 +266,16 @@ class GapFadeStrategy(Strategy):
         else:
             sl_price = px - stop_dist
 
-        # Submit bracket order
+        # Submit bracket. TIF=DAY (not FOK) so a thin book at London open does
+        # not silently reject the fade and lock us out for the rest of the
+        # session. FOK previously combined with the pre-submission flag flip
+        # meant any open-book rejection killed the day with no retry.
         bracket = self.order_factory.bracket(
             instrument_id=self.instrument_id,
             order_side=side,
             quantity=Quantity.from_int(units),
             entry_order_type=OrderType.MARKET,
-            time_in_force=TimeInForce.FOK,
+            time_in_force=TimeInForce.DAY,
             tp_price=Price.from_str(f"{tp_price:.{self._precision}f}"),
             sl_trigger_price=Price.from_str(f"{sl_price:.{self._precision}f}"),
             tp_post_only=False,
@@ -253,6 +283,9 @@ class GapFadeStrategy(Strategy):
             sl_time_in_force=TimeInForce.GTC,
         )
         self.submit_order_list(bracket)
+        # Flip only after submit returns. If submit raises, the flag stays
+        # False and the next M5 bar may re-evaluate. If IB rejects the entry
+        # asynchronously, on_order_rejected resets the flag.
         self._entered_today = True
 
         self.log.info(
@@ -294,9 +327,19 @@ class GapFadeStrategy(Strategy):
         self.log.info(f"FILLED: {event.order_side.name} @ {event.last_px}")
 
     def on_position_closed(self, event) -> None:
+        if self._equity_tracker is not None:
+            try:
+                pnl_quote = float(event.realized_pnl.as_double())
+                fx = self._fx_rate_quote_to_base if self._quote_ccy != self.config.base_ccy else 1.0
+                self._equity_tracker.on_position_closed(pnl_quote, fx_to_base=fx)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(
             f"CLOSED: PnL={event.realized_pnl} duration={event.duration_ns // 60_000_000_000}min"
         )
 
     def on_order_rejected(self, event) -> None:
         self.log.error(f"REJECTED: {event.client_order_id} — {event.reason}")
+        # Allow re-entry if IB rejects the fade — otherwise a thin-book reject
+        # at London open silently blocks the whole session.
+        self._entered_today = False

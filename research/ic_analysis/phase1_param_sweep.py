@@ -138,7 +138,7 @@ def _compute_family_signal(
         - Donchian: (close - rolling_min) / range - 0.5  (centred at 0)
         - ADX: ADX(p)  (0-100 scale, not centred)
         - MACD: macd_hist(fast, slow, signal)  (absolute scale)
-        - RealizedVol: rolling std of log returns * sqrt(252)
+        - RealizedVol: rolling std of log returns, annualized via sqrt(BARS_PER_YEAR["D"])
     """
     try:
         if family == "RSI":
@@ -187,9 +187,11 @@ def _compute_family_signal(
             return macd_hist(close, fast, slow, sig)
 
         elif family == "RealizedVol":
+            from titan.research.metrics import BARS_PER_YEAR as _BPY
+
             w = params["window"]
             log_r = np.log(close).diff()
-            return log_r.rolling(w).std() * np.sqrt(252)
+            return log_r.rolling(w).std() * np.sqrt(_BPY["D"])
 
     except Exception as exc:
         logger.debug("Family %s params %s error: %s", family, params, exc)

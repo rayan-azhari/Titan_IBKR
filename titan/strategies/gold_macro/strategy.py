@@ -33,8 +33,10 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
+from titan.research.metrics import BARS_PER_YEAR, ewm_vol_last
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import StrategyEquityTracker, report_equity_and_check
 
 
 class GoldMacroConfig(StrategyConfig):
@@ -55,6 +57,8 @@ class GoldMacroConfig(StrategyConfig):
     stop_atr_mult: float = 2.0
     atr_period: int = 14
     warmup_bars: int = 252  # 1 year of daily bars
+    initial_equity: float = 10_000.0
+    base_ccy: str = "USD"
 
 
 class GoldMacroStrategy(Strategy):
@@ -85,12 +89,18 @@ class GoldMacroStrategy(Strategy):
         self._dollar_vals: list[float] = []
 
         self._prm_id: str = ""
+        self._equity_tracker: StrategyEquityTracker | None = None
 
     # -- Lifecycle -------------------------------------------------------------
 
     def on_start(self) -> None:
         self._prm_id = f"gold_macro_{self.config.ticker}"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         self._warmup()
         self.subscribe_bars(self.bar_type_d)
@@ -182,20 +192,14 @@ class GoldMacroStrategy(Strategy):
             if len(buf) > max_len:
                 del buf[: len(buf) - max_len]
 
-        # Portfolio risk
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # Portfolio risk: per-strategy tracker equity, explicit bar timestamp
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
+        if halted:
             self.log.warning("Portfolio kill switch -- flattening.")
             self.close_all_positions(self.instrument_id)
             return
 
-        portfolio_allocator.tick()
+        portfolio_allocator.tick(now=unix_nanos_to_dt(bar.ts_event).date())
 
         # Need enough context data
         if (
@@ -327,24 +331,24 @@ class GoldMacroStrategy(Strategy):
 
     def _compute_size(self, price: float) -> int:
         """Vol-targeted position sizing."""
-        if price <= 0 or len(self._gld_closes) < 20:
+        if price <= 0 or len(self._gld_closes) < 20 or self._equity_tracker is None:
             return 0
 
-        accounts = self.cache.accounts()
-        if not accounts:
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
             return 0
-        acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
-            return 0
-        equity = float(acct.balance_total(ccys[0]).as_double())
 
-        # EWMA realized vol
+        # EWMA realized vol. Daily bars -> 252 per year.
         rets = pd.Series(self._gld_closes[-60:]).pct_change().dropna()
         if len(rets) < 10:
             return 0
-        ewma_var = rets.ewm(span=self.config.vol_ewma_span, adjust=False).var().iloc[-1]
-        ann_vol = math.sqrt(max(0.0, ewma_var) * 252)
+        span = self.config.vol_ewma_span
+        rm_lambda = (span - 1.0) / (span + 1.0)
+        ann_vol = ewm_vol_last(
+            rets,
+            lam=rm_lambda,
+            periods_per_year=BARS_PER_YEAR["D"],
+        )
         if ann_vol <= 0:
             return 0
 
@@ -363,6 +367,12 @@ class GoldMacroStrategy(Strategy):
     def on_position_closed(self, event) -> None:
         self._entry_price = None
         self._stop_price = None
+        if self._equity_tracker is not None:
+            try:
+                pnl = float(event.realized_pnl.as_double())
+                self._equity_tracker.on_position_closed(pnl, fx_to_base=1.0)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(f"CLOSED: PnL={event.realized_pnl}")
 
     def on_order_rejected(self, event) -> None:

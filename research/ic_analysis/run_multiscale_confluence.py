@@ -18,7 +18,6 @@ Usage:
 import argparse
 import sys
 import time
-from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -102,13 +101,14 @@ def _backtest(
 
     # Daily aggregation (group by ~7 bars for equities H1)
     def _daily_sharpe(rets):
+        from titan.research.metrics import BARS_PER_YEAR as _BPY
+        from titan.research.metrics import sharpe as _sh
+
         daily = pd.Series(rets).groupby(np.arange(len(rets)) // 7).sum()
         daily = daily[daily != 0.0]
         if len(daily) < 20:
             return 0.0, 0.0, 0
-        m = daily.mean()
-        s = daily.std()
-        sharpe = float(m / s * sqrt(252)) if s > 1e-9 else 0.0
+        sharpe = float(_sh(daily, periods_per_year=_BPY["D"]))
         eq = (1 + daily).cumprod()
         dd = float(((eq - eq.cummax()) / eq.cummax()).min())
         trades = int(np.sum(np.abs(np.diff(pos[: len(rets)])) > 0))

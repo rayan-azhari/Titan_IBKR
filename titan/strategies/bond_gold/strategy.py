@@ -25,14 +25,22 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from nautilus_trader.config import StrategyConfig
+from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
+from titan.research.metrics import BARS_PER_YEAR, ewm_vol_last
 from titan.risk.portfolio_allocator import portfolio_allocator
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
+from titan.risk.strategy_equity import StrategyEquityTracker, report_equity_and_check
+from titan.utils.notification import (
+    notify_order_event,
+    notify_position_closed,
+    notify_signal,
+)
 
 
 class BondGoldConfig(StrategyConfig):
@@ -51,6 +59,14 @@ class BondGoldConfig(StrategyConfig):
     ewma_span: int = 20
     max_leverage: float = 1.5
     warmup_bars: int = 120
+    initial_equity: float = 10_000.0  # Seed capital in base ccy
+    base_ccy: str = "USD"
+    # Z-score normalisation window. Research WFO uses IS-frozen stats (504d
+    # per fold); live mirrors that with a rolling trailing window so the
+    # threshold behaviour stays aligned. The old expanding-window z-score
+    # (mean/std over *all* observed history) drifted further from backtest
+    # behaviour the longer the strategy ran.
+    zscore_window: int = 504
 
 
 class BondGoldStrategy(Strategy):
@@ -69,21 +85,81 @@ class BondGoldStrategy(Strategy):
         self._current_pos: int = 0  # 0=flat, 1=long
         self._bars_held: int = 0
         self._prm_id: str = ""
+        self._equity_tracker: StrategyEquityTracker | None = None
+        # Bar-synchronisation: IB does not guarantee GLD and IEF daily bars
+        # arrive in the same callback order. The signal requires both legs
+        # for the same calendar date before it fires — otherwise a GLD bar
+        # delivered before IEF would use a one-day-stale IEF close.
+        self._last_gld_date: pd.Timestamp | None = None
+        self._last_ief_date: pd.Timestamp | None = None
+        self._last_signal_date: pd.Timestamp | None = None
 
     def on_start(self) -> None:
         self._prm_id = f"bond_gold_{self.config.ticker_gld}"
-        portfolio_risk_manager.register_strategy(self._prm_id, 10_000.0)
+        portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+        self._equity_tracker = StrategyEquityTracker(
+            prm_id=self._prm_id,
+            initial_equity=self.config.initial_equity,
+            base_ccy=self.config.base_ccy,
+        )
 
         self._warmup()
         self.subscribe_bars(self.bar_type_d)
         self.subscribe_bars(self.signal_bar_type_d)
+        # Rehydrate state from broker so a container restart doesn't
+        # leave us thinking we're flat when IBKR shows we're long.
+        self._rehydrate_position_from_broker()
         self.log.info(
             f"BondGold started | IEF LB={self.config.lookback}"
             f" | threshold={self.config.threshold}"
             f" | hold={self.config.hold_days}d"
             f" | GLD bars={len(self._gld_closes)}"
             f" | IEF bars={len(self._ief_closes)}"
+            f" | rehydrated_pos={self._current_pos}"
         )
+
+    def _rehydrate_position_from_broker(self) -> None:
+        """If IBKR shows an open position **opened by THIS strategy instance**,
+        adopt it. The ``strategy_id`` filter is critical: when multiple
+        strategies trade the same instrument (e.g. two bond->equity variants
+        both targeting an S&P UCITS), we must not adopt the other strategy's
+        position. NautilusTrader tags positions with the opening strategy's
+        ID; ``cache.positions(strategy_id=self.id)`` returns only ours.
+
+        Sets ``_current_pos`` to 1 and ``_bars_held`` to ``hold_days`` (so
+        the strategy is immediately eligible to exit on the next bar where
+        ``z <= threshold`` — we don't know the precise entry date, but
+        treating it as fully-aged is the safe default).
+        """
+        try:
+            positions = self.cache.positions(
+                instrument_id=self.instrument_id,
+                strategy_id=self.id,
+            )
+            open_pos = [p for p in positions if not p.is_closed]
+            if not open_pos:
+                return
+            qty = sum(float(p.signed_qty) for p in open_pos)
+            if qty > 0:
+                self._current_pos = 1
+                self._bars_held = self.config.hold_days
+                self.log.info(
+                    f"REHYDRATED: existing LONG {qty} {self.instrument_id} "
+                    f"opened by THIS strategy ({self.id}); treating as past "
+                    f"min-hold (eligible to exit on next z<="
+                    f"{self.config.threshold} bar)."
+                )
+            elif qty < 0:
+                # bond_gold is long-only by design; a short here is a state
+                # corruption we should NOT silently adopt.
+                self.log.error(
+                    f"REHYDRATED: SHORT {qty} {self.instrument_id} found on "
+                    f"broker for strategy {self.id} but bond_gold is "
+                    f"long-only. Manual review needed; strategy state left "
+                    f"as flat."
+                )
+        except Exception as e:
+            self.log.warning(f"_rehydrate_position_from_broker failed: {e}")
 
     def _warmup(self) -> None:
         """Load daily parquet for warmup."""
@@ -108,11 +184,18 @@ class BondGoldStrategy(Strategy):
         self.log.info("BondGold stopped -- GLD flat.")
 
     def on_bar(self, bar: Bar) -> None:
+        bar_date = unix_nanos_to_dt(bar.ts_event).date()
+
         # Collect IEF bars for signal
         if bar.bar_type == self.signal_bar_type_d:
             self._ief_closes.append(float(bar.close))
             if len(self._ief_closes) > self.config.warmup_bars + 200:
                 self._ief_closes = self._ief_closes[-(self.config.warmup_bars + 200) :]
+            self._last_ief_date = bar_date
+            # IEF may deliver first or after GLD. If GLD already arrived for
+            # this same date, run the signal now.
+            if self._last_gld_date == bar_date:
+                self._run_signal(bar)
             return
 
         if bar.bar_type != self.bar_type_d:
@@ -122,39 +205,58 @@ class BondGoldStrategy(Strategy):
         self._gld_closes.append(px)
         if len(self._gld_closes) > self.config.warmup_bars + 200:
             self._gld_closes = self._gld_closes[-(self.config.warmup_bars + 200) :]
+        self._last_gld_date = bar_date
 
-        # Portfolio risk check
-        accounts = self.cache.accounts()
-        if accounts:
-            acct = accounts[0]
-            ccys = list(acct.balances().keys())
-            if ccys:
-                equity = float(acct.balance_total(ccys[0]).as_double())
-                portfolio_risk_manager.update(self._prm_id, equity)
-        if portfolio_risk_manager.halt_all:
+        # Only run signal when both legs have delivered for this date. If IEF
+        # is still pending, skip — the IEF on_bar will call _run_signal when
+        # it arrives. Previously, an out-of-order GLD-before-IEF callback
+        # would evaluate the signal with a one-day-stale IEF close.
+        if self._last_ief_date != bar_date:
+            return
+        self._run_signal(bar)
+
+    def _run_signal(self, bar: Bar) -> None:
+        """Run the bond-momentum signal once both legs have reported for the bar date."""
+        bar_date = unix_nanos_to_dt(bar.ts_event).date()
+        # Idempotent: if we already ran for this date (e.g. a re-emitted bar)
+        # skip to avoid double orders.
+        if self._last_signal_date == bar_date:
+            return
+        self._last_signal_date = bar_date
+
+        # Portfolio risk check (per-strategy equity + explicit timestamp)
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
+        if halted:
             self.log.warning("Portfolio kill switch -- flattening.")
             self.close_all_positions(self.instrument_id)
             return
 
-        portfolio_allocator.tick()
+        bar_ts = unix_nanos_to_dt(bar.ts_event)
+        portfolio_allocator.tick(now=bar_ts.date())
+        px = float(bar.close)
 
         # Need enough IEF bars for momentum
         if len(self._ief_closes) < self.config.lookback + 10:
             return
 
-        # Compute IEF momentum z-score
+        # Compute IEF momentum z-score on a rolling trailing window that
+        # matches the WFO IS length (zscore_window). The old code used an
+        # expanding window — as history grew, the live threshold behaviour
+        # drifted away from the fixed IS-length behaviour in the backtest.
         ief = self._ief_closes
         lb = self.config.lookback
         mom = math.log(ief[-1] / ief[-1 - lb])
 
-        # Expanding z-score
-        all_moms = []
-        for i in range(lb + 10, len(ief)):
-            all_moms.append(math.log(ief[i] / ief[i - lb]))
+        # Build momentum series for all bars we have enough history for,
+        # truncated to the trailing zscore_window.
+        first_valid = lb + 10
+        all_moms = [math.log(ief[i] / ief[i - lb]) for i in range(first_valid, len(ief))]
         if len(all_moms) < 20:
             return
-        mu = np.mean(all_moms)
-        sigma = np.std(all_moms)
+        window = min(self.config.zscore_window, len(all_moms))
+        window_moms = np.asarray(all_moms[-window:], dtype=float)
+        mu = float(window_moms.mean())
+        sigma = float(window_moms.std())
         if sigma < 1e-8:
             return
         z = (mom - mu) / sigma
@@ -189,6 +291,32 @@ class BondGoldStrategy(Strategy):
                     quantity=qty,
                     time_in_force=TimeInForce.DAY,
                 )
+                # Notify before submission so message lands even if IBKR rejects.
+                try:
+                    eq = (
+                        self._equity_tracker.current_equity()
+                        if self._equity_tracker is not None
+                        else None
+                    )
+                    notify_signal(
+                        strategy=self._prm_id,
+                        action="BUY",
+                        instrument=str(self.instrument_id),
+                        qty=int(units),
+                        price=px,
+                        notional=units * px,
+                        notional_ccy=self.config.base_ccy,
+                        equity=eq,
+                        equity_ccy=self.config.base_ccy,
+                        reason={
+                            "ief_z": z,
+                            "threshold": self.config.threshold,
+                            "lookback": self.config.lookback,
+                            "hold_days": self.config.hold_days,
+                        },
+                    )
+                except Exception as e:
+                    self.log.warning(f"notify_signal failed: {e}")
                 self.submit_order(order)
                 self._current_pos = 1
                 self._bars_held = 0
@@ -204,20 +332,23 @@ class BondGoldStrategy(Strategy):
         """Vol-targeted position sizing."""
         if len(self._gld_closes) < 20 or price <= 0:
             return 0
-        accounts = self.cache.accounts()
-        if not accounts:
+        if self._equity_tracker is None:
             return 0
-        acct = accounts[0]
-        ccys = list(acct.balances().keys())
-        if not ccys:
+        equity = self._equity_tracker.current_equity()
+        if equity <= 0:
             return 0
-        equity = float(acct.balance_total(ccys[0]).as_double())
 
         rets = pd.Series(self._gld_closes[-60:]).pct_change().dropna()
         if len(rets) < 10:
             return 0
-        ewma_var = rets.ewm(span=self.config.ewma_span, adjust=False).var().iloc[-1]
-        ann_vol = math.sqrt(max(0.0, ewma_var) * 252)
+        # Daily bars -> 252 per year.
+        span = self.config.ewma_span
+        rm_lambda = (span - 1.0) / (span + 1.0)
+        ann_vol = ewm_vol_last(
+            rets,
+            lam=rm_lambda,
+            periods_per_year=BARS_PER_YEAR["D"],
+        )
         if ann_vol <= 0:
             return 0
 
@@ -232,7 +363,92 @@ class BondGoldStrategy(Strategy):
     def on_position_closed(self, event) -> None:
         self._current_pos = 0
         self._bars_held = 0
+        pnl_usd = None
+        if self._equity_tracker is not None:
+            try:
+                # GLD/IWB/CSPX etc are USD-quoted -- no FX conversion needed.
+                pnl_usd = float(event.realized_pnl.as_double())
+                self._equity_tracker.on_position_closed(pnl_usd, fx_to_base=1.0)
+            except Exception as e:
+                self.log.warning(f"tracker on_position_closed failed: {e}")
         self.log.info(f"CLOSED: PnL={event.realized_pnl}")
+        try:
+            eq_after = (
+                self._equity_tracker.current_equity() if self._equity_tracker is not None else None
+            )
+            notify_position_closed(
+                strategy=self._prm_id,
+                instrument=str(self.instrument_id),
+                direction="LONG",  # bond_gold is long-only
+                realized_pnl=pnl_usd,
+                realized_pnl_ccy=self.config.base_ccy,
+                entry_price=getattr(event, "avg_px_open", None),
+                exit_price=getattr(event, "avg_px_close", None),
+                equity_after=eq_after,
+                initial_equity=self.config.initial_equity,
+                equity_ccy=self.config.base_ccy,
+            )
+        except Exception as e:
+            self.log.warning(f"notify_position_closed failed: {e}")
+
+    def on_order_accepted(self, event) -> None:
+        try:
+            order = self.cache.order(event.client_order_id)
+            side = str(getattr(order, "side", "?")).split(".")[-1] if order else "?"
+            qty = int(order.quantity) if order and order.quantity else 0
+            order_type = str(getattr(order, "order_type", "?")).split(".")[-1] if order else None
+            notify_order_event(
+                strategy=self._prm_id,
+                event_type="accepted",
+                instrument=str(self.instrument_id),
+                side=side,
+                qty=qty,
+                order_type=order_type,
+                venue_order_id=str(getattr(event, "venue_order_id", "") or ""),
+                client_order_id=str(getattr(event, "client_order_id", "") or ""),
+            )
+        except Exception as e:
+            self.log.warning(f"notify_order_event(accepted) failed: {e}")
+
+    def on_order_filled(self, event) -> None:
+        self.log.info(
+            f"FILLED: {event.client_order_id} "
+            f"@ {getattr(event, 'last_px', '?')} x {getattr(event, 'last_qty', '?')}"
+        )
+        try:
+            order = self.cache.order(event.client_order_id)
+            side = str(getattr(order, "side", "?")).split(".")[-1] if order else "?"
+            qty = int(getattr(event, "last_qty", 0) or 0) or (
+                int(order.quantity) if order and order.quantity else 0
+            )
+            fill_px = float(getattr(event, "last_px", 0) or 0) or None
+            notify_order_event(
+                strategy=self._prm_id,
+                event_type="filled",
+                instrument=str(self.instrument_id),
+                side=side,
+                qty=qty,
+                price=fill_px,
+                venue_order_id=str(getattr(event, "venue_order_id", "") or ""),
+                client_order_id=str(getattr(event, "client_order_id", "") or ""),
+            )
+        except Exception as e:
+            self.log.warning(f"notify_order_event(filled) failed: {e}")
 
     def on_order_rejected(self, event) -> None:
         self.log.error(f"REJECTED: {event.client_order_id} -- {event.reason}")
+        try:
+            order = self.cache.order(event.client_order_id)
+            side = str(getattr(order, "side", "?")).split(".")[-1] if order else "?"
+            qty = int(order.quantity) if order and order.quantity else 0
+            notify_order_event(
+                strategy=self._prm_id,
+                event_type="rejected",
+                instrument=str(self.instrument_id),
+                side=side,
+                qty=qty,
+                client_order_id=str(getattr(event, "client_order_id", "") or ""),
+                note=str(getattr(event, "reason", "") or ""),
+            )
+        except Exception as e:
+            self.log.warning(f"notify_order_event(rejected) failed: {e}")

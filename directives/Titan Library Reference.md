@@ -1,6 +1,6 @@
 # Titan Library Reference
 
-> Last updated: 2026-04-03
+> Last updated: 2026-04-21 (post portfolio-risk rewrite)
 
 **Package Name:** `titan-ibkr-algo`
 **Import Name:** `titan`
@@ -101,23 +101,61 @@ Quantitative models for market physics and trading costs.
 
 ---
 
-### 5. `titan.risk`
+### 5. `titan.risk` (**rewritten April 21, 2026**)
 
-Portfolio-level risk management shared by all live strategies.
+Portfolio-level risk management shared by all live strategies. The layer was
+rewritten on April 21, 2026 after an audit found four structural defects in
+the original implementation. Architecture details:
+`C:/Users/rayan/.claude/skills/titan-orchestrator/references/portfolio-risk-architecture.md`.
 
-- **`titan.risk.portfolio_risk_manager`**: Module-level singleton, auto-loads from `config/risk.toml [portfolio]`.
-  - `register_strategy(id, equity)` -- call in on_start()
-  - `update(id, equity)` -- call on every bar
-  - `update_vix(level)` -- feed VIX for regime scaling (optional)
-  - `update_atr_percentile(id, pct)` -- feed ATR percentile for regime scaling
-  - `halt_all` -- True when portfolio DD exceeds 15% (kill switch)
-  - `scale_factor` -- min(dd_scale, vol_scale, regime_scale) multiplier
-  - `check_correlation_regime()` -- pairwise correlation alerts (r > 0.85)
+- **`titan.risk.strategy_equity`** (**NEW**): Per-strategy equity tracking + deterministic base-currency resolution + FX unit conversion.
+  - `StrategyEquityTracker(prm_id, initial_equity, base_ccy="USD")` -- dataclass owned by each strategy. Accumulates realised P&L in base ccy on `on_position_closed`. Exposes `current_equity()`.
+  - `get_base_balance(account, base_ccy="USD")` -> `float | None` -- returns account balance in an explicit currency, or `None` if that ccy is absent. **Never** picks a non-deterministic `ccys[0]` fallback.
+  - `convert_notional_to_units(notional_base, price, quote_ccy, base_ccy, fx_rate_quote_to_base)` -> `int` -- FX-aware unit conversion. Raises `ValueError` if `quote_ccy != base_ccy` and no rate supplied.
+  - `split_fx_pair("AUD/JPY.IDEALPRO")` -> `("AUD", "JPY")` -- convenience parser.
+  - `report_equity_and_check(strategy, prm_id, bar, tracker=None)` -> `(equity, halted)` -- drop-in replacement for the legacy `balance_total` block. Feeds PRM with explicit `bar.ts_event` timestamp.
 
-- **`titan.risk.portfolio_allocator`**: Module-level singleton, auto-loads from `config/risk.toml [allocation]`.
-  - `tick()` -- call once per bar; triggers monthly rebalance when due
-  - `get_weight(id)` -- returns inverse-vol allocation weight for sizing
-  - `force_rebalance()` -- trigger immediate rebalance
+- **`titan.risk.portfolio_risk_manager`**: Module-level singleton, auto-loads from `config/risk.toml [portfolio]`. Timestamp-aware state.
+  - `register_strategy(id, initial_equity)` -- call in `on_start()`.
+  - `update(id, equity, ts)` -- call on every bar. `ts` accepts nanosecond-epoch int, `datetime`, or `pd.Timestamp`.
+  - `update_vix(level)` -- feed VIX for regime scaling (optional).
+  - `update_atr_percentile(id, pct)` -- feed ATR percentile for regime scaling.
+  - `halt_all` -- True when portfolio DD exceeds 15% (kill switch). **Persisted to `.tmp/portfolio_halt.json`.**
+  - `scale_factor` -- `min(dd_scale, vol_scale, regime_scale)` multiplier.
+  - `get_equity_histories()` -> `dict[str, pd.Series]` -- **public accessor**. Allocator and external code must use this instead of private `_strategies`.
+  - `get_summary()` -- full snapshot dict for monitoring / logging.
+  - `check_correlation_regime()` -- pairwise correlation alerts (r > 0.85). Runs automatically once per calendar date; callable manually.
+  - `reset_halt(operator="<name>")` -- clear halt flag. **Preserves pre-halt HWM.** Writes a cleared-halt record to `.tmp/portfolio_halt.json`.
+  - `reset_hwm(operator="<name>")` -- explicit HWM re-anchoring to current total equity.
+
+- **`titan.risk.portfolio_allocator`**: Module-level singleton, auto-loads from `config/risk.toml [allocation]`. Wall-clock gated.
+  - `tick(now: date | None = None)` -- call once per bar. Rebalances when `(now - last_rebalance) >= interval_days`. **Measures wall-clock calendar days, not tick count.** Pass `bar_ts.date()` from your strategy.
+  - `get_weight(id)` -> `float` -- inverse-vol allocation weight for sizing.
+  - `get_all_weights()` -> `dict[str, float]` -- full snapshot.
+  - `force_rebalance()` -- triggers rebalance on next `tick()` regardless of calendar distance.
+
+**Integration contract for every live strategy** (see `references/portfolio-risk-architecture.md` for the full template):
+
+```python
+# on_start
+portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+self._equity_tracker = StrategyEquityTracker(prm_id=self._prm_id,
+                                              initial_equity=self.config.initial_equity)
+
+# on_bar
+_, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
+if halted: self._flatten(); return
+portfolio_allocator.tick(now=unix_nanos_to_dt(bar.ts_event).date())
+
+# sizing
+units = convert_notional_to_units(notional, px, quote_ccy, "USD",
+                                   fx_rate_quote_to_base=fx_rate)
+
+# on_position_closed
+self._equity_tracker.on_position_closed(pnl_quote, fx_to_base=fx_rate)
+```
+
+**Regression coverage:** `tests/test_portfolio_risk_april2026_fixes.py` -- 13 tests covering per-strategy-equity honour, wall-clock gating, timestamp alignment, halt persistence, and FX unit conversion.
 
 ---
 

@@ -1,30 +1,71 @@
 # Directive: Ensemble Strategy Framework
 
-> Last updated: 2026-04-03
+> Last updated: 2026-04-21 (post portfolio-risk rewrite)
 
 ## Goal
 
 Run **multiple uncorrelated strategies** simultaneously under a shared portfolio risk layer
-(`PortfolioRiskManager`) to reduce single-strategy risk and improve capital efficiency.
+to reduce single-strategy risk and improve capital efficiency. As of April 21, 2026 that
+layer is the rewritten `PortfolioRiskManager` + `PortfolioAllocator` + per-strategy
+`StrategyEquityTracker`.
 
-## Current Strategy Status
+## Champion Portfolio (paper, April 2026 — post-remediation)
 
-| Strategy | Status | Instruments | PortfolioRM |
+Runner: `uv run python scripts/run_portfolio.py --strategies champion_portfolio`
+
+All Sharpe numbers below are the **post-audit** WFO results on the
+corrected harness (`titan.research.metrics` module, sanctuary window).
+Pre-audit values are struck through so the magnitude of the revision
+stays visible.
+
+| Strategy | Class | Instruments | WFO Sharpe (post-audit) |
 |---|---|---|---|
-| IC Equity Daily (mean-reversion) | Live | 7 US equities | Wired |
-| MTF Confluence (FX trend) | Live | EUR/USD | Wired |
-| ORB (intraday breakout) | Live | 7 US equities | Wired |
-| ETF Trend (daily trend) | Live | SPY, QQQ, IWB, TQQQ, EFA, GLD, DBC | Wired |
-| MR FX (intraday mean-reversion) | Live | EUR/USD M5 | Wired |
-| ML Classifier (PSKY, QQQ, EUR_USD) | Validation | Daily | Tier 2 deployment |
+| MR AUD/JPY | `MRAUDJPYStrategy` (vwap_anchor=24) | AUD/JPY.IDEALPRO H1 | ~~+2.10 OOS~~ **+0.910** OOS, CI (+0.478, +1.319) |
+| ~~MR AUD/USD~~ **DEPRECATED** | — | — | ~~+2.00 research~~ **+0.374** OOS, CI_lo = **-0.180** ([Deprecated Strategies](./Deprecated%20Strategies.md)) |
+| Bond-Equity IHYU→CSPX | `BondGoldStrategy` reused | CSPX.LSEETF D | ~~+1.64 OOS~~ **+0.895** OOS (HYG→IWB variant, CI (+0.396, +1.334)) |
 
-All 5 live strategies are connected to the shared `PortfolioRiskManager` singleton
-(April 2026). Portfolio-level drawdown kill switch (15%) and proportional scaling (10%)
-are active across all strategies.
+Both use the full `StrategyEquityTracker` integration -- they report real per-strategy
+equity (seed + realised P&L), not whole-account NLV. For AUD/JPY the FX unit conversion
+path (`convert_notional_to_units`) is live; for CSPX the trivial USD path is used.
+
+## Other Live Strategies
+
+| Strategy | Status | Instruments | Integration pattern |
+|---|---|---|---|
+| IC Equity Daily | Live | 7 US equities | Deterministic USD fallback |
+| MTF Confluence | Live (edge invalidated) | EUR/USD | Deterministic USD fallback |
+| ORB | Live | 7 US equities | Deterministic USD fallback + explicit FX conversion |
+| ETF Trend | Live | SPY, QQQ, IWB, TQQQ, EFA, GLD, DBC | Deterministic USD fallback |
+| MR FX | Live | EUR/USD M5 | Deterministic USD fallback |
+| GLD Confluence | Live-ready | GLD.ARCA H1 | Deterministic USD fallback |
+| Gold Macro | Live-ready | GLD.ARCA D | Deterministic USD fallback |
+| Bond->Gold | Live-ready | GLD (IEF signal) | Full tracker (via BondGoldStrategy) |
+| FX Carry AUD/JPY | Live-ready | AUD/JPY.IDEALPRO D | Deterministic USD fallback |
+| Pairs GLD/EFA | Live-ready | GLD + EFA D | Deterministic USD fallback |
+| Gap Fade | Live-ready | EUR/USD M5 | Deterministic USD fallback |
+| ML Classifier | Validation | Daily | Deterministic USD fallback |
+
+**Two integration patterns coexist during the migration:**
+
+1. **Full tracker** (`MRAUDJPYStrategy`, `BondGoldStrategy`): owns a
+   `StrategyEquityTracker`, reports per-strategy equity, accumulates realised P&L in
+   `on_position_closed`. This is the target state for every strategy.
+2. **Deterministic-USD fallback** (everyone else): uses
+   `get_base_balance(account, "USD")` + explicit `bar.ts_event` timestamp, but still
+   feeds whole-account NLV to the PRM. Safe in isolation (single strategy per process)
+   but defeats the inverse-vol allocator when multiple strategies run simultaneously.
+
+Migration from pattern (2) to pattern (1) is a ~one-day task per strategy tracked in
+the roadmap. The champion portfolio is entirely on pattern (1).
+
+Portfolio-level drawdown kill switch (15%) and proportional scaling (10%), plus the
+vol-target and regime-scale overlays, are active across all strategies regardless of
+integration pattern.
 
 > [!IMPORTANT]
-> See `directives/System Status and Roadmap.md` for the full system status, target
-> portfolio composition (8 buckets), and implementation roadmap (Tier 1-3).
+> See `directives/System Status and Roadmap.md` section 4 for full portfolio-risk details
+> and `C:/Users/rayan/.claude/skills/titan-orchestrator/references/portfolio-risk-architecture.md`
+> for the definitive architecture reference.
 
 ---
 

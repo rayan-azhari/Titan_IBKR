@@ -184,13 +184,16 @@ def monte_carlo_gate(daily_returns: pd.Series, n: int = 500, pct: float = 5.0) -
     if len(daily_returns) == 0 or daily_returns.std() == 0:
         return {"pct_sharpe": np.nan, "pct_profitable": 0.0, "pass": False}
     np.random.seed(42)
+    from titan.research.metrics import BARS_PER_YEAR as _BPY
+    from titan.research.metrics import sharpe as _sh
+
     vals = daily_returns.values.copy()
     sharpes = []
     for _ in range(n):
         np.random.shuffle(vals)
         s = pd.Series(vals)
-        mu, sd = s.mean(), s.std()
-        sharpes.append(mu / sd * np.sqrt(252) if sd > 0 else np.nan)
+        sh = float(_sh(s, periods_per_year=_BPY["D"]))
+        sharpes.append(sh if s.std() > 0 else np.nan)
     sharpes = [s for s in sharpes if not np.isnan(s)]
     if not sharpes:
         return {"pct_sharpe": np.nan, "pct_profitable": 0.0, "pass": False}
