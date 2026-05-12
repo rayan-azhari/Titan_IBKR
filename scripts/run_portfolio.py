@@ -660,6 +660,26 @@ STRATEGY_REGISTRY = {
             "initial_equity_ccy": "GBP",
         },
     },
+    "reconciliation": {
+        # Tier 1.1 of the operational-robustness framework: passive
+        # position-drift watchdog. Subscribes to AUD/JPY H1 (already in
+        # champion portfolio) and on each bar checks for orphan positions,
+        # cache-vs-portfolio sum drift, and stale open orders. Alerts via
+        # notify_health on any finding. See directives/Operational
+        # Robustness Framework 2026-05-12.md.
+        "trading": False,  # passive — excluded from auto-equity allocation
+        "module": "titan.strategies.reconciliation.strategy",
+        "config_cls": "ReconciliationConfig",
+        "strategy_cls": "ReconciliationStrategy",
+        "contracts": [
+            IBContract(secType="CASH", symbol="AUD", exchange="IDEALPRO", currency="JPY"),
+        ],
+        "config_kwargs": {
+            "bar_type": "AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL",
+            "stale_order_minutes": int(os.getenv("TITAN_STALE_ORDER_MINUTES", "15")),
+            "alert_cooldown_minutes": int(os.getenv("TITAN_RECON_COOLDOWN_MINUTES", "60")),
+        },
+    },
     "ic_equity_noc": {
         "module": "titan.strategies.ic_equity_daily.strategy",
         "config_cls": "ICEquityDailyConfig",
@@ -703,6 +723,7 @@ STRATEGY_SETS = {
         "bond_equity_ihyg_vusd",  # added 2026-05-01 (see project_ihyg_cspx_discovery.md)
         "bond_equity_ihyg_eimi",  # added 2026-05-01 (see project_ihyg_emim_discovery.md)
         "daily_summary",
+        "reconciliation",  # added 2026-05-12 (see Operational Robustness Framework)
     ],
 }
 
