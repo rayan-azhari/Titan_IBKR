@@ -250,7 +250,7 @@ def _summarise(label: str, df: pd.DataFrame) -> dict:
     cagr = float(eq[-1] ** (1.0 / n_years) - 1.0) if n_years > 0 else 0.0
     peak = np.maximum.accumulate(eq)
     dd = float(((eq - peak) / peak).min())
-    vol = float(np.std(stitched) * np.sqrt(252))
+    vol = float(np.std(stitched) * np.sqrt(BARS_PER_YEAR["D"]))
     pos_pct = float(np.mean([f["sharpe"] > 0 for f in fold_rows])) if fold_rows else 0.0
     calmar = cagr / abs(dd) if dd < -1e-9 else 0.0
     return {
