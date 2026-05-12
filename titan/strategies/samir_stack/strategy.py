@@ -125,6 +125,31 @@ class SamirStackConfig(StrategyConfig):
     vol_target_window: int = 30
     vol_target_max_scale: float = 2.0
 
+    # ── Phase 2: futures execution (CME MES Micro E-mini S&P 500) ────────
+    #
+    # When ``equity_is_future=True``, ``equity_instrument_id`` is treated
+    # as an MES futures contract rather than a margin-traded ETF. Sizing
+    # converts to integer contracts: ``contracts = floor(target_notional
+    # / (futures_multiplier * spx_price))``. v1 MVP requires the operator
+    # to set ``equity_instrument_id`` to the front-month contract and
+    # update it manually each quarterly roll (Mar/Jun/Sep/Dec). See the
+    # directive §13.7 for the rollover plan.
+    equity_is_future: bool = False
+    futures_multiplier: float = 5.0
+    """USD per index point. MES = $5; ES = $50."""
+
+    # ── Phase 3: bond rotation overlay (replaces single bond instrument) ──
+    #
+    # When ``bond_rotation_instruments`` is non-empty, the bond sleeve
+    # rotates between the listed instruments + cash by 60-day momentum
+    # (research/samir_stack/run_samir_improvements.py I2 overlay).
+    # Each entry must be an InstrumentId string with a paired bar_type
+    # in ``bond_rotation_bar_types``. The single ``bond_instrument_id``
+    # serves as the v1 fallback (still required for backwards compat).
+    bond_rotation_instruments: tuple[str, ...] = ()
+    bond_rotation_bar_types: tuple[str, ...] = ()
+    bond_rotation_lookback_days: int = 60
+
     # Operational
     initial_equity: float = 10_000.0
     base_ccy: str = "USD"
@@ -192,6 +217,29 @@ class SamirStackStrategy(Strategy):
         self._last_equity_price: float | None = None
         self._last_bond_price: float | None = None
 
+        # ── Phase 3: bond rotation overlay ────────────────────────────
+        # Parse the rotation list. Keep alongside the single bond_id for
+        # backwards compat — when the rotation list is empty, the strategy
+        # falls back to single-bond behaviour.
+        self.bond_rotation_ids: list[InstrumentId] = [
+            InstrumentId.from_str(s) for s in config.bond_rotation_instruments
+        ]
+        self.bond_rotation_bar_types: list[BarType] = [
+            BarType.from_str(s) for s in config.bond_rotation_bar_types
+        ]
+        if len(self.bond_rotation_ids) != len(self.bond_rotation_bar_types):
+            raise ValueError(
+                "samir_stack: bond_rotation_instruments and "
+                "bond_rotation_bar_types must have matching lengths "
+                f"(got {len(self.bond_rotation_ids)} vs {len(self.bond_rotation_bar_types)})"
+            )
+        # Per-bond close history for momentum lookup (key: instrument_id str).
+        # Bounded to lookback × 4 to stay tiny.
+        self._bond_closes: dict[str, list[float]] = {str(bid): [] for bid in self.bond_rotation_ids}
+        # Latest selected bond instrument (cache to avoid repeated rotation
+        # decisions inside one rebalance cycle).
+        self._selected_bond_id: InstrumentId | None = None
+
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def on_start(self) -> None:
@@ -222,6 +270,16 @@ class SamirStackStrategy(Strategy):
         # needs IEF bars even when bond_instrument_id is not IEF (e.g., IGLT).
         if self.bar_type_ief is not None and self.bar_type_ief != self.bar_type_bond:
             self.subscribe_bars(self.bar_type_ief)
+        # Phase 3: bond-rotation candidates. Subscribe to each rotation
+        # member that isn't already in the active set above (to avoid
+        # double-subscription with bond_id / IEF).
+        already_subbed = {str(self.bar_type_bond)}
+        if self.bar_type_ief is not None:
+            already_subbed.add(str(self.bar_type_ief))
+        for bt in self.bond_rotation_bar_types:
+            if str(bt) not in already_subbed:
+                self.subscribe_bars(bt)
+                already_subbed.add(str(bt))
 
         # Per-strategy equity tracker (project contract)
         self._equity_tracker = StrategyEquityTracker(
@@ -282,6 +340,18 @@ class SamirStackStrategy(Strategy):
             self._last_bond_price = close
         elif bt == self.bar_type_equity:
             self._last_equity_price = close
+
+        # Phase 3: buffer rotation-bond closes for the 60d momentum.
+        # We do this regardless of which bar arrived because rotation
+        # candidates may overlap the bond_id / IEF subscriptions above.
+        for bid, btype in zip(self.bond_rotation_ids, self.bond_rotation_bar_types, strict=True):
+            if bt == btype:
+                buf = self._bond_closes[str(bid)]
+                buf.append(close)
+                # Bound to lookback × 4 to keep memory tiny
+                cap = self.config.bond_rotation_lookback_days * 4
+                if len(buf) > cap:
+                    self._bond_closes[str(bid)] = buf[-cap:]
 
         self._buffers.trim(max_bars=1500)
 
@@ -509,6 +579,80 @@ class SamirStackStrategy(Strategy):
         except Exception as e:
             self.log.warning(f"_rehydrate_position_from_broker failed: {e}")
 
+    def _select_bond_instrument(self) -> InstrumentId | None:
+        """Phase 3 bond-rotation selector.
+
+        Mirrors ``research/samir_stack/run_samir_improvements.py::
+        bond_rotation_returns`` (the I2 overlay). Returns the InstrumentId
+        of the rotation candidate with the highest 60d log-momentum, or
+        ``None`` (=> hold cash) if all candidates have negative momentum.
+
+        Falls back to ``self.bond_id`` when rotation is disabled (empty
+        ``bond_rotation_instruments`` config).
+
+        Note: "cash" is represented as ``None`` and means the bond sleeve
+        is unallocated for that period. The caller's ``_rebalance_if_needed``
+        treats ``None`` as a flatten-bond signal.
+        """
+        if not self.bond_rotation_ids:
+            return self.bond_id  # backwards compat
+
+        lookback = self.config.bond_rotation_lookback_days
+        scores: list[tuple[InstrumentId, float]] = []
+        for bid in self.bond_rotation_ids:
+            closes = self._bond_closes.get(str(bid), [])
+            if len(closes) < lookback + 1:
+                continue  # warmup
+            try:
+                from math import log
+
+                mom = log(closes[-1] / closes[-1 - lookback])
+            except (ValueError, ZeroDivisionError):
+                continue
+            scores.append((bid, mom))
+
+        if not scores:
+            return None  # not enough history → cash
+        scores.sort(key=lambda kv: kv[1], reverse=True)
+        best_bid, best_mom = scores[0]
+        if best_mom <= 0:
+            return None  # all negative → cash
+        return best_bid
+
+    def _futures_target_contracts(self, notional_base: float, price: float | None) -> float | None:
+        """Phase 2 futures sizing: floor(notional / (multiplier × price)).
+
+        Always integer-rounded down. ``futures_multiplier × price`` is the
+        notional value of one contract in the future's quote currency.
+        Multi-currency case: callers convert ``notional_base`` to the
+        future's quote currency upstream and then this method just
+        produces the integer-contract count.
+
+        Returns None on missing / invalid price (caller skips the rebalance).
+        """
+        if price is None or price <= 0:
+            return None
+        if notional_base <= 0:
+            return 0.0
+        # Convert base→quote first (futures is a single-quote instrument)
+        if self.config.equity_quote_ccy != self.config.base_ccy:
+            # equity_quote_ccy → base: 1 quote = fx_rate base
+            # so base → quote: divide by fx_rate
+            fx = self.config.fx_rate_equity_quote_to_base
+            if fx <= 0:
+                return None
+            notional_quote = notional_base / fx
+        else:
+            notional_quote = notional_base
+        contract_notional = self.config.futures_multiplier * price
+        if contract_notional <= 0:
+            return None
+        # Floor to integer contracts. We accept the small under-target
+        # bias rather than over-leverage by rounding up.
+        from math import floor
+
+        return float(floor(notional_quote / contract_notional))
+
     def _rebalance_if_needed(
         self,
         target_eq_w: float,
@@ -535,25 +679,50 @@ class SamirStackStrategy(Strategy):
 
         # FX-aware unit conversion per project contract (see CLAUDE.md).
         # Each sleeve uses its own quote_ccy + fx_rate — never assume 1.0.
-        target_eq_units = self._compute_target_units(
-            target_eq_notional,
-            self._last_equity_price,
-            quote_ccy=self.config.equity_quote_ccy,
-            fx_rate=self.config.fx_rate_equity_quote_to_base,
-        )
-        target_bd_units = self._compute_target_units(
-            target_bd_notional,
-            self._last_bond_price,
-            quote_ccy=self.config.bond_quote_ccy,
-            fx_rate=self.config.fx_rate_bond_quote_to_base,
-        )
+        # Phase 2: when ``equity_is_future`` use integer-contract sizing.
+        if self.config.equity_is_future:
+            target_eq_units = self._futures_target_contracts(
+                target_eq_notional, self._last_equity_price
+            )
+        else:
+            target_eq_units = self._compute_target_units(
+                target_eq_notional,
+                self._last_equity_price,
+                quote_ccy=self.config.equity_quote_ccy,
+                fx_rate=self.config.fx_rate_equity_quote_to_base,
+            )
+
+        # Phase 3: pick the rotation winner before sizing the bond sleeve.
+        # selected==None means CASH for this period (flatten any non-cash
+        # bond positions, take no new bond exposure).
+        selected_bond_id = self._select_bond_instrument()
+        self._selected_bond_id = selected_bond_id
+        if selected_bond_id is None:
+            target_bd_units = 0.0
+            # Flatten any open bond positions across rotation candidates +
+            # the legacy bond_id slot.
+            self._flatten_unselected_bonds(keep=None)
+        else:
+            # If rotation chose something other than the legacy bond_id,
+            # flatten the un-selected ones first.
+            self._flatten_unselected_bonds(keep=selected_bond_id)
+            # Use the selected instrument's last price for sizing
+            sel_price = self._latest_price_for(selected_bond_id)
+            target_bd_units = self._compute_target_units(
+                target_bd_notional,
+                sel_price,
+                quote_ccy=self.config.bond_quote_ccy,
+                fx_rate=self.config.fx_rate_bond_quote_to_base,
+            )
 
         if target_eq_units is None or target_bd_units is None:
             self.log.warning("Missing price for sizing — skipping rebalance")
             return
 
         current_eq_units = self._current_units(self.equity_id)
-        current_bd_units = self._current_units(self.bond_id)
+        # Use the SELECTED bond for current-units (the one we'll trade).
+        bond_target_id = selected_bond_id if selected_bond_id is not None else self.bond_id
+        current_bd_units = self._current_units(bond_target_id)
 
         # Only rebalance if material delta
         eq_delta = target_eq_units - current_eq_units
@@ -567,7 +736,38 @@ class SamirStackStrategy(Strategy):
             or bd_pct_change > self.config.rebalance_min_pct_change
         ):
             self._submit_delta(self.equity_id, eq_delta)
-            self._submit_delta(self.bond_id, bd_delta)
+            self._submit_delta(bond_target_id, bd_delta)
+
+    def _flatten_unselected_bonds(self, *, keep: InstrumentId | None) -> None:
+        """Phase 3 helper: close any open bond positions other than ``keep``.
+
+        Iterates the rotation list (and the legacy ``self.bond_id`` slot
+        for backwards compat) and submits a flatten order for each one
+        the strategy is currently holding but rotation no longer wants.
+
+        ``keep=None`` means we're going to cash and want EVERYTHING
+        bond-side flat.
+        """
+        candidates = list(self.bond_rotation_ids)
+        if self.bond_id not in candidates:
+            candidates.append(self.bond_id)
+        for bid in candidates:
+            if keep is not None and bid == keep:
+                continue
+            current = self._current_units(bid)
+            if abs(current) > 0.5:
+                self._submit_delta(bid, -current)
+
+    def _latest_price_for(self, instrument_id: InstrumentId) -> float | None:
+        """Return the most-recent close in the rotation buffer for the
+        given instrument, or fall back to ``self._last_bond_price``
+        (which tracks the legacy ``self.bond_id``)."""
+        if instrument_id == self.bond_id:
+            return self._last_bond_price
+        buf = self._bond_closes.get(str(instrument_id))
+        if buf:
+            return buf[-1]
+        return None
 
     def _compute_target_units(
         self,
