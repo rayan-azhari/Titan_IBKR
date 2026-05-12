@@ -269,10 +269,17 @@ class BondGoldStrategy(Strategy):
             return
         z = (mom - mu) / sigma
 
-        # Position logic
-        positions = self.cache.positions(instrument_id=self.instrument_id)
-        position = positions[-1] if positions else None
-        is_long = position and position.is_open and str(position.side) == "LONG"
+        # Position logic. Sum signed_qty across ALL open positions for this
+        # instrument (including EXTERNAL-tagged ones from broker rehydration).
+        # The previous side-as-string check failed for EXTERNAL positions in
+        # NautilusTrader 1.221 because the Cython enum repr differs from the
+        # bare name, causing the strategy to ignore rehydrated inventory and
+        # double up on entry. See directives/Rehydration Bug 2026-05-11.md.
+        open_positions = [
+            p for p in self.cache.positions(instrument_id=self.instrument_id) if p.is_open
+        ]
+        net_qty = sum(float(p.signed_qty) for p in open_positions)
+        is_long = net_qty > 0
 
         if is_long:
             self._bars_held += 1
