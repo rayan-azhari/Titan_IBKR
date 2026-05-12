@@ -175,6 +175,14 @@ holdout. Report rotation churn / flip win-rate / 2022 cum return.
 
 If rotation fails the gate, **the bond sleeve stays static** in Phase 5.
 
+**Phase 3 OUTCOME (2026-05-13):** REJECTED. G1, G2, G4 passed but G3
+(churn) failed at 22.94 flips/year — more than 5× the 4/year ceiling.
+Lookback sensitivity {30d, 60d, 90d, 120d, 180d, 252d} confirms the
+failure is structural (IGLT/IGLS are too correlated for momentum
+rotation to be operationally tractable). Bond sleeve stays static in
+Phase 5; cell count reduced 180 → 120. Full analysis in
+`.tmp/reports/samir_stack/phase3_bond_rotation_report.md`.
+
 ### Phase 4 — Futures engine on 40/60, isolated test (1 day)
 
 **Closes A3 properly.**
@@ -199,11 +207,12 @@ Integer-contract sizing modelled honestly for futures at small NAV.
 | `equity_weight` | 0.20, 0.30, 0.40, 0.50, 0.60 |
 | `L_max` | 2, 3, 4 |
 | `equity_engine` | synthetic_3x, futures_fixed |
-| `bond_sleeve` | static_IEF, static_IGLT, rotation_IGLT_IGLS |
+| `bond_sleeve` | static_IEF, static_IGLT |
 | `capitulation` | on, off |
 
-Total: **5 × 3 × 2 × 3 × 2 = 180 cells** (reduced from 240 after dropping
-USD rotation per §0(2)).
+Total: **5 × 3 × 2 × 2 × 2 = 120 cells** (reduced from 180 after
+Phase 3 rejected the IGLT/IGLS rotation on the churn gate — see
+`.tmp/reports/samir_stack/phase3_bond_rotation_report.md`).
 
 Each cell evaluated with:
 - Anchored WFO (504 IS / 252 OOS / 252 step), bootstrap-Sharpe CI (n=2000)
