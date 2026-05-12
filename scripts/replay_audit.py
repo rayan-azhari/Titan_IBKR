@@ -51,7 +51,6 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import math
 import os
 import sys
 import threading
@@ -60,7 +59,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from ibapi.client import EClient
 from ibapi.contract import Contract
@@ -70,6 +68,21 @@ from ibapi.wrapper import EWrapper
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Decision primitives are shared with the reconciliation watchdog (T2.1)
+# so the two operational checks can never silently disagree on what the
+# strategy "should" have done.
+from titan.utils.bond_gold_decisions import (  # noqa: E402
+    LIVE_CONFIGS,
+    BondGoldDecisionConfig,
+    compute_z_score,
+    expected_action,
+)
+
+# Re-exported names for backward compat with tests that import from this
+# module directly. New callers should prefer ``titan.utils.bond_gold_decisions``.
+StrategyConfig = BondGoldDecisionConfig
+CONFIGS = LIVE_CONFIGS
+
 DATA_DIR = PROJECT_ROOT / "data"
 REPORTS_DIR = PROJECT_ROOT / ".tmp" / "reports" / "replay_audit"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -77,106 +90,6 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 IBKR_HOST = os.getenv("IBKR_HOST_HOST", "127.0.0.1")
 IBKR_PORT = int(os.getenv("IBKR_PORT_HOST", "4004"))
 CLIENT_ID = 94  # distinct from strategy=7, kill=98, cspx=99, orphans=97, snap=96, audit=95
-
-
-# ── Strategy configs (mirrors STRATEGY_REGISTRY in scripts/run_portfolio.py) ──
-#
-# Each entry must match the live config exactly. If the live config
-# changes, this dict must change too — kept in lockstep by structural
-# review (same pattern as the reconciliation test models).
-
-
-@dataclass
-class StrategyConfig:
-    name: str
-    trade_symbol: str  # e.g. "VUSD" — what we trade and audit against IBKR fills
-    signal_ticker: str  # e.g. "IHYG" — parquet basename for the signal series
-    lookback: int  # signal momentum lookback in days
-    threshold: float
-    hold_days: int
-    zscore_window: int = 504
-
-
-CONFIGS: dict[str, StrategyConfig] = {
-    "bond_equity_ihyu_cspx": StrategyConfig(
-        name="bond_equity_ihyu_cspx",
-        trade_symbol="CSPX",
-        signal_ticker="IHYU",
-        lookback=10,
-        threshold=0.50,
-        hold_days=10,
-    ),
-    "bond_equity_ihyg_vusd": StrategyConfig(
-        name="bond_equity_ihyg_vusd",
-        trade_symbol="VUSD",
-        signal_ticker="IHYG",
-        lookback=5,
-        threshold=0.25,
-        hold_days=5,
-    ),
-    "bond_equity_ihyg_eimi": StrategyConfig(
-        name="bond_equity_ihyg_eimi",
-        trade_symbol="EIMI",
-        signal_ticker="IHYG",
-        lookback=5,
-        threshold=0.25,
-        hold_days=5,
-    ),
-}
-
-
-# ── Decision logic — mirrors BondGoldStrategy._run_signal ─────────────
-
-
-def compute_z_score(
-    closes: list[float],
-    *,
-    lookback: int,
-    zscore_window: int,
-) -> float | None:
-    """Replicates the z-score computation in BondGoldStrategy._run_signal.
-
-    Returns the z-score of the last bar's lookback momentum, normalised
-    on a trailing zscore_window of historical momentums. None if
-    insufficient bars.
-    """
-    if len(closes) < lookback + 10:
-        return None
-    mom = math.log(closes[-1] / closes[-1 - lookback])
-    first_valid = lookback + 10
-    all_moms = [math.log(closes[i] / closes[i - lookback]) for i in range(first_valid, len(closes))]
-    if len(all_moms) < 20:
-        return None
-    window = min(zscore_window, len(all_moms))
-    window_moms = np.asarray(all_moms[-window:], dtype=float)
-    mu = float(window_moms.mean())
-    sigma = float(window_moms.std())
-    if sigma < 1e-8:
-        return None
-    return (mom - mu) / sigma
-
-
-def expected_action(
-    z: float,
-    *,
-    is_long: bool,
-    bars_held: int,
-    threshold: float,
-    hold_days: int,
-) -> str:
-    """Mirrors the entry / exit branch in BondGoldStrategy._run_signal.
-
-    Returns ``"entry"``, ``"exit"``, or ``"hold"``.
-    Post-fix logic: ``is_long`` derived from ``signed_qty > 0``, not
-    ``str(position.side)``.
-    """
-    # Exit: long, past min-hold, z drops below threshold
-    if is_long and bars_held >= hold_days and z <= threshold:
-        return "exit"
-    # Entry: not long, z above threshold
-    if not is_long and z > threshold:
-        return "entry"
-    return "hold"
 
 
 # ── IBKR fill fetch ───────────────────────────────────────────────────

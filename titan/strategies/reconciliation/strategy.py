@@ -33,6 +33,20 @@ runs a battery of cheap drift checks against the in-process NT cache:
        and broker accounting glitches. The first sample seeds the
        baseline (no alert).
 
+  D5.  **Shadow-decision divergence (Tier 2.1).** For each
+       bond_gold-class strategy in the portfolio, computes the
+       *expected* action (entry/exit/hold) by running the shared
+       decision primitives in ``titan.utils.bond_gold_decisions`` against
+       the latest signal-instrument parquet, then compares to the
+       observed cache state of the trade instrument. Catches:
+         - Strategy was supposed to be long but cache is flat
+           (missed entry, broker rejection, race condition)
+         - Strategy was supposed to be flat but cache shows a long
+           position (May 11 doubling pattern, late exit)
+       Flagged only as ``[D5]`` warnings — does not gate the alert
+       cooldown (so a persistent shadow divergence still pages once
+       per ``alert_cooldown_minutes``).
+
 Doesn't trade. Doesn't subscribe to anything the trading strategies
 aren't already using. Cost on the message-bus is one cache scan per H1
 bar.
@@ -78,6 +92,12 @@ class ReconciliationConfig(StrategyConfig):
     # generous (1-2%) to avoid false alarms from normal MTM swings on a
     # leveraged portfolio.
     nlv_drop_threshold_pct: float = 0.02
+    # D5 (Tier 2.1) shadow-decision check. Set False to disable when
+    # the bond_gold-class strategies aren't deployed (avoids spurious
+    # warnings from missing parquets). Auto-skips per-strategy when the
+    # signal-instrument parquet is missing or trade-instrument has no
+    # cache positions, so leaving True is generally safe.
+    shadow_check_enabled: bool = True
 
 
 class ReconciliationStrategy(Strategy):
@@ -171,6 +191,95 @@ class ReconciliationStrategy(Strategy):
             self.log.warning(f"Reconciliation: _sample_nlv failed: {e}")
             return {}
 
+    def _shadow_decision_check(self) -> list[str]:
+        """D5: For each live bond_gold-class strategy, compute the shadow
+        expected action and compare to the cache's actual position state.
+
+        Imports are local to the method so a missing optional import
+        (e.g. shared decision module renamed) doesn't break the watchdog
+        startup. Returns a list of finding strings (empty if all match).
+
+        Mismatch semantics for v1:
+          - Expected ENTRY but cache shows flat → "missed entry"
+          - Expected EXIT but cache shows long  → "missed exit"
+          - Expected HOLD-while-flat but cache shows long → "phantom long"
+          - Expected HOLD-while-long but cache shows flat → "phantom flat"
+
+        Notes:
+          - We can't reconstruct the strategy's internal ``bars_held``
+            from outside, so the v1 check assumes we're past min-hold.
+            This means it can't tell the difference between
+            "strategy is correctly waiting out hold_days" and
+            "strategy missed an exit". Concretely: after an entry, if
+            z drops below threshold WITHIN hold_days the live strategy
+            holds (correct) but D5 may say "missed exit". Tunable in
+            v2 by tracking last entry timestamp from fills.
+        """
+        findings: list[str] = []
+        try:
+            from pathlib import Path
+
+            from titan.utils.bond_gold_decisions import (
+                LIVE_CONFIGS,
+                compute_z_score,
+                load_signal_closes_from_parquet,
+            )
+        except Exception as e:
+            self.log.debug(f"Reconciliation D5: shared decision module unavailable: {e}")
+            return findings
+
+        # Project root: titan/strategies/reconciliation/strategy.py → up 3
+        data_dir = Path(__file__).resolve().parents[3] / "data"
+
+        for cfg in LIVE_CONFIGS.values():
+            try:
+                closes = load_signal_closes_from_parquet(cfg.signal_ticker, data_dir)
+                if closes is None:
+                    # Parquet missing — skip this strategy silently.
+                    continue
+                z = compute_z_score(
+                    closes,
+                    lookback=cfg.lookback,
+                    zscore_window=cfg.zscore_window,
+                )
+                if z is None:
+                    continue
+
+                # Look up cache state for the trade instrument. We don't
+                # have a direct InstrumentId, only the bare symbol. NT's
+                # cache.positions() iterates all positions; we filter by
+                # the symbol component.
+                trade_symbol = cfg.trade_symbol
+                open_pos_for_symbol: list = []
+                for p in self.cache.positions():
+                    if not p.is_open:
+                        continue
+                    if str(p.instrument_id).split(".", 1)[0] == trade_symbol:
+                        open_pos_for_symbol.append(p)
+                net_qty = sum(float(p.signed_qty) for p in open_pos_for_symbol)
+                cache_is_long = net_qty > 0
+
+                # Expected directional state given current z (independent
+                # of bars_held timing — see method docstring).
+                if z > cfg.threshold and not cache_is_long:
+                    findings.append(
+                        f"[D5 shadow {cfg.name}] z={z:+.3f} > threshold "
+                        f"{cfg.threshold} but cache is FLAT for {trade_symbol} — "
+                        f"possible missed entry or broker rejection"
+                    )
+                elif z <= cfg.threshold and cache_is_long:
+                    # Could be legitimate "still inside hold_days" — flag
+                    # but mark as informational by including 'or-hold'.
+                    findings.append(
+                        f"[D5 shadow {cfg.name}] z={z:+.3f} <= threshold "
+                        f"{cfg.threshold} but cache shows LONG {net_qty:+.0f} "
+                        f"{trade_symbol} (may be inside hold_days={cfg.hold_days})"
+                    )
+                # else: agreement (long-and-bullish, or flat-and-bearish)
+            except Exception as e:
+                self.log.warning(f"Reconciliation D5 ({cfg.name}) failed: {e}")
+        return findings
+
     # ── core reconciliation logic ─────────────────────────────────────
 
     def _reconcile(self, ts_event_ns: int) -> None:
@@ -252,6 +361,15 @@ class ReconciliationStrategy(Strategy):
         if nlv_now != self._last_nlv:
             self._last_nlv = nlv_now
             nlv_changed = True
+
+        # D5. Shadow-decision divergence (Tier 2.1). Compares cache state
+        # of each bond_gold-class strategy's trade instrument against
+        # the action the shared decision primitives would say is
+        # current. Misses (expected long but flat) and over-reaches
+        # (flat-expected but long) both fire warnings.
+        if self.config.shadow_check_enabled:
+            shadow_findings = self._shadow_decision_check()
+            findings.extend(shadow_findings)
 
         if not findings:
             if nlv_changed:
