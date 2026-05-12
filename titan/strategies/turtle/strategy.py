@@ -244,7 +244,7 @@ class TurtleStrategy(Strategy):
         positions = self.cache.positions(instrument_id=self.instrument_id)
         if positions and positions[-1].is_open:
             pos = positions[-1]
-            side = OrderSide.SELL if str(pos.side) == "LONG" else OrderSide.BUY
+            side = OrderSide.SELL if float(pos.signed_qty) > 0 else OrderSide.BUY
             qty = pos.quantity
             order = self.order_factory.market(
                 instrument_id=self.instrument_id,

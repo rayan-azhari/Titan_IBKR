@@ -166,7 +166,7 @@ class FXCarryStrategy(Strategy):
         position = positions[-1] if positions else None
         pos_dir = 0
         if position and position.is_open:
-            pos_dir = 1 if str(position.side) == "LONG" else -1
+            pos_dir = 1 if float(position.signed_qty) > 0 else -1
 
         # Signal logic:
         # carry_direction=+1: go long when price > SMA (trend confirms carry)

@@ -542,7 +542,7 @@ class ICGenericStrategy(Strategy):
         position = positions[-1] if positions else None
         current_dir = 0
         if position and position.is_open:
-            current_dir = 1 if str(position.side) == "LONG" else -1
+            current_dir = 1 if float(position.signed_qty) > 0 else -1
 
         # Determine new bias from composite z
         if z > threshold:

@@ -342,7 +342,7 @@ class MTFConfluenceStrategy(Strategy):
         position = positions[-1] if positions else None
         pos_label = "FLAT"
         if position and position.is_open:
-            pos_label = "LONG" if str(position.side) == "LONG" else "SHORT"
+            pos_label = "LONG" if float(position.signed_qty) > 0 else "SHORT"
 
         self._log_status_dashboard(
             price, score, threshold, exit_buffer, signal_label, pos_label, weights
@@ -356,7 +356,7 @@ class MTFConfluenceStrategy(Strategy):
 
         current_dir = 0
         if position and position.is_open:
-            current_dir = 1 if str(position.side) == "LONG" else -1
+            current_dir = 1 if float(position.signed_qty) > 0 else -1
 
         # Position inertia: skip if score hasn't changed direction and the
         # magnitude shift is < inertia threshold (reduces whipsaw turnover).
