@@ -26,7 +26,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-
 # ── Per-strategy config (mirrors STRATEGY_REGISTRY entries) ──────────
 
 
