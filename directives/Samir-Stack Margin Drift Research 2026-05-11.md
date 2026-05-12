@@ -578,16 +578,49 @@ The 6% target was the conservative-default; the 12% target was the maximum-CAGR 
 
 In the 20-year bootstrap visualisation ([plot_bootstrap_equity_curves.py](../research/samir_stack/plot_bootstrap_equity_curves.py)): median ending wealth ~38× starting capital, worst-of-5000 ~11×. Investor should expect roughly one -8% drawdown per decade and have a 1-in-6 chance of a -10% drawdown over any 10-year stretch — uncomfortable but tolerable for someone with conviction in the strategy.
 
-### 13.7 What's still on the table (not yet built)
+### 13.7 Live deployment status
+
+**Live strategy class shipped (May 12 2026):**
+[titan/strategies/samir_stack/strategy.py](../titan/strategies/samir_stack/strategy.py)
+upgraded from the prior 40/60 / leveraged-ETF defaults to the May 12
+champion. v1 MVP scope:
+
+  - `equity_weight=0.10`, `bond_weight=0.90`, `L_max=3.0` defaults
+  - 8% annualised vol-target scaler on the equity sleeve only
+    (`_vol_target_scale` method, 30-day window, max_scale=2.0,
+    lagged 1 bar via "scale-from-yesterday's-vol applied to today's
+    sizing" semantics)
+  - `_rehydrate_position_from_broker` follows Tier 1.1 patterns —
+    no `strategy_id=` filter (May 11 fix)
+  - All position aggregation uses `signed_qty` (post-May-11
+    bond_gold pattern)
+
+**NOT YET in `STRATEGY_REGISTRY`.** Promotion to live requires:
+
+1. **Phase 2: MES futures execution** (separate PR). v1 uses the
+   existing CSPX margin path. Switching the equity sleeve to MES
+   futures L=3 unlocks the documented carry-cost savings (~1.3%/yr)
+   but needs IBContract setup with quarterly rollover and integer-
+   contract sizing.
+2. **Phase 3: bond rotation overlay** (separate PR). v1 holds the
+   bond sleeve in a single `bond_instrument_id` (IEF). Adding the
+   IEF/HYG/cash rotation captures I2 from the research overlays.
+3. **Pre-flight**: paper-validate for at least 4 weeks against the
+   research backtest, run T2.5 replay-audit weekly during validation.
+
+### 13.8 What's still on the table (not yet built)
 
 - Capitulation overlay re-tune on the L=3 10/90 baseline (probably modest uplift)
 - Yield-curve recession gate added to regime score
 - Multi-strategy combination at portfolio level (Samir-Stack 70% + mr_audjpy 15% + bond_equity 15%) — likely the biggest real-money uplift remaining
+- Phase 2/3 above (MES futures, bond rotation)
 
-### 13.8 Files in the May 12 update
+### 13.9 Files in the May 12 update
 
 - [research/samir_stack/run_futures_sweep.py](../research/samir_stack/run_futures_sweep.py) — engine sweep + leverage sweep + constant-notional sweep
 - [research/samir_stack/run_overlay_sweep.py](../research/samir_stack/run_overlay_sweep.py) — capitulation × vol-target × baseline grid + vol-target sensitivity
 - [research/samir_stack/run_risk_of_ruin.py](../research/samir_stack/run_risk_of_ruin.py) — bootstrap drawdown projections on the L=3 10/90 baseline
 - [research/samir_stack/compare_vol_target_risk.py](../research/samir_stack/compare_vol_target_risk.py) — side-by-side risk distributions across target_vol levels
 - [research/samir_stack/margin_model.py](../research/samir_stack/margin_model.py) — extended with `futures_returns()` and `cfd_returns()` cost models
+- [titan/strategies/samir_stack/strategy.py](../titan/strategies/samir_stack/strategy.py) — live strategy upgraded to champion config (vol target + rehydration)
+- [tests/test_samir_stack_strategy.py](../tests/test_samir_stack_strategy.py) — pins config defaults + vol-target math + AST guards
