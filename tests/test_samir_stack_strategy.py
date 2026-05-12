@@ -41,13 +41,17 @@ def test_config_imports_cleanly():
 
 
 def _minimal_config(**overrides) -> SamirStackConfig:
-    """Build a config with only the required (no-default) fields filled in."""
+    """Build a config with only the required (no-default) fields filled in.
+
+    Uses MES futures-style symbols by default to match the current
+    champion config (MES + IGLT), but any test can override via kwargs.
+    """
     base = {
-        "equity_instrument_id": "CSPX.LSEETF",
-        "bond_instrument_id": "IEF.NASDAQ",
+        "equity_instrument_id": "MESM26.CME",
+        "bond_instrument_id": "IGLT.LSEETF",
         "signal_spy_id": "SPY.ARCA",
-        "bar_type_equity_d": "CSPX.LSEETF-1-DAY-LAST-EXTERNAL",
-        "bar_type_bond_d": "IEF.NASDAQ-1-DAY-LAST-EXTERNAL",
+        "bar_type_equity_d": "MESM26.CME-1-DAY-LAST-EXTERNAL",
+        "bar_type_bond_d": "IGLT.LSEETF-1-DAY-LAST-EXTERNAL",
         "bar_type_spy_d": "SPY.ARCA-1-DAY-LAST-EXTERNAL",
     }
     base.update(overrides)
@@ -278,14 +282,25 @@ def test_strategy_uses_signed_qty_for_position_aggregation():
 
 
 def test_default_equity_native_leverage_matches_champion_config():
-    """Phase 5 GBP-clean champion uses 3USL.LSEETF, a 3× SPY UCITS ETF.
-
-    The default ``equity_native_leverage`` must match: 3.0. Without
-    this, the live strategy would over-deploy by 3× at tier=1 and 1.5×
-    at tier=2 vs the backtest model.
+    """Current champion is MES futures + IGLT (no leveraged ETF).
+    ``equity_native_leverage`` must be 1.0 — the leverage comes from
+    the number of futures contracts held, not from any built-in
+    compounding of the instrument.
     """
     cfg = _minimal_config()
-    assert cfg.equity_native_leverage == 3.0
+    assert cfg.equity_native_leverage == 1.0
+
+
+def test_default_equity_is_future_matches_champion_config():
+    """Current champion uses MES futures, NOT a leveraged ETF.
+
+    The Phase 6 deployment switched from 3USL.LSEETF (3× daily-rebalanced
+    UCITS) to MES futures to avoid the L²-compounded vol drag of
+    daily-reset products. This default must reflect that choice.
+    """
+    cfg = _minimal_config()
+    assert cfg.equity_is_future is True
+    assert cfg.futures_multiplier == 5.0  # MES multiplier ($5/point)
 
 
 def test_on_bar_scales_target_eq_w_by_tier_over_native_leverage():
@@ -310,50 +325,136 @@ def test_on_bar_scales_target_eq_w_by_tier_over_native_leverage():
     )
 
 
-def test_tier_scaled_position_sizes_at_phase5_champion_config():
-    """Pure-function pin: at the Phase 5 champion config (equity_weight=0.40,
-    L_max=2, equity_native_leverage=3.0), confirm the implied position
-    fractions match the documented values in Strategy Guide §3.1."""
-    cfg = _minimal_config()  # uses Phase 5 GBP-clean defaults
-    # tier=1: 40% × 1/3 ≈ 13.33%
+def test_tier_scaled_target_notional_at_mes_futures_champion_config():
+    """Pure-function pin for the MES futures champion config.
+
+    With equity_native_leverage=1.0 the formula
+    ``equity_weight × (tier / native_leverage)`` simplifies to
+    ``equity_weight × tier`` — exactly the levered notional target
+    that the futures-sizing path floors into integer contracts.
+    """
+    cfg = _minimal_config()  # MES futures defaults
+    assert cfg.equity_native_leverage == 1.0  # precondition
+    # tier=1: 40% × 1 = 40% of NAV in target notional → 40% SPX
     expected_t1 = cfg.equity_weight * (1.0 / cfg.equity_native_leverage)
-    assert abs(expected_t1 - 0.4 / 3.0) < 1e-12
-    # tier=2: 40% × 2/3 ≈ 26.67%
-    expected_t2 = cfg.equity_weight * (2.0 / cfg.equity_native_leverage)
-    assert abs(expected_t2 - 0.8 / 3.0) < 1e-12
-    # Effective SPX exposure must equal equity_weight × tier
-    eff_spx_t1 = expected_t1 * cfg.equity_native_leverage  # 0.40 (matches tier 1)
-    eff_spx_t2 = expected_t2 * cfg.equity_native_leverage  # 0.80 (matches tier 2)
-    assert abs(eff_spx_t1 - 0.40) < 1e-12
-    assert abs(eff_spx_t2 - 0.80) < 1e-12
-
-
-def test_tier_scaling_with_1x_instrument_preserves_equity_weight():
-    """If the operator switches the equity instrument to a 1× ETF
-    (e.g. CSPX) by setting ``equity_native_leverage=1.0``, the sizing
-    falls back to the simple ``equity_weight × tier`` formulation —
-    no margin needed when L_max=2 since 40% × 2 = 80% ≤ 100%."""
-    cfg = _minimal_config(equity_native_leverage=1.0)
-    # tier=1: 40% × 1/1 = 40% in CSPX (1x SPY) → 40% SPX
-    expected_t1 = cfg.equity_weight * (1.0 / 1.0)
     assert abs(expected_t1 - 0.40) < 1e-12
-    # tier=2: 40% × 2/1 = 80% in CSPX (1x) → 80% SPX, still ≤ 100%
-    expected_t2 = cfg.equity_weight * (2.0 / 1.0)
+    # tier=2: 40% × 2 = 80% of NAV in target notional → 80% SPX
+    expected_t2 = cfg.equity_weight * (2.0 / cfg.equity_native_leverage)
     assert abs(expected_t2 - 0.80) < 1e-12
 
 
-def test_tier_sizing_cannot_exceed_one_at_phase5_config():
-    """Phase 5 champion at L_max=2, equity_weight=0.40, native_leverage=3
-    can never demand > 100% of NAV in the equity instrument. This is
-    the operational guarantee that no broker margin is needed."""
+def test_tier_scaling_with_3x_etf_instrument_holds_less():
+    """Inverse case: if the operator switches BACK to a 3× ETF (e.g.
+    3USL.LSEETF) by setting ``equity_native_leverage=3.0``, the
+    strategy must hold LESS of the instrument at each tier because
+    each unit carries native 3× leverage.
+
+    Phase 6 default is futures (native_leverage=1.0); this test pins
+    the alternative path so a future operator's ETF switch behaves
+    correctly.
+    """
+    cfg = _minimal_config(equity_native_leverage=3.0)
+    # tier=1: 40% × 1/3 ≈ 13.3% in 3USL → 40% SPX
+    expected_t1 = cfg.equity_weight * (1.0 / 3.0)
+    assert abs(expected_t1 - 0.4 / 3.0) < 1e-12
+    # tier=2: 40% × 2/3 ≈ 26.7% in 3USL → 80% SPX
+    expected_t2 = cfg.equity_weight * (2.0 / 3.0)
+    assert abs(expected_t2 - 0.8 / 3.0) < 1e-12
+
+
+def test_end_to_end_futures_sizing_tier_to_contracts():
+    """End-to-end check: at the champion config (ew=0.40, L_max=2,
+    native_lev=1, equity_is_future=True), the tier-scaled target
+    notional should produce sensible integer-contract counts at the
+    deployment NAV.
+
+    Pure-function test using ``futures_target_contracts_pure`` — verifies
+    the full pipeline:
+      tier → target_eq_w_scaled = ew × (tier / native_lev)
+      → target_notional = target_eq_w_scaled × NAV (GBP)
+      → contracts = floor(notional_usd / (multiplier × spx_price))
+
+    At £30k NAV (operational floor), GBPUSD=1.33 (fx=0.7519), MES
+    multiplier $5, SPX ~5500 → contract notional ~$27.5k. Expected:
+      tier 0: 0 contracts
+      tier 1: floor(£12k / 0.7519 = $16k / $27.5k) = 0 contracts
+              (chunky — the strategy is operationally constrained at
+              tier 1 at £30k NAV; this is documented in Strategy
+              Guide §3.1)
+      tier 2: floor(£24k / 0.7519 = $32k / $27.5k) = 1 contract
+    """
     cfg = _minimal_config()
-    max_position_pct = cfg.equity_weight * (cfg.L_max / cfg.equity_native_leverage)
-    assert max_position_pct <= 1.0, (
-        f"Phase 5 config would require {max_position_pct * 100:.1f}% of "
-        f"NAV in the equity instrument at max tier — exceeds 100% (would "
-        f"need broker margin). At equity_weight={cfg.equity_weight}, "
-        f"L_max={cfg.L_max}, native_leverage={cfg.equity_native_leverage}."
+    nav_gbp = 30_000.0
+    fx_quote_to_base = 0.7519  # 1 USD = 0.7519 GBP
+    multiplier = cfg.futures_multiplier
+    spx_price = 5500.0
+
+    for tier, expected_contracts in [(0.0, 0.0), (1.0, 0.0), (2.0, 1.0)]:
+        target_eq_w_scaled = cfg.equity_weight * (tier / cfg.equity_native_leverage)
+        target_notional_gbp = target_eq_w_scaled * nav_gbp
+        contracts = futures_target_contracts_pure(
+            target_notional_gbp,
+            spx_price,
+            multiplier=multiplier,
+            fx_rate=fx_quote_to_base,
+            quote_ccy="USD",
+            base_ccy="GBP",
+        )
+        assert contracts == expected_contracts, (
+            f"tier={tier}: expected {expected_contracts} contracts, got {contracts}. "
+            f"target_eq_w_scaled={target_eq_w_scaled}, target_notional_gbp={target_notional_gbp}"
+        )
+
+
+def test_end_to_end_futures_sizing_at_larger_nav_resolves_chunkiness():
+    """At £100k NAV (well above the £30k operational floor), tier 1
+    should produce ≥1 contract and tier 2 should produce ≥2 contracts —
+    chunkiness becomes ignorable.
+    """
+    cfg = _minimal_config()
+    nav_gbp = 100_000.0
+    fx_quote_to_base = 0.7519
+    multiplier = cfg.futures_multiplier
+    spx_price = 5500.0
+
+    # tier 1: 0.40 × £100k = £40k = $53.2k → floor($53.2k / $27.5k) = 1
+    target_eq_w_t1 = cfg.equity_weight * (1.0 / cfg.equity_native_leverage)
+    contracts_t1 = futures_target_contracts_pure(
+        target_eq_w_t1 * nav_gbp,
+        spx_price,
+        multiplier=multiplier,
+        fx_rate=fx_quote_to_base,
+        quote_ccy="USD",
+        base_ccy="GBP",
     )
+    assert contracts_t1 >= 1, f"tier 1 at £100k should fill ≥1 contract; got {contracts_t1}"
+
+    # tier 2: 0.80 × £100k = £80k = $106.4k → floor($106.4k / $27.5k) = 3
+    target_eq_w_t2 = cfg.equity_weight * (2.0 / cfg.equity_native_leverage)
+    contracts_t2 = futures_target_contracts_pure(
+        target_eq_w_t2 * nav_gbp,
+        spx_price,
+        multiplier=multiplier,
+        fx_rate=fx_quote_to_base,
+        quote_ccy="USD",
+        base_ccy="GBP",
+    )
+    assert contracts_t2 >= 2, f"tier 2 at £100k should fill ≥2 contracts; got {contracts_t2}"
+
+
+def test_max_target_notional_at_mes_futures_champion_is_well_below_natural_margin_cap():
+    """With MES futures at the champion config (equity_weight=0.40,
+    L_max=2), the max target notional is 80% of NAV — well below the
+    natural ~16:1 cash collateral cap of MES (6% IM → ~16× notional
+    per $1 cash). The strategy operates comfortably without margin
+    borrowing on top of futures.
+    """
+    cfg = _minimal_config()
+    max_target_notional_pct = cfg.equity_weight * cfg.L_max  # native_leverage=1
+    assert max_target_notional_pct == 0.80
+    # IM required at L_max for 6% IM: 0.80 × 0.06 = 4.8% of NAV.
+    im_pct = max_target_notional_pct * 0.06
+    assert im_pct < 0.20, "IM should sit at < 20% of NAV; lots of headroom"
 
 
 # ── Vol-target wiring ────────────────────────────────────────────────
@@ -374,18 +475,39 @@ def test_rebalance_method_applies_vol_scale_to_equity_only():
 # ── Phase 2: MES futures execution ───────────────────────────────────
 
 
-def test_phase2_futures_disabled_by_default():
-    """``equity_is_future`` defaults to False — existing CSPX margin path
-    is preserved unless operator explicitly opts in."""
+def test_futures_enabled_by_default_post_phase6():
+    """``equity_is_future`` defaults to True in the post-Phase-6 config.
+
+    The strategy switched from 3USL.LSEETF (Phase 6a) to MES futures
+    (Phase 6 post-fix) to avoid daily-rebalanced leveraged-ETF vol
+    drag. Operators wanting to switch back to an ETF must explicitly
+    set ``equity_is_future=False`` and update equity_native_leverage.
+    """
     cfg = _minimal_config()
-    assert cfg.equity_is_future is False
+    assert cfg.equity_is_future is True
     assert cfg.futures_multiplier == 5.0  # MES default
 
 
-def test_phase2_futures_config_accepts_explicit_opt_in():
-    cfg = _minimal_config(equity_is_future=True, futures_multiplier=50.0)
-    assert cfg.equity_is_future is True
+def test_futures_config_accepts_es_multiplier_opt_in():
+    """For larger NAVs the operator may switch to ES futures
+    (50× multiplier vs MES's 5×)."""
+    cfg = _minimal_config(futures_multiplier=50.0)
+    assert cfg.equity_is_future is True  # still futures
     assert cfg.futures_multiplier == 50.0  # ES (full-size E-mini)
+
+
+def test_etf_path_remains_supported_via_opt_out():
+    """Operators wanting the ETF execution path (e.g. for small NAV
+    where futures chunkiness is operationally painful) can set
+    ``equity_is_future=False`` and update equity_native_leverage."""
+    cfg = _minimal_config(
+        equity_is_future=False,
+        equity_native_leverage=3.0,
+        equity_instrument_id="3USL.LSEETF",
+        bar_type_equity_d="3USL.LSEETF-1-DAY-LAST-EXTERNAL",
+    )
+    assert cfg.equity_is_future is False
+    assert cfg.equity_native_leverage == 3.0
 
 
 def futures_target_contracts_pure(

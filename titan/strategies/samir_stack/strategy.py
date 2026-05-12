@@ -10,15 +10,18 @@ in bond rotation and EFA overlay; dividend double-count in futures
 engine); see ``directives/Samir-Stack Remediation Plan 2026-05-12.md``.
 After Phases 1-5 of the remediation plan, this strategy is rebuilt on:
 
-Live champion config (Phase 5 GBP-clean variant — 2026-05-13):
-  Equity sleeve: 3USL.LSEETF (synthetic 3x SPY UCITS, daily-rebalanced).
-                 Validated against UPRO (real 3x SPY): daily-return
-                 correlation 0.9983 over 16.8y, CAGR diff +1.21pp.
+Live champion config (Phase 5 best futures+IGLT cell — 2026-05-13):
+  Equity sleeve: MES futures (CME Micro E-mini S&P 500, $5/point).
+                 The equity sleeve's leverage comes from the futures
+                 contract itself (notional / posted IM ≈ 16:1 max),
+                 NOT from a daily-rebalanced leveraged ETF wrapper
+                 (the prior 3USL deployment) — avoids the L²-compounded
+                 vol drag of daily-reset products.
   Bond sleeve:   IGLT.LSEETF (UK 7-10y gilts, GBP-native — no FX risk
                  on the defensive ballast for a GBP-base account).
   Capital split: 40% equity / 60% bond.
-  L_max:         2.0 (tiers 1, 2 only — vol drag at L=3 erodes Calmar
-                 more than the marginal upside from extra leverage).
+  L_max:         2.0 (tiers 1, 2 only — Phase 5 found L=2 dominates
+                 L=3 and L=4 on Calmar CI lo at this sleeve mix).
   Tier thresholds: (0.30, 0.55) — regime score ≥ 0.30 enters tier 1;
                  ≥ 0.55 enters tier 2.
   Vol target:    DISABLED. Phase 5 found uniform Calmar-CI-lo
@@ -30,16 +33,21 @@ Live champion config (Phase 5 GBP-clean variant — 2026-05-13):
                  capitulation=on, but the overlay is not yet wired into
                  the live strategy class (Phase 6b follow-up). This
                  deployment is a strict subset of the Phase 5 cell;
-                 expected Sharpe is ~0.91 vs the with-cap 0.96.
+                 expected Sharpe is ~0.88 vs the with-cap 0.94.
 
-Phase 5 validation summary (with cap on, 18.9y backtest 2007-2026):
-  WFO stitched Sharpe 0.961 | CI lo 0.428
-  Calmar CI lo 0.148 | Sanctuary Sharpe 0.80
+Phase 5 validation summary (futures + IGLT + cap=on, 14y 2010-2026):
+  WFO stitched Sharpe 0.940 | CI lo 0.407
+  Calmar CI lo 0.137 | Sanctuary Sharpe 1.02
+  2022 cum return -22.1%
   MC P(MaxDD>50%) < 1% (RoR-acceptable per Samir framework)
 
-This config replaces the prior 10/90 + 8% vol-target "champion" which
-the audit found delivered honest Sharpe 0.64 / CAGR 5% (not the
-claimed 2.28 / 20%).
+This config replaces the prior 3USL.LSEETF deployment (Phase 6a). The
+3USL daily-rebalanced UCITS has volatility-decay compounding that
+makes it operationally undesirable as a long-term leverage vehicle.
+MES futures provide the same target SPX exposure (40% × tier × NAV)
+without the daily-reset drag, at the cost of quarterly contract
+rollover (operator manual update of equity_instrument_id every 3
+months).
 
 Execution flow:
 1. On each daily bar of SPY (the regime-driving signal):
@@ -129,23 +137,25 @@ class SamirStackConfig(StrategyConfig):
     hysteresis_buffer: float = 0.05
     re_entry_quiet_bars: int = 20
 
-    # Native leverage of the equity-trading instrument. For a 3x ETF
-    # (3USL.LSEETF, UPRO) this is 3.0; for a 2x ETF (SSO) this is 2.0;
-    # for a 1x ETF (CSPX, SPY) this is 1.0.
+    # Native leverage of the equity-trading instrument.
     #
-    # The strategy holds ``equity_weight × (target_tier / equity_native_leverage)``
-    # of NAV in the equity instrument. This makes the LIVE effective
-    # SPX exposure match the BACKTEST model:
+    # For MES futures (the current default) this is 1.0 — the leverage
+    # comes from the number of contracts held, not from any built-in
+    # compounding of the instrument. The strategy targets a notional
+    # exposure of ``equity_weight × target_tier × NAV`` and the
+    # futures-sizing path translates that into an integer-contract
+    # count (target_notional / (multiplier × spx_price)).
     #
-    #   tier=1: live holds 40%/3 ≈ 13.3% of NAV in 3USL → 40% effective SPX
-    #   tier=2: live holds 40%×2/3 ≈ 26.7% of NAV in 3USL → 80% effective SPX
+    # For a leveraged ETF wrapper (e.g. 3USL = 3× SPY UCITS) set this
+    # to 3.0; for SSO (2× SPY) set 2.0; for CSPX/SPY (1×) set 1.0.
+    # With a leveraged ETF the strategy holds LESS of the instrument
+    # at lower tiers because each unit already carries native leverage.
     #
-    # Without this scaling the live class would over-deploy: holding 40%
-    # of NAV in 3USL gives 120% effective SPX regardless of tier — the
-    # pre-audit behaviour that was inconsistent with the L_max=N research
-    # model. See ``Samir-Stack Remediation Plan 2026-05-12.md`` §6 for
-    # the live-vs-research mismatch this fixes.
-    equity_native_leverage: float = 3.0
+    # The single formula ``equity_weight × (target_tier /
+    # equity_native_leverage)`` covers both cases. For futures
+    # (native_leverage=1) the formula simplifies to ``equity_weight ×
+    # target_tier`` which is exactly the levered notional target.
+    equity_native_leverage: float = 1.0
 
     # DD circuit breaker
     dd_throttle: float = 0.10
@@ -164,16 +174,23 @@ class SamirStackConfig(StrategyConfig):
     vol_target_window: int = 30
     vol_target_max_scale: float = 2.0
 
-    # ── Phase 2: futures execution (CME MES Micro E-mini S&P 500) ────────
+    # ── Futures execution (CME MES Micro E-mini S&P 500) ────────────────
     #
-    # When ``equity_is_future=True``, ``equity_instrument_id`` is treated
-    # as an MES futures contract rather than a margin-traded ETF. Sizing
-    # converts to integer contracts: ``contracts = floor(target_notional
-    # / (futures_multiplier * spx_price))``. v1 MVP requires the operator
-    # to set ``equity_instrument_id`` to the front-month contract and
-    # update it manually each quarterly roll (Mar/Jun/Sep/Dec). See the
-    # directive §13.7 for the rollover plan.
-    equity_is_future: bool = False
+    # When ``equity_is_future=True`` (the current default), the
+    # ``equity_instrument_id`` is a CME futures contract symbol like
+    # ``MESM26.CME`` (June 2026 front-month). Sizing converts the
+    # target notional to integer contracts:
+    #   contracts = floor(target_notional / (multiplier × spx_price))
+    # MUST be updated manually each quarterly roll (Mar/Jun/Sep/Dec —
+    # H/M/U/Z month codes). See Samir-Stack Strategy Guide §8.3 for
+    # the roll procedure.
+    #
+    # Set to False to use the ETF path (e.g. 3USL.LSEETF or CSPX.LSEETF).
+    # Most parameters carry over identically; only the sizing differs:
+    # ETF path holds equity_weight × tier / native_leverage of NAV in
+    # shares; futures path holds integer contracts whose notional
+    # equals equity_weight × tier × NAV (with equity_native_leverage=1).
+    equity_is_future: bool = True
     futures_multiplier: float = 5.0
     """USD per index point. MES = $5; ES = $50."""
 

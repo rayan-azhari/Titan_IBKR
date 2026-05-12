@@ -1,10 +1,26 @@
 # Samir-Stack Strategy Guide
 
-**Version:** 2.0 | **Last Updated:** 2026-05-13
+**Version:** 2.1 | **Last Updated:** 2026-05-13
 **Status:** Phase 5-validated, Phase 6 paper-deployment-ready (without capitulation overlay; see §10.3)
 **Source:** `research/samir_stack/` → `titan/strategies/samir_stack/`
 
 ---
+
+## v2.1 history note
+
+**Equity sleeve switched from 3USL.LSEETF (3× daily-rebalanced UCITS ETF)
+to MES futures** to avoid the L²-compounded volatility drag of
+daily-reset leveraged products. All other Phase 5 findings unchanged
+(capitulation overlay deferred to Phase 6b, L_max=2 still optimal,
+IGLT bond sleeve kept GBP-native, vol-targeting disabled).
+
+Phase 5 sweep ranking for `futures + IGLT + capitulation` cells:
+- `ew=0.40 L=2` → **Calmar CI lo 0.137** (this deployment)
+- `ew=0.40 L=3` → Calmar CI lo 0.107
+- `ew=0.30 L=4` → Calmar CI lo 0.079
+
+L=2 dominates higher leverage due to vol drag at the strategy level.
+The operator can move toward L=3 if more aggressive sizing is desired.
 
 ## v2.0 history note
 
@@ -17,8 +33,8 @@ remediation](Samir-Stack%20Remediation%20Plan%202026-05-12.md). The
 delivered honest Sharpe 0.64 / CAGR 5% — not the claimed Sharpe 2.28
 / CAGR 20% — due to look-ahead bias in `bond_rotation_returns` and
 the opt-in EFA overlay, plus a dividend double-count in
-`futures_returns`. The v2.0 deployment is **neither v1.0 nor the
-prior live config**; it is the mechanically-selected Phase 5 GBP-clean
+`futures_returns`. The v2.x deployment is **neither v1.0 nor the
+prior live config**; it is the mechanically-selected Phase 5 sweep
 winner.
 
 ---
@@ -27,14 +43,15 @@ winner.
 
 Samir-Stack v2.0 is a **regime-gated leveraged-equity-plus-bond stack** designed for IBKR UK paper deployment. It implements **Samir Varma's binary risk-classification framework** with two refinements: a multi-indicator regime ensemble (6 indicators), and a tier ladder for graduated leverage when the regime is benign.
 
-**Phase 5 validation (2007-2026, 18.9y, GBP-clean cell with capitulation enabled):**
-- Stitched OOS Sharpe: **0.961** (CI lo 0.428)
-- Calmar CI lo: **0.148**
-- Sanctuary Sharpe: 0.80
+**Phase 5 validation (2010-2026, 14y, futures + IGLT + capitulation enabled):**
+- Stitched OOS Sharpe: **0.940** (CI lo 0.407)
+- Calmar CI lo: **0.137**
+- Sanctuary Sharpe: 1.02
+- 2022 cumulative return: -22.1%
 - Underlying-resampled MC P(MaxDD > 50%): **< 1%** ✓ (RoR-acceptable)
 
 **Live deployment (this guide, capitulation deferred to Phase 6b):**
-- Expected stitched Sharpe: ~0.91 (vs 0.96 with capitulation)
+- Expected stitched Sharpe: ~0.88 (vs 0.94 with capitulation)
 - All other metrics within 5-10% of the with-cap cell
 
 ---
@@ -140,22 +157,89 @@ fx_rate_equity_quote_to_base = 0.7519   # 1 USD = 0.7519 GBP at GBPUSD=1.33
 fx_rate_bond_quote_to_base   = 1.0
 ```
 
-### 3.1 Live sizing: tier ↔ position size
+### 3.1 Live sizing: tier ↔ position size (MES futures path)
 
-The strategy holds ``equity_weight × (target_tier / equity_native_leverage)`` of NAV in the equity instrument. With 3USL (a 3× leveraged ETF) the actual GBP-denominated position size is:
+The strategy targets a notional exposure of ``equity_weight × target_tier × NAV`` (with ``equity_native_leverage = 1`` for futures). The sizing path floors this to integer MES contracts:
 
-| Regime tier | Position size (% of NAV in 3USL) | Effective SPX exposure |
-|---|---:|---:|
-| tier 0 (cash) | 0% | 0% |
-| tier 1 | 40% × 1/3 ≈ **13.3%** | 13.3% × 3 = **40%** |
-| tier 2 (L_max) | 40% × 2/3 ≈ **26.7%** | 26.7% × 3 = **80%** |
+```
+contracts = floor(target_notional_usd / (futures_multiplier × spx_price))
+```
 
-The account stays *unleveraged at the broker level* — the leverage is provided by the ETF itself, and the strategy holds less of it at lower tiers. This avoids broker margin and matches the Phase 5 backtest model exactly.
+At the Phase 5 GBP-clean champion config (ew=0.40, L_max=2) with MES at the current ~5500 SPX index price ($27.5k notional per contract):
 
-For deployments using a different equity instrument:
-- **CSPX or SPY (1× ETF):** set `equity_native_leverage = 1.0`. Position size = `equity_weight × tier`. At tier=2 this would mean **80% of NAV in CSPX** — fine, no margin needed since L_max ≤ 2.5 at 40% sleeve.
-- **SSO (2× SPY ETF):** set `equity_native_leverage = 2.0`. tier=2 → 40% × 1 = 40% in SSO → 80% effective SPX.
-- **MES futures (mechanical winner cell):** the strategy class currently uses ETF sizing (`equity_is_future=False`). Switching to futures requires `equity_is_future=True` and integer-contract sizing — different code path, deployable only at NAV ≥ £30k (Phase 4 finding).
+| Regime tier | Target notional (USD, % of NAV) | MES contracts at £30k NAV | Effective SPX exposure |
+|---|---:|---:|---:|
+| tier 0 (cash) | 0% | 0 | 0% |
+| tier 1 | 40% × 1 = **40%** | floor(£12k × 1/0.78 USD / $27.5k) = **0** (under-fill at small NAV) | 0% |
+| tier 2 (L_max) | 40% × 2 = **80%** | floor(£24k × 1/0.78 USD / $27.5k) ≈ **1** | ~$27.5k / £30k × 0.78 ≈ **71%** SPX |
+
+At larger NAV (£100k+) the chunkiness shrinks and the live position tracks the target notional within a few percent — see Phase 4 Part C for the empirical drag-vs-NAV curve.
+
+**Operational floor: NAV ≥ £30k** is the recommended minimum for the futures variant.
+
+For deployments using ETFs instead (lower NAV, no futures-rollover overhead):
+
+- **3USL.LSEETF (3× UCITS):** set `equity_is_future=False`, `equity_native_leverage=3.0`. Position size becomes `equity_weight × (tier / 3)` of NAV in 3USL.
+- **CSPX or SPY (1× ETF):** set `equity_is_future=False`, `equity_native_leverage=1.0`. Position size = `equity_weight × tier`. At tier=2 this would mean 80% of NAV in CSPX — no margin needed since 0.80 < 1.0.
+- **SSO (2× SPY ETF):** set `equity_is_future=False`, `equity_native_leverage=2.0`. tier=2 → 40% × 1 = 40% in SSO → 80% effective SPX.
+
+### 3.2 Cost-model comparison: MES futures vs. leveraged-ETF wrapper
+
+**Why the change from 3USL to MES.** A daily-rebalanced leveraged ETF (3USL) incurs L²-compounded volatility drag every day the underlying moves. Over a 23-year backtest at L=3 this drag is the *dominant* component of carry cost (~14% of the 15% total). MES futures don't rebalance daily — they roll quarterly — so the same target exposure is achieved with a fundamentally cheaper cost structure.
+
+Measured on the full SPY TR series (2003-04 → 2026-04, 22.97y) per Phase 4 Part A:
+
+| L | Synthetic 3x ETF CAGR | MES Futures CAGR | Futures advantage |
+|---:|---:|---:|---:|
+| 1 | 11.27% | 11.42% | +0.15pp |
+| 2 | 16.53% | 17.73% | **+1.20pp/yr** |
+| 3 | 18.67% | 20.05% | **+1.39pp/yr** |
+
+The gap widens with leverage because the ETF wrapper's vol-drag scales with L².
+
+**Component-by-component decomposition** (at L=2, the deployment leverage cap):
+
+| Cost component | Synthetic 3× ETF (e.g. 3USL) | MES futures (this deployment) | Net to MES |
+|---|---|---|---:|
+| **Daily-rebalance vol drag** | ½ × L(L-1) × σ² ≈ ½×2×18²/100 ≈ **+3.2%/yr at L=2** | **none** (no daily rebal) | **−3.2pp** |
+| **Wholesale funding on borrow** | (L-1) × ~Fed Funds ≈ **+2%/yr** | implicit in basis = funding − div ≈ **+0.5%/yr × L = +1%/yr** | **−1.0pp** |
+| **TER (wrapper fee)** | **0.75%/yr** (3USL) | **0%** (no wrapper) | **−0.75pp** |
+| **Quarterly roll slippage** | n/a | **~0.2%/yr × L = +0.4%/yr at L=2** | +0.4pp |
+| **T-bill earned on cash equity** | **0** (you hold the ETF, not cash) | ~funding × (NAV − posted_IM) → **−~3.5%/yr CREDIT at recent rates** | **−3.5pp** |
+| **Commissions** | ETF: ~5bp per rebalance, ~10bp/yr | MES: ~$1.40 round trip × ~30 trades/yr at £30k NAV → ~14bp/yr | comparable |
+| **Tracking error / counterparty** | small (~10-30bp) | n/a | small |
+| **Theoretical net cost gap @ L=2** | | | **≈ -7-8pp/yr** advantage for MES |
+
+The empirical 1.2pp/yr gap is *less* than the theoretical 7-8pp because:
+- The vol-drag estimate ½×L(L-1)×σ² is an approximation; the realised drag on SPY TR over 23y is lower because of mean-reversion in returns.
+- The T-bill credit on cash is partially offset by the basis premium on the futures position (in normalised steady state).
+- Commission and slippage are higher in practice than the theoretical models suggest.
+
+**What the live deployment actually pays** (best estimate, at the Phase 5 champion config £30k NAV ew=0.40 L_max=2 with avg deployed leverage ~1.4 across regimes):
+
+| Cost | Estimate | Notes |
+|---|---:|---|
+| Basis decay on equity sleeve | ~0.4-0.6%/yr | funding ≈ div in recent regimes |
+| Quarterly MES roll slippage | ~0.10%/yr | ~14bp on the 40% sleeve × ~1.4 avg L |
+| IBKR commissions (MES + IGLT) | ~0.20%/yr | $1.40 r/t × 30 fills + IGLT commissions |
+| T-bill on free cash | **−2-3%/yr CREDIT** | IBKR pays ~4% on USD cash > $10k |
+| **Net carry cost (futures path)** | **roughly NEUTRAL to ~+0.5%/yr** drag | |
+
+The futures variant is essentially free-carry under the current high-rate regime. The strategy's expected return ≈ regime-gated SPY TR exposure × 1.4 + IGLT carry, minus a thin operational drag.
+
+> [!NOTE]
+> The cost components above are NOT separately implemented in the live strategy class — the broker handles funding, dividends, basis, and commissions transparently through the futures-contract market price and the IBKR cash-yield mechanism. The strategy class only submits orders; the cost realisation flows through P&L automatically. The numbers above describe what the operator should *expect* to see, not what code computes.
+
+### 3.3 Why daily-reset leveraged ETFs were rejected
+
+Operator decision (2026-05-13): MES futures preferred over 3USL.LSEETF because:
+
+1. **Vol drag is structural and unavoidable in daily-reset wrappers.** At L=3 it costs ~14%/yr in vol-drag alone. The same effective exposure via futures costs ~0.5%/yr.
+2. **Path dependence.** A daily-reset 3× ETF held for 1 year does NOT give 3× the underlying's 1-year return — it gives 3× the *daily compounded* return, which diverges substantially in choppy markets. Futures held to expiry (or rolled) track the spot index much more cleanly.
+3. **Operational simplicity** at the contract level. One MES contract = one P&L line. A leveraged ETF position incurs implicit daily rebalances on the issuer's side, creating exposure to the issuer's counterparty (swap-based wrappers) and tracking error.
+4. **Funding regime sensitivity.** A 3× ETF pays wholesale Fed Funds on the borrow. Futures pay a basis that nets to funding − dividend, which at current rates is much smaller. The MES advantage widens further if rates rise.
+
+The cost of moving to futures: quarterly contract rollover (manual operator update of `equity_instrument_id`) and a £30k NAV operational floor (Phase 4 Part C).
 
 ---
 
@@ -318,7 +402,43 @@ docker compose exec titan-portfolio uv run python scripts/kill_switch.py --strat
 
 #### FX Rate Updates
 
-The static `fx_rate_equity_quote_to_base` config drifts from spot. Update monthly during paper, weekly when live, or wire dynamic GBPUSD bar subscription as v2.1.
+The static `fx_rate_equity_quote_to_base` config drifts from spot. Update monthly during paper, weekly when live, or wire dynamic GBPUSD bar subscription as v2.2.
+
+### 8.3 Quarterly MES contract rollover
+
+MES futures expire on the third Friday of March/June/September/December (month codes H/M/U/Z). The operator must update the strategy's `equity_instrument_id` config and restart the strategy ~8 business days before expiry to roll into the next contract.
+
+**Standard quarterly roll schedule** (third Friday of expiry month, roll the prior week):
+
+| Current contract | Expires | Roll target | Roll on or before |
+|---|---|---|---|
+| MESM26 | 2026-06-19 | MESU26 (Sep) | 2026-06-09 |
+| MESU26 | 2026-09-18 | MESZ26 (Dec) | 2026-09-08 |
+| MESZ26 | 2026-12-18 | MESH27 (Mar) | 2026-12-08 |
+
+**Roll procedure:**
+
+1. ~8 business days before expiry, edit `config/samir_stack.toml`:
+   ```toml
+   equity_instrument_id = "MESU26.CME"   # next contract
+   bar_type_equity_d    = "MESU26.CME-1-DAY-LAST-EXTERNAL"
+   ```
+2. Verify the new contract is tradable on the IB Gateway:
+   ```bash
+   docker compose exec titan-portfolio uv run python -c "
+   from titan.adapters.ibkr import resolve_contract
+   print(resolve_contract('MESU26.CME'))
+   "
+   ```
+3. Restart the strategy:
+   ```bash
+   docker compose restart titan-portfolio
+   ```
+4. Confirm the existing MES position is rolled (the strategy will see the new bar type, treat the prior position as needing a flatten + open at the new contract, and submit the resulting orders on the next bar).
+5. **Cost of one roll: ~5bp of notional** (Phase 4 cost-model assumption). At ~£30k NAV × 80% × 1 roll, that's ~£12 per quarterly roll = ~£48/yr.
+
+> [!CAUTION]
+> Forgetting to roll before expiry causes a forced cash settlement and re-entry — **2-3 days of zero exposure plus an extra round-trip**. Set a calendar reminder for each quarter's roll-by date. If this overhead becomes painful, future work could implement automated rollover detection.
 
 ---
 
