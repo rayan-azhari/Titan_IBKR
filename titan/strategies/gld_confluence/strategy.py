@@ -185,7 +185,7 @@ class GLDConfluenceStrategy(Strategy):
         position = positions[-1] if positions else None
         pos_dir = 0
         if position and position.is_open:
-            pos_dir = 1 if str(position.side) == "LONG" else -1
+            pos_dir = 1 if float(position.signed_qty) > 0 else -1
 
         threshold = self.config.threshold
         exit_buf = self.config.exit_buffer
