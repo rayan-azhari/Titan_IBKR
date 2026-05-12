@@ -836,6 +836,19 @@ def main() -> None:
     node.add_exec_client_factory(IB, InteractiveBrokersLiveExecClientFactory)
     node.build()
 
+    # Tier 1.4 of the operational-robustness framework — global rejection
+    # notifier so an OrderRejected from any strategy pages immediately,
+    # regardless of whether the strategy's own on_order_rejected handler
+    # bothered to call notify_*. See directives/Operational Robustness
+    # Framework 2026-05-12.md.
+    try:
+        from titan.utils.global_event_hooks import register_global_event_hooks
+
+        register_global_event_hooks(node)
+        logger.info("  Registered global event hooks (rejection notifier)")
+    except Exception as e:
+        logger.warning(f"  Failed to register global event hooks: {e}")
+
     # Instantiate and add each strategy
     for name in selected:
         entry = STRATEGY_REGISTRY[name]
