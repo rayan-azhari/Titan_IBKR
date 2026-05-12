@@ -428,3 +428,166 @@ Three distinct deliverables in this research arc:
 The strategy is ready for live engineering work. The remaining gap
 between research and deployment is operational (margin-aware strategy
 class, PRM extensions, paper-validation period) rather than analytical.
+
+---
+
+## 13. May 12 2026 update — futures engine + vol targeting
+
+Two further sweeps after the v1 baseline above. Both validated under the
+same 16-fold rolling WFO methodology with bootstrap CI gate.
+
+### 13.1 Equity-engine sweep — MES futures vs CSPX margin vs CFD
+
+Compares three engines at the SAME strategy config (L_max=2, 15/85
+split) to isolate cost-model effects. Year-1 cost decomposition:
+
+| Engine | Year-1 carry cost | Mechanism |
+|---|---|---|
+| CSPX margin drift L=2 | 3.11% | (L-1) × IBKR Pro spread (~6.5%) |
+| IBKR US500 CFD L=2 | 6.06% | (L-1) × CFD financing on full notional, not amortised |
+| **MES futures L=2** | **1.83%** | basis carry × L − T-bill on idle margin cash |
+
+WFO at L=2 on the same 15/85 strategy:
+
+| Engine | Sharpe | CI lo | CAGR | MaxDD |
+|---|---|---|---|---|
+| CSPX margin drift L=2 | 2.124 | 1.621 | 13.44% | -5.99% |
+| IBKR US500 CFD L=2 | 2.057 | 1.554 | 13.87% | -5.99% |
+| **MES futures L=2** | 2.110 | 1.606 | **14.27%** | -5.98% |
+
+Same Sharpe as CSPX margin, +0.83pp CAGR. Switching engines is a free
+upgrade: lower carry cost, same risk, simpler operations (no margin
+loan, near-24h liquidity, no LSE-hours-only constraint). Practical
+floor: needs ~$50k+ portfolio to cleanly size 1 MES contract (=$29k
+notional at SPX 5800).
+
+### 13.2 Constant-notional sweep — L vs equity_weight
+
+Holds equity notional at 30% (= L × equity_weight) and varies the split.
+At higher L the strategy frees capital for the bond sleeve.
+
+| Config | Bond% | Sharpe | CI lo | CAGR | MaxDD |
+|---|---|---|---|---|---|
+| MES L=2, 15/85 | 85% | 2.110 | 1.606 | 14.27% | -5.98% |
+| **MES L=3, 10/90** | **90%** | **2.127** | **1.626** | 14.40% | **-5.74%** |
+| MES L=4, 7.5/92.5 | 92.5% | 2.102 | 1.604 | 14.42% | -5.89% |
+| MES L=5, 6/94 | 94% | 2.080 | 1.575 | 14.49% | -5.89% |
+| MES L=6, 5/95 | 95% | 2.055 | 1.550 | 14.48% | -5.81% |
+| MES L=8, 3.75/96.25 | 96.25% | 1.958 | 1.433 | 12.84% | -5.97% |
+| MES L=10, 3/97 | 97% | 1.913 | 1.383 | 12.65% | -6.19% |
+
+L=3, 10/90 is the local optimum — marginal Sharpe gain over L=2 but
+DD compresses to -5.74%. Above L=6 the strategy collapses because the
+auto-generated tier-thresholds rise (peak tier at 0.80 score for L=10 vs
+0.50 for L=2), so the regime gate spends much less time at peak. This
+is a structural artefact of the tier-thresholds heuristic, not a
+fundamental futures-leverage tradeoff.
+
+### 13.3 Capitulation overlay — currently a net drag
+
+Tested with `enabled=True` and the May 2 2026 default parameters. Result:
+
+| Variant | Sharpe | CI lo | CAGR | MaxDD | GFC 2008 |
+|---|---|---|---|---|---|
+| baseline (L=3 10/90) | 2.127 | 1.626 | 14.40% | -5.74% | +24.0% |
+| + V1 capitulation | 2.128 | 1.612 | 13.46% | -5.74% | -0.1% |
+
+Sharpe wash; -0.94pp CAGR. The overlay's May 2 parameters were tuned
+on a different baseline (L=2 leveraged ETF, 40/60 split). On this
+configuration it over-fires opportunistic entries at false bottoms in
+2008 and destroys the regime gate's correctly-defensive +24% GFC
+return. **Drop until re-tuned on this baseline.** A future PR could
+re-sweep `(opportunistic_tier, capitulation_lookback, spy_dd_required,
+bounce_5d_threshold)` on L=3 10/90; even then I'd expect modest uplift
+since the regime gate is already strong here.
+
+### 13.4 Portfolio vol targeting — the real win
+
+Multiplicative scaler applied post-hoc to strategy daily returns.
+Computes 30-day rolling realised vol of the strategy itself, scales by
+`target_vol / realised_vol` (capped at 2×), shifted by 1 day to avoid
+look-ahead.
+
+Sensitivity sweep — Sharpe is remarkably flat across target_vol:
+
+| target_vol | Sharpe | CI lo | CAGR | MaxDD | Calmar |
+|---|---|---|---|---|---|
+| 4% | 2.349 | 1.861 | 10.80% | -3.35% | 3.23 |
+| 5% | 2.344 | 1.859 | 13.45% | -4.17% | 3.22 |
+| **6%** | **2.337** | **1.848** | **15.95%** | **-4.99%** | **3.20** |
+| 7% | 2.312 | 1.825 | 18.15% | -5.81% | 3.12 |
+| 8% | 2.285 | 1.792 | 20.03% | -6.62% | 3.03 |
+| 10% | 2.232 | 1.739 | 22.81% | -7.47% | 3.05 |
+| 12% | 2.210 | 1.705 | 24.85% | -8.57% | 2.90 |
+
+target_vol is a leverage knob — pick by CAGR/DD preference, not Sharpe
+optimisation. The Sharpe spread of only 0.14 across a 3× range of
+target_vol is the signature of a robust parameter.
+
+### 13.5 Risk-of-ruin: why higher target_vol is much riskier than headline MaxDD
+
+Bootstrap (5,000 paths × 5-day blocks) on the stitched OOS returns:
+
+| | 6% target | 8% target | 12% target |
+|---|---|---|---|
+| Empirical MaxDD (single path) | -4.99% | -6.62% | -8.57% |
+| Median 10y MaxDD (50% chance) | -6.31% | -8.07% | -10.37% |
+| 5th-pct 10y MaxDD (1-in-20) | -9.46% | -12.07% | -15.74% |
+| 1st-pct 10y MaxDD (1-in-100) | -11.80% | -15.05% | -19.09% |
+| Worst of 5,000 10y paths | -16.32% | -20.44% | -25.74% |
+| P(MaxDD>10% in 10y) | **3.5%** | 17.8% | **56.5%** |
+| P(MaxDD>15% in 10y) | 0.06% | 1.04% | **7.0%** |
+
+DD distributions scale roughly with the SQUARE of target_vol because
+worst paths involve bad-bar runs, and each bad bar is proportional to
+target_vol. The "headline" -8.57% at 12% understates the 1-in-20
+expected loss of -15.7%.
+
+### 13.6 Final champion configuration
+
+**Engine:** MES futures (CME Micro E-mini S&P 500) at L=3
+**Capital split:** 10% equity sleeve, 90% bonds (equity_weight=0.10, bond_weight=0.90)
+**Base improvements:** I1 (rate-shock) + I2 (bond rotation) + I3 (opt-in EFA)
+**Vol target:** **8% annualised**, applied as multiplicative scaler on daily strategy returns (30-day window, max_scale=2.0, lagged 1 day)
+**Capitulation overlay:** disabled (re-tune in future PR)
+
+**Validated metrics (16-fold WFO at 8% target_vol):**
+- Stitched Sharpe: **2.285** (CI95 lo: 1.792, hi: 2.803)
+- CAGR: **20.03%**
+- Realised vol: 8.14%
+- MaxDD: **-6.62%**
+- Calmar: 3.03
+- 100% positive folds (16 of 16 OOS years)
+
+**Risk-of-ruin (10-year horizon, bootstrap, 5,000 paths):**
+- Median MaxDD: -8.07%
+- 1-in-20 path MaxDD: -12.07%
+- 1-in-100 path MaxDD: -15.05%
+- Worst of 5,000 paths: -20.44%
+- P(MaxDD > 10%): 17.8%
+- P(MaxDD > 15%): 1.04%
+- P(MaxDD > 20%): 0.02%
+- P(MaxDD > 25%): 0% in 5,000 paths
+- P(end < starting capital, 20y): 0% in 5,000 paths
+
+**Why 8% over 6% or 12%:**
+
+The 6% target was the conservative-default; the 12% target was the maximum-CAGR option. 8% sits at the inflection point of the risk/reward trade-off:
+- vs 6%: +4pp CAGR (15.95% → 20.03%) for a real but bounded increase in DD distribution. Median 10y MaxDD shifts -6.3% → -8.1%; P(MaxDD>10%) goes 3.5% → 17.8% but P(MaxDD>15%) is still only 1%.
+- vs 12%: -5pp CAGR but **3× lower** P(-10% DD), **7× lower** P(-15% DD), worst-of-5000 path -20% vs -26%.
+
+In the 20-year bootstrap visualisation ([plot_bootstrap_equity_curves.py](../research/samir_stack/plot_bootstrap_equity_curves.py)): median ending wealth ~38× starting capital, worst-of-5000 ~11×. Investor should expect roughly one -8% drawdown per decade and have a 1-in-6 chance of a -10% drawdown over any 10-year stretch — uncomfortable but tolerable for someone with conviction in the strategy.
+
+### 13.7 What's still on the table (not yet built)
+
+- Capitulation overlay re-tune on the L=3 10/90 baseline (probably modest uplift)
+- Yield-curve recession gate added to regime score
+- Multi-strategy combination at portfolio level (Samir-Stack 70% + mr_audjpy 15% + bond_equity 15%) — likely the biggest real-money uplift remaining
+
+### 13.8 Files in the May 12 update
+
+- [research/samir_stack/run_futures_sweep.py](../research/samir_stack/run_futures_sweep.py) — engine sweep + leverage sweep + constant-notional sweep
+- [research/samir_stack/run_overlay_sweep.py](../research/samir_stack/run_overlay_sweep.py) — capitulation × vol-target × baseline grid + vol-target sensitivity
+- [research/samir_stack/run_risk_of_ruin.py](../research/samir_stack/run_risk_of_ruin.py) — bootstrap drawdown projections on the L=3 10/90 baseline
+- [research/samir_stack/compare_vol_target_risk.py](../research/samir_stack/compare_vol_target_risk.py) — side-by-side risk distributions across target_vol levels
+- [research/samir_stack/margin_model.py](../research/samir_stack/margin_model.py) — extended with `futures_returns()` and `cfd_returns()` cost models
