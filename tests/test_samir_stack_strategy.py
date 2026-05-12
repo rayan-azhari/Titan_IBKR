@@ -55,32 +55,61 @@ def _minimal_config(**overrides) -> SamirStackConfig:
 
 
 def test_default_capital_split_matches_champion_config():
-    """Champion config: 10/90 split (was 40/60 before May 12 update)."""
+    """Phase 5 GBP-clean champion (2026-05-13): 40/60 split.
+
+    Replaces the 10/90 from the pre-audit champion (which the audit
+    found delivered honest Sharpe 0.64, not the claimed 2.28, due to
+    look-ahead and cost-model bugs).
+    """
     cfg = _minimal_config()
-    assert cfg.equity_weight == 0.10
-    assert cfg.bond_weight == 0.90
+    assert cfg.equity_weight == 0.40
+    assert cfg.bond_weight == 0.60
 
 
 def test_default_leverage_matches_champion_config():
-    """Champion config: L_max=3 with the 3-tier threshold ladder."""
+    """Phase 5 GBP-clean champion: L_max=2 with a 2-tier threshold ladder.
+
+    Phase 5 found L=2 dominates L=3 on Calmar CI lo because vol drag
+    at L=3 (~14%/yr in the synthetic ETF engine at L=3 vol) erodes
+    risk-adjusted returns more than the marginal upside from extra
+    leverage.
+    """
     cfg = _minimal_config()
-    assert cfg.L_max == 3.0
-    assert cfg.tier_thresholds == (0.30, 0.50, 0.75)
+    assert cfg.L_max == 2.0
+    assert cfg.tier_thresholds == (0.30, 0.55)
 
 
-def test_default_vol_target_matches_champion_config():
-    """Champion config: 8% annualised vol target, 30-day window, 2x cap."""
+def test_default_vol_target_disabled_in_champion_config():
+    """Phase 5 GBP-clean champion: vol-targeting DISABLED.
+
+    Phase 5 found the regime gate captures the same risk-management
+    benefit without vol-targeting's operational complexity. The
+    pre-Phase-5 default of 0.08 was based on a buggy backtest (audit
+    2026-05-12); honest backtests show vol-target adds only ~+0.07
+    Sharpe at significant operational cost.
+    """
     cfg = _minimal_config()
-    assert cfg.vol_target_annual == 0.08
+    assert cfg.vol_target_annual == 0.0
     assert cfg.vol_target_window == 30
     assert cfg.vol_target_max_scale == 2.0
 
 
 def test_dd_circuit_breaker_defaults_unchanged():
-    """DD breaker defaults match the prior config (10% throttle / 15% kill)."""
+    """DD breaker defaults are stable across audit/remediation: 10%/15%."""
     cfg = _minimal_config()
     assert cfg.dd_throttle == 0.10
     assert cfg.dd_kill == 0.15
+
+
+def test_vol_target_can_be_opted_in_with_positive_value():
+    """Operator can opt back into vol-targeting by setting > 0.
+
+    This is supported for experimentation only — the default-off behaviour
+    matches the Phase 5 finding. Operators choosing to opt in own the
+    operational complexity (vol scaling on a leveraged ETF position).
+    """
+    cfg = _minimal_config(vol_target_annual=0.06)
+    assert cfg.vol_target_annual == 0.06
 
 
 def test_vol_target_can_be_disabled_with_zero():
