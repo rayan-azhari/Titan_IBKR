@@ -25,6 +25,7 @@ import pandas as pd
 from research.samir_stack.capitulation import CapitulationConfig
 from research.samir_stack.engines import (
     FuturesEngine,
+    FuturesMarginEngine,
     MarginEngine,
     RotationBondSleeve,
     StaticBondSleeve,
@@ -107,6 +108,100 @@ def test_futures_engine_matches_legacy_function() -> None:
         spy,
         leverage=3.0,
     )
+
+
+# ── FuturesMarginEngine: futures + broker margin borrow ──────────────────
+
+
+def test_futures_margin_engine_at_zero_borrow_equals_futures_engine() -> None:
+    """At borrow_ratio=0 the FuturesMarginEngine MUST be bit-exact
+    identical to FuturesEngine. Anything else means the new engine has
+    drifted from its declared identity at b=0 — a regression that would
+    silently corrupt Phase 5 sweep cells that use borrow_ratio=0 as
+    their "no extra margin" comparison baseline.
+    """
+    spy = _make_underlying()
+    f = FuturesEngine()
+    fm = FuturesMarginEngine(borrow_ratio=0.0)
+    a = f.daily_returns(spy, leverage=3.0).dropna()
+    b = fm.daily_returns(spy, leverage=3.0).dropna()
+    common = a.index.intersection(b.index)
+    diff = float(np.abs(a.loc[common] - b.loc[common]).max())
+    assert diff < 1e-15, (
+        f"FuturesMarginEngine(borrow_ratio=0) drifted from FuturesEngine: max |Δ| = {diff:.3e}"
+    )
+
+
+def test_futures_margin_engine_spread_cost_matches_derivation() -> None:
+    """The net annual cost of the margin borrow must equal
+    ``borrow_ratio × broker_spread`` (per the derivation in the class
+    docstring). We verify by running the engine with and without the
+    borrow on a flat underlying (no price moves), so the only difference
+    is the borrow's cost terms.
+
+    For IBKR Pro spread = 1.5% and borrow_ratio = 0.5, the expected
+    annual cost is 0.75% — the engine's CAGR delta versus the no-borrow
+    case should match to within a few bps.
+    """
+    n = 252 * 3  # 3 years
+    idx = pd.date_range("2020-01-01", periods=n, freq="B")
+    # Flat underlying — zero price return so we isolate the financing.
+    spy_flat = pd.Series(100.0, index=idx)
+
+    fm_noborrow = FuturesMarginEngine(borrow_ratio=0.0, broker="ibkr_pro")
+    fm_borrow = FuturesMarginEngine(borrow_ratio=0.5, broker="ibkr_pro")
+
+    # At L=1 the levered-notional return is 0 (flat underlying), so the
+    # only differences between the two engines are:
+    #   no-borrow: + funding/252 - L*div/252 - L*roll/252
+    #   borrow:   L_total = 1*(1+0.5)=1.5
+    #              + funding/252 - 0.5*spread/252 - L_total*div/252 - L_total*roll/252
+    # Difference: -(0.5)*spread/252 - 0.5*(div + roll)/252 per day.
+    # Annualised diff ≈ -0.5*spread - 0.5*(div + roll)
+    rets_nob = fm_noborrow.daily_returns(spy_flat, leverage=1.0).dropna()
+    rets_b = fm_borrow.daily_returns(spy_flat, leverage=1.0).dropna()
+    common = rets_nob.index.intersection(rets_b.index)
+
+    # Annualised CAGR difference
+    eq_nob = (1.0 + rets_nob.loc[common]).cumprod()
+    eq_b = (1.0 + rets_b.loc[common]).cumprod()
+    n_years = len(common) / 252.0
+    cagr_nob = float(eq_nob.iloc[-1] ** (1.0 / n_years) - 1.0)
+    cagr_b = float(eq_b.iloc[-1] ** (1.0 / n_years) - 1.0)
+    diff = cagr_b - cagr_nob  # should be negative (borrow costs more)
+
+    # Expected annual cost of borrowing 50% at 1.5% spread = -0.75%
+    # PLUS the additional notional's roll + dividend drag at L_eff=1.5
+    # vs L=1: extra 0.5x exposure to (div + roll) = 0.5*(0.015 + 0.002) = 0.0085.
+    expected_diff = -(0.5 * 0.015) - 0.5 * (0.015 + 4 * 5 / 10000.0)
+    assert abs(diff - expected_diff) < 0.001, (
+        f"Borrow cost diverges from derivation: actual diff {diff * 100:+.3f}pp, "
+        f"expected ~{expected_diff * 100:+.3f}pp (=−0.5×spread − 0.5×div − 0.5×roll). "
+        f"|err| = {abs(diff - expected_diff) * 100:.3f}pp."
+    )
+
+
+def test_futures_margin_engine_rejects_negative_borrow_ratio() -> None:
+    """Defensive: a negative borrow_ratio is operationally meaningless
+    (it would imply lending rather than borrowing) and must be refused
+    at construction time, not silently mis-computed at sweep time."""
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="borrow_ratio"):
+        FuturesMarginEngine(borrow_ratio=-0.1)
+
+
+def test_futures_margin_engine_rejects_oversized_leverage() -> None:
+    """If leverage × (1+b) × margin_pct >= 1, the position can't be
+    cash-collateralised even with the margin borrow. The engine must
+    fail loudly rather than silently compute a meaningless number."""
+    import pytest as _pytest
+
+    spy = _make_underlying(n=300)
+    fm = FuturesMarginEngine(borrow_ratio=2.0, margin_pct=0.10)
+    # leverage * (1+b) * margin_pct = 4 * 3 * 0.10 = 1.2 >= 1
+    with _pytest.raises(ValueError, match="insufficient cash"):
+        fm.daily_returns(spy, leverage=4.0)
 
 
 # ── BondSleeve implementations ───────────────────────────────────────────

@@ -41,13 +41,15 @@ import pandas as pd
 
 from research.samir_stack.margin_model import (
     CSPX_TER_ANNUAL,
+    IBKR_LITE_SPREAD_OVER_BENCHMARK,
+    IBKR_PRO_SPREAD_OVER_BENCHMARK,
     constant_leverage_margin_returns,
     futures_returns_tr,
 )
 from research.samir_stack.run_samir_improvements import bond_rotation_returns
-from research.samir_stack.synthetic_3x import synthetic_leveraged_returns
+from research.samir_stack.synthetic_3x import funding_series, synthetic_leveraged_returns
 
-# ── EquityEngine ABC + 3 concrete implementations ─────────────────────────
+# ── EquityEngine ABC + 4 concrete implementations ─────────────────────────
 
 
 class EquityEngine(Protocol):
@@ -137,6 +139,132 @@ class FuturesEngine:
             rolls_per_year=self.rolls_per_year,
             roll_slippage_bps=self.roll_slippage_bps,
             trading_days_per_year=self.trading_days_per_year,
+        )
+
+
+@dataclass
+class FuturesMarginEngine:
+    """Futures position with an additional broker margin borrow.
+
+    Models the case where the operator combines two leverage mechanics:
+
+    1. Futures (cheap basis-based financing) — the primary leverage vehicle.
+    2. Broker margin borrow on top of cash equity — used to fund a LARGER
+       cash collateral base than the operator's own equity provides.
+
+    Effective leverage on equity is ``leverage * (1 + borrow_ratio)``. At
+    ``borrow_ratio = 0.0`` the engine reduces EXACTLY to ``FuturesEngine``
+    — no new behaviour. At positive ``borrow_ratio`` the operator pays
+    the broker spread on the borrowed portion (the wholesale-funding
+    component cancels out against T-bill earned on the larger collateral
+    base, so the *net* cost is just ``borrow_ratio * broker_spread`` per
+    year — exactly the broker's margin markup).
+
+    Use cases
+    ---------
+    * Push effective leverage beyond what cash futures naturally provides
+      at the operator's NAV. At MES 6% IM, $E cash supports ~16x notional
+      natively, so this is only relevant for L_eff >> 10.
+    * Free up some cash equity to hold higher-yielding instruments (e.g.
+      bonds) while still maintaining the futures notional. Models the
+      operator who would rather pay broker spread on a margin loan than
+      hold low-yield cash as futures collateral.
+    * Sweep-cell exploration of "what if we hybridise MES + margin" in
+      Phase 5 without changing the sleeve abstraction.
+
+    Math (per $1 of cash equity, per day)
+    -------------------------------------
+    Let ``L`` be the base leverage and ``b`` = ``borrow_ratio``::
+
+        L_total = L * (1 + b)                            # eff. leverage on equity
+        daily_return = L_total * spy_TR_ret              # gross levered exposure
+                     - L_total * div_yield/252           # strip div (futures don't pay)
+                     + (1 + b) * funding/252             # T-bill on (E+B) collateral
+                     - b * (funding + spread)/252        # margin interest on B
+                     - L_total * roll/252                # roll slippage on notional
+
+    The two interest terms simplify to ``(funding - b*spread)/252``, so
+    the net economic cost of the borrow is ``b * broker_spread`` per
+    year, regardless of the prevailing funding regime. This is correct:
+    you pay the broker their spread, while the wholesale-rate component
+    cancels (the broker funds at wholesale and earns the spread; you
+    earn T-bill on the larger collateral).
+
+    Sanity check
+    ------------
+    At ``borrow_ratio=0`` and identical other params, this engine MUST
+    produce returns equal to ``FuturesEngine`` to floating-point
+    precision. Pinned by a test in ``tests/test_samir_stack_engines.py``.
+    """
+
+    borrow_ratio: float = 0.0
+    """B/E — broker margin borrow as fraction of cash equity. 0 = pure
+    futures (no borrow); 0.5 = borrow 50% of equity as additional
+    collateral; 1.0 = borrow 100% of equity (doubles collateral base)."""
+
+    broker: str = "ibkr_pro"
+    """Broker tier for the margin-spread component. ``ibkr_pro`` = +1.5%
+    above wholesale; ``ibkr_lite`` = +2.5%."""
+
+    dividend_yield: float = 0.015
+    margin_pct: float = 0.06
+    rolls_per_year: int = 4
+    roll_slippage_bps: float = 5.0
+    trading_days_per_year: int = 252
+
+    def __post_init__(self) -> None:
+        if self.borrow_ratio < 0:
+            raise ValueError(f"borrow_ratio must be >= 0, got {self.borrow_ratio}")
+
+    def daily_returns(self, underlying_tr_close: pd.Series, leverage: float) -> pd.Series:
+        # Fast path: when no borrow, delegate to FuturesEngine math so
+        # this engine is bit-exact identical at borrow_ratio=0.
+        if self.borrow_ratio == 0.0:
+            return futures_returns_tr(
+                underlying_tr_close,
+                leverage=leverage,
+                dividend_yield=self.dividend_yield,
+                margin_pct=self.margin_pct,
+                rolls_per_year=self.rolls_per_year,
+                roll_slippage_bps=self.roll_slippage_bps,
+                trading_days_per_year=self.trading_days_per_year,
+            )
+
+        if leverage <= 0:
+            raise ValueError(f"leverage must be > 0, got {leverage}")
+        # Refuse if the levered notional can't be cash-collateralised even
+        # WITH the margin borrow (matches FuturesEngine's existing guard).
+        l_total = leverage * (1.0 + self.borrow_ratio)
+        if l_total * self.margin_pct >= 1.0:
+            raise ValueError(
+                f"effective leverage * margin_pct = "
+                f"{l_total * self.margin_pct:.2f} >= 1; insufficient "
+                f"cash to support L_eff={l_total:.2f} at "
+                f"{self.margin_pct:.0%} margin requirement even with "
+                f"borrow_ratio={self.borrow_ratio:.2f}."
+            )
+
+        spread = (
+            IBKR_PRO_SPREAD_OVER_BENCHMARK
+            if self.broker == "ibkr_pro"
+            else IBKR_LITE_SPREAD_OVER_BENCHMARK
+        )
+        spy_tr_ret = underlying_tr_close.pct_change()
+        funding = funding_series(underlying_tr_close.index)
+        daily_funding = funding / self.trading_days_per_year
+        daily_div = self.dividend_yield / self.trading_days_per_year
+        daily_roll = (
+            self.rolls_per_year * self.roll_slippage_bps / 10_000.0
+        ) / self.trading_days_per_year
+        daily_spread = spread / self.trading_days_per_year
+        # See class docstring for derivation. The (1+b)*funding and
+        # -b*(funding+spread) terms combine to (funding - b*spread).
+        return (
+            (l_total * spy_tr_ret)
+            - (l_total * daily_div)
+            + daily_funding
+            - (self.borrow_ratio * daily_spread)
+            - (l_total * daily_roll)
         )
 
 
