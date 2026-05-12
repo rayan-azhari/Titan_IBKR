@@ -109,12 +109,17 @@ Mapping the rehydration bug through the framework:
 | T1.5 | NT API contract tests | ✅ shipped | #6 |
 | T1.4 | Order-rejection page (audit + global hook) | ✅ shipped | #7 |
 | T1.1 | Position-reconciliation watchdog | ✅ shipped | #8 |
-| T1.3 | NLV divergence alarm | ✅ shipped | #9 |
-| T1.2 | Double-restart smoke script | ✅ shipped | #10 |
+| T1.3 | NLV divergence alarm | ✅ shipped | #12 (was #9) |
+| T1.2 | Double-restart smoke script | ✅ shipped | #13 (was #10) |
+| T2.2 | Property-based state-machine tests | ✅ shipped | #14 |
 
-**Tier 1 complete.** All five items shipped between PRs #6-#10. Next:
-Tier 2 begins with shadow-strategy mode and property-based state-machine
-tests. Defer until Tier 1 has bake-time in production.
+**Tier 1 complete + Tier 2.2 shipped.** All five Tier 1 items merged
+between PRs #6, #7, #8, #12, #13. Tier 2.2 began the property-based
+testing layer with Hypothesis-driven random sequences of (rehydrate,
+bar, restart, external_close, reconnect) verifying invariants like
+"never more than one open position per instrument" and "strategy state
+agrees with broker." Next Tier 2 candidates: cost-model audit job
+(T2.4), shadow-strategy mode (T2.1).
 
 Update this table as items ship.
 
