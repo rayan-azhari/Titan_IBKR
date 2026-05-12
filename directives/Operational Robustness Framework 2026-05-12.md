@@ -115,20 +115,32 @@ Mapping the rehydration bug through the framework:
 | T2.4 | Cost-model audit job | ✅ shipped | #15 |
 | T2.5 | Backtest-vs-live reconciliation | ✅ shipped | #16 |
 | T2.1 | Shadow-strategy mode (in-process D5 in reconciliation watchdog) | ✅ shipped | #17 |
+| T2.3 | Chaos test harness | ✅ shipped | #18 |
 
-**Tier 1 complete + Tier 2.1/2.2/2.4/2.5 shipped.** All Tier 1 items
-merged across PRs #6, #7, #8, #12, #13. Tier 2.2 added Hypothesis state
-machine tests. Tier 2.4 added the weekly cost-audit cron. Tier 2.5
-added the offline replay-audit cron. Tier 2.1 added an in-process
-shadow-decision branch (D5) to the reconciliation watchdog: every H1
-bar it loads each ``bond_equity_*`` strategy's signal-instrument
-parquet, computes the expected action via shared decision primitives
-in ``titan.utils.bond_gold_decisions``, and compares to the cache's
-actual position state. The shared module is the single source of
-truth for the bond_gold decision logic and is now exercised by three
-tests files (``test_replay_audit.py``, ``test_bond_gold_decisions.py``,
-``test_reconciliation_strategy.py`` D5 section). Remaining Tier 2
-candidate: chaos test harness (T2.3) — the largest remaining item.
+**Tier 1 + Tier 2 complete.** All operational items shipped across PRs
+#6, #7, #8, #12, #13 (Tier 1) and #14, #15, #16, #17, #18 (Tier 2).
+
+Tier 2.3 (final item) added ``scripts/chaos_harness.py`` with three
+adversarial scenarios run on the live container stack:
+  - **S1 restart-storm:** N container restarts with random delays
+    (5-30s) — catches state-machine bugs that need restart-timing
+    pressure
+  - **S2 gateway-flap:** restart only ``titan-ib-gateway`` and verify
+    ``titan-portfolio`` reconnects cleanly without state drift
+  - **S3 rapid-restarts:** three back-to-back restarts with no delay,
+    tighter version of S1
+
+Each scenario diffs broker-position snapshots before/after, scans
+docker logs for new ``[D1]/[D2]/[D5]`` reconciliation alerts, and
+checks for unhandled-exception tracebacks. Failures fire
+``notify_health(severity="critical")``. Suggested cron: ``0 4 * * 0``
+(Sunday 04:00 UTC, after cost+replay audits).
+
+What remains beyond the framework: Tier 3 (deterministic broker
+simulator, mutation testing, pre-flight invariant suite) and Tier 4
+(process / cultural items — incident-driven AST guards, pre-PR WCGW
+checklist, runbooks per failure mode). These are larger investments
+appropriate when the system reaches significant production scale.
 
 Update this table as items ship.
 
