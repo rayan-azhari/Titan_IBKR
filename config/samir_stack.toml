@@ -1,28 +1,40 @@
 # Samir-Stack live configuration — IBKR UK paper account (GBP base).
 #
-# Phase 5 GBP-clean champion (2026-05-13). See:
-#   - directives/Samir-Stack Strategy Guide.md (operator-facing summary)
-#   - directives/Samir-Stack Remediation Plan 2026-05-12.md (full audit trail)
-#   - .tmp/reports/samir_stack/phase5_joint_sweep_report.md (sweep results)
+# 2026-05-13 config: MES futures equity sleeve + IGLT bond sleeve.
+# Replaces the earlier 3USL.LSEETF synthetic-3x ETF deployment.
+# Rationale: avoid daily-rebalanced leveraged ETF compounding decay;
+# get leverage from MES futures (notional ≈ $5 × SPX index, posted
+# margin ≈ 6%) instead.
 #
-# This config supersedes the prior 10/90 + 8%-vol-target "champion" which
-# the 2026-05-12 audit found delivered honest Sharpe 0.64 / CAGR 5% — not
-# the claimed Sharpe 2.28 / CAGR 20% — due to look-ahead and cost-model
-# bugs (all fixed in the audit-remediation phases 1-5).
+# Phase 5 sweep ranking (futures + IGLT + capitulation cells):
+#   ew=0.40 L=2: Calmar CI lo 0.137 (best — this config)
+#   ew=0.40 L=3: Calmar CI lo 0.107
+#   ew=0.30 L=4: Calmar CI lo 0.079
+# L=2 dominates higher L due to vol drag at the strategy level. The
+# operator can move toward L=3 by editing L_max + tier_thresholds if
+# more aggressive sizing is desired; Phase 5 data documents the
+# Calmar trade-off.
 #
-# Phase 5 validation (with capitulation on, 18.9y backtest 2007-2026):
-#   WFO stitched Sharpe 0.961 | CI lo 0.428
-#   Calmar CI lo 0.148 | Sanctuary Sharpe 0.80
-#   MC P(MaxDD>50%) < 1% (RoR-acceptable per Samir framework).
+# Phase 5 validation (with capitulation on, 14y backtest 2010-2026):
+#   WFO stitched Sharpe 0.940 | CI lo 0.407
+#   Calmar CI lo 0.137 | Sanctuary Sharpe 1.02
+#   MC P(MaxDD>50%) < 1% (RoR-acceptable).
 #
-# IMPORTANT: capitulation overlay is NOT yet wired into the live strategy
-# class (Phase 6b follow-up). This deployment runs without the overlay;
-# expected live Sharpe is ~0.91 vs the with-cap 0.96.
+# IMPORTANT: capitulation overlay is NOT yet wired into the live
+# strategy class (Phase 6b follow-up). This deployment runs without
+# the overlay; expected live Sharpe is ~0.88 vs the with-cap 0.94.
 
 [strategy]
-# Trading instruments — both GBP-tradable on LSE, no FX on the bond sleeve.
-equity_instrument_id = "3USL.LSEETF"
-bond_instrument_id   = "IGLT.LSEETF"
+# Trading instruments — MES front-month + UK gilts.
+#
+# MES contract symbol uses IB-style front-month encoding:
+#   MES{month_code}{year} where month_code is H/M/U/Z for Mar/Jun/Sep/Dec.
+# The operator MUST update this manually at each quarterly roll:
+#   - Around 8 business days before expiry, switch to next contract.
+#   - See directives/Samir-Stack Strategy Guide.md §8.3 for the roll
+#     procedure.
+equity_instrument_id = "MESM26.CME"      # June 2026 front-month at deploy time
+bond_instrument_id   = "IGLT.LSEETF"     # UK 7-10y gilts (GBP-native)
 
 # Signal data sources (subscribed but not traded)
 signal_spy_id = "SPY.ARCA"
@@ -30,27 +42,24 @@ signal_vix_id = "VIX.CBOE"
 signal_hyg_id = "HYG.ARCA"
 signal_ief_id = "IEF.NASDAQ"
 
-# Bar types (all daily) — IGLT bars used as bond return source AND IEF
-# bars subscribed separately for the credit-spread indicator (HYG/IEF z).
-bar_type_equity_d  = "3USL.LSEETF-1-DAY-LAST-EXTERNAL"
+# Bar types (all daily).
+bar_type_equity_d  = "MESM26.CME-1-DAY-LAST-EXTERNAL"
 bar_type_bond_d    = "IGLT.LSEETF-1-DAY-LAST-EXTERNAL"
 bar_type_spy_d     = "SPY.ARCA-1-DAY-LAST-EXTERNAL"
 bar_type_vix_d     = "VIX.CBOE-1-DAY-LAST-EXTERNAL"
 bar_type_hyg_d     = "HYG.ARCA-1-DAY-LAST-EXTERNAL"
 bar_type_ief_d     = "IEF.NASDAQ-1-DAY-LAST-EXTERNAL"
 
-# Per-instrument quote currency (must match what IB returns)
-equity_quote_ccy = "USD"   # 3USL.LSEETF is USD-quoted (even though LSE-listed)
-bond_quote_ccy   = "GBP"   # IGLT.LSEETF is GBP-native
+# Per-instrument quote currency
+equity_quote_ccy = "USD"   # MES is USD-quoted (CME)
+bond_quote_ccy   = "GBP"   # IGLT is GBP-native
 
 # FX rate seed (GBP base): 1 USD = how many GBP.
-# At 2026-04-02: GBPUSD = 1.33 → 1 USD = 1/1.33 = 0.7519 GBP.
-# Operator should update this monthly (or wire a GBPUSD bar subscription
-# for dynamic updates in a v2 enhancement).
+# At 2026-04-02: GBPUSD = 1.33 → 1 USD = 0.7519 GBP.
 fx_rate_equity_quote_to_base = 0.7519
-fx_rate_bond_quote_to_base   = 1.0  # bond sleeve GBP-native, no conversion
+fx_rate_bond_quote_to_base   = 1.0  # bond sleeve GBP-native
 
-# Strategy parameters — Phase 5 GBP-clean champion (committed 2026-05-13).
+# Strategy parameters — best futures+IGLT cell from Phase 5 sweep.
 equity_weight = 0.40
 bond_weight   = 0.60
 L_max         = 2.0
@@ -58,15 +67,16 @@ tier_thresholds   = [0.30, 0.55]
 hysteresis_buffer = 0.05
 re_entry_quiet_bars = 20
 
-# Native leverage of the equity-trading instrument. 3USL.LSEETF is a
-# 3x-leveraged ETF → native_leverage = 3.0. The strategy scales its
-# position size by ``target_tier / equity_native_leverage`` so that
-# the LIVE effective SPX exposure matches the BACKTEST model:
-#   tier=1 → 40% × 1/3 ≈ 13.3% of NAV in 3USL → 40% SPX
-#   tier=2 → 40% × 2/3 ≈ 26.7% of NAV in 3USL → 80% SPX
-# Change this value if switching the equity instrument to a different
-# leverage product (1.0 for CSPX/SPY, 2.0 for SSO, etc).
-equity_native_leverage = 3.0
+# Native leverage of the equity-trading instrument.
+# For MES FUTURES this is 1.0 — the strategy holds N contracts where
+# N is sized so that contract_notional × N matches the target levered
+# notional (equity_weight × tier × NAV). The leverage comes from the
+# futures contract itself (notional >> posted margin), not from the
+# instrument carrying built-in compounding leverage.
+#
+# Contrast with leveraged ETFs (3USL, UPRO) where native_leverage=3
+# because each share represents 3× the underlying index exposure.
+equity_native_leverage = 1.0
 
 # DD circuit breaker (unchanged from prior config)
 dd_throttle = 0.10
@@ -75,31 +85,26 @@ dd_re_entry_score = 0.70
 dd_re_entry_bars  = 5
 
 # Vol-targeting overlay — DISABLED per Phase 5 finding.
-# Set to a positive value (e.g. 0.06-0.10) to opt back in.
 vol_target_annual = 0.0
 vol_target_window = 30
 vol_target_max_scale = 2.0
 
-# Phase 2 futures execution — OFF. 3USL.LSEETF as ETF is the deployable
-# variant for UK paper. To switch to MES futures, set:
-#   equity_is_future = true
-#   equity_instrument_id = "MES.CME-front-month"
-#   futures_multiplier = 5.0
-# and accept the integer-contract sizing chunkiness (operational floor
-# NAV ≈ £30k for clean fills — see Phase 4 report).
-equity_is_future = false
-futures_multiplier = 5.0
+# Futures execution — ON. The strategy holds MES contracts and sizes
+# them by integer-flooring the target notional / contract_notional.
+# Cf. Phase 4 finding: chunky-contract sizing produces a small CAGR
+# drag (-0.04pp at £30k NAV); operational floor is NAV ≥ £30k for
+# clean fills.
+equity_is_future = true
+futures_multiplier = 5.0   # MES: $5 per index point. ES is 50.
 
 # Phase 3 bond rotation — OFF. Phase 3 rejected the IGLT/IGLS rotation
-# on the operational churn gate (22+ flips/year at 60d lookback, 8+
-# even at 252d). Future rotation hypotheses must be pre-registered with
-# their own gate.
+# on the operational churn gate (22+ flips/year at 60d lookback).
 bond_rotation_instruments = []
 bond_rotation_bar_types   = []
 bond_rotation_lookback_days = 60
 
 # Operational — base currency = GBP for IBKR UK paper
-initial_equity   = 10000.0
+initial_equity   = 30000.0     # raised from £10k — Phase 4 operational floor
 base_ccy         = "GBP"
 warmup_bars      = 250
 rebalance_min_pct_change = 0.05
