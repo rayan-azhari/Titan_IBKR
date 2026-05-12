@@ -548,23 +548,35 @@ expected loss of -15.7%.
 **Engine:** MES futures (CME Micro E-mini S&P 500) at L=3
 **Capital split:** 10% equity sleeve, 90% bonds (equity_weight=0.10, bond_weight=0.90)
 **Base improvements:** I1 (rate-shock) + I2 (bond rotation) + I3 (opt-in EFA)
-**Vol target:** 6% annualised, applied as multiplicative scaler on daily strategy returns (30-day window, max_scale=2.0, lagged 1 day)
+**Vol target:** **8% annualised**, applied as multiplicative scaler on daily strategy returns (30-day window, max_scale=2.0, lagged 1 day)
 **Capitulation overlay:** disabled (re-tune in future PR)
 
-**Validated metrics (16-fold WFO):**
-- Stitched Sharpe: **2.337** (CI95 lo: 1.848, hi: 2.847)
-- CAGR: **15.95%**
-- Realised vol: 6.42%
-- MaxDD: **-4.99%**
-- Calmar: 3.20
+**Validated metrics (16-fold WFO at 8% target_vol):**
+- Stitched Sharpe: **2.285** (CI95 lo: 1.792, hi: 2.803)
+- CAGR: **20.03%**
+- Realised vol: 8.14%
+- MaxDD: **-6.62%**
+- Calmar: 3.03
 - 100% positive folds (16 of 16 OOS years)
 
-**Risk-of-ruin (10-year horizon, bootstrap):**
-- Median MaxDD: -6.31%
-- 1-in-20 path MaxDD: -9.46%
-- P(MaxDD > 10%): 3.5%
-- P(MaxDD > 15%): 0.06%
+**Risk-of-ruin (10-year horizon, bootstrap, 5,000 paths):**
+- Median MaxDD: -8.07%
+- 1-in-20 path MaxDD: -12.07%
+- 1-in-100 path MaxDD: -15.05%
+- Worst of 5,000 paths: -20.44%
+- P(MaxDD > 10%): 17.8%
+- P(MaxDD > 15%): 1.04%
+- P(MaxDD > 20%): 0.02%
 - P(MaxDD > 25%): 0% in 5,000 paths
+- P(end < starting capital, 20y): 0% in 5,000 paths
+
+**Why 8% over 6% or 12%:**
+
+The 6% target was the conservative-default; the 12% target was the maximum-CAGR option. 8% sits at the inflection point of the risk/reward trade-off:
+- vs 6%: +4pp CAGR (15.95% → 20.03%) for a real but bounded increase in DD distribution. Median 10y MaxDD shifts -6.3% → -8.1%; P(MaxDD>10%) goes 3.5% → 17.8% but P(MaxDD>15%) is still only 1%.
+- vs 12%: -5pp CAGR but **3× lower** P(-10% DD), **7× lower** P(-15% DD), worst-of-5000 path -20% vs -26%.
+
+In the 20-year bootstrap visualisation ([plot_bootstrap_equity_curves.py](../research/samir_stack/plot_bootstrap_equity_curves.py)): median ending wealth ~38× starting capital, worst-of-5000 ~11×. Investor should expect roughly one -8% drawdown per decade and have a 1-in-6 chance of a -10% drawdown over any 10-year stretch — uncomfortable but tolerable for someone with conviction in the strategy.
 
 ### 13.7 What's still on the table (not yet built)
 
