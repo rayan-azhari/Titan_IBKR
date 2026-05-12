@@ -47,6 +47,31 @@ class FakeOrder:
 # ── Pure-Python re-implementation of the detection logic ─────────────
 
 
+def detect_nlv_drop(
+    nlv_now: dict[str, float],
+    nlv_prev: dict[str, float],
+    *,
+    threshold_pct: float = 0.02,
+) -> list[str]:
+    """Re-implementation of D4 (NLV-drop) detection.
+
+    Mirrors the strategy's D4 branch in ``_reconcile``. Empty/zero baselines
+    silently seed without firing — only meaningful drops between two real
+    samples produce a finding.
+    """
+    findings: list[str] = []
+    for ccy, curr in nlv_now.items():
+        prev = nlv_prev.get(ccy)
+        if prev is None or prev <= 0:
+            continue
+        drop_pct = (prev - curr) / prev
+        if drop_pct > threshold_pct:
+            findings.append(
+                f"[D4] {ccy}: NLV dropped {drop_pct * 100:.2f}% from {prev:,.2f} to {curr:,.2f}"
+            )
+    return findings
+
+
 def detect_drift(
     positions: list,
     orders: list,
@@ -192,3 +217,47 @@ def test_detect_drift_d1_and_d2_compose_independently():
     findings = detect_drift(positions, [], portfolio_net, now_ns=10_000_000_000_000)
     assert any("[D1]" in f and " A " in f for f in findings)
     assert any("[D2]" in f and " B" in f for f in findings)
+
+
+# ── D4: NLV-drop detection tests ─────────────────────────────────────
+
+
+def test_detect_nlv_drop_first_sample_seeds_no_alert():
+    """No previous baseline → no alert (just seeds)."""
+    findings = detect_nlv_drop({"GBP": 9882.0}, {}, threshold_pct=0.02)
+    assert findings == []
+
+
+def test_detect_nlv_drop_within_threshold_no_alert():
+    """1% drop with 2% threshold → no alert."""
+    findings = detect_nlv_drop({"GBP": 9783.0}, {"GBP": 9882.0}, threshold_pct=0.02)
+    assert findings == []
+
+
+def test_detect_nlv_drop_above_threshold_alerts():
+    """3% drop with 2% threshold → alert."""
+    findings = detect_nlv_drop({"GBP": 9586.0}, {"GBP": 9882.0}, threshold_pct=0.02)
+    assert any("[D4]" in f and "GBP" in f for f in findings)
+
+
+def test_detect_nlv_drop_increase_no_alert():
+    """NLV increased → no alert (only drops trigger D4)."""
+    findings = detect_nlv_drop({"GBP": 10500.0}, {"GBP": 9882.0}, threshold_pct=0.02)
+    assert findings == []
+
+
+def test_detect_nlv_drop_zero_baseline_skipped():
+    """Zero or negative baseline is treated as missing (no division by zero)."""
+    findings = detect_nlv_drop({"GBP": 100.0}, {"GBP": 0.0}, threshold_pct=0.02)
+    assert findings == []
+
+
+def test_detect_nlv_drop_per_currency_independent():
+    """Multi-currency account: GBP drop alerts independently of USD."""
+    findings = detect_nlv_drop(
+        {"GBP": 9000.0, "USD": 13000.0},
+        {"GBP": 9882.0, "USD": 13000.0},  # GBP drops 9%, USD flat
+        threshold_pct=0.02,
+    )
+    assert any("[D4]" in f and "GBP" in f for f in findings)
+    assert not any("[D4]" in f and "USD" in f for f in findings)

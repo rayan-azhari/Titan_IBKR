@@ -109,7 +109,7 @@ Mapping the rehydration bug through the framework:
 | T1.5 | NT API contract tests | ✅ shipped | #6 |
 | T1.4 | Order-rejection page (audit + global hook) | ✅ shipped | #7 |
 | T1.1 | Position-reconciliation watchdog | ✅ shipped | #8 |
-| T1.3 | NLV divergence alarm | pending | — |
+| T1.3 | NLV divergence alarm | ✅ shipped | #9 |
 | T1.2 | Double-restart smoke script | pending | — |
 
 Update this table as items ship.

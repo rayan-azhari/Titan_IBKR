@@ -26,6 +26,13 @@ runs a battery of cheap drift checks against the in-process NT cache:
        acknowledged-at-exchange ghost, or a strategy that submitted an
        order then died before tracking it.
 
+  D4.  **NLV drop.** Tracks broker NLV (per base currency) across
+       reconciliation cycles and alerts on absolute drops greater than
+       ``nlv_drop_threshold_pct`` (default 2%) since the previous
+       sample. Catches sudden losses, phantom-position margin lockup,
+       and broker accounting glitches. The first sample seeds the
+       baseline (no alert).
+
 Doesn't trade. Doesn't subscribe to anything the trading strategies
 aren't already using. Cost on the message-bus is one cache scan per H1
 bar.
@@ -66,6 +73,11 @@ class ReconciliationConfig(StrategyConfig):
     # Minimum minutes between identical alerts (suppress repeat spam if
     # a drift persists across several bars).
     alert_cooldown_minutes: int = 60
+    # NLV-drop threshold (decimal, e.g. 0.02 = 2%). Drops greater than
+    # this between successive reconciliation cycles trigger D4. Leave
+    # generous (1-2%) to avoid false alarms from normal MTM swings on a
+    # leveraged portfolio.
+    nlv_drop_threshold_pct: float = 0.02
 
 
 class ReconciliationStrategy(Strategy):
@@ -77,6 +89,8 @@ class ReconciliationStrategy(Strategy):
         self.bar_type = BarType.from_str(config.bar_type)
         self._last_alert_hash: str | None = None
         self._last_alert_ts_ns: int = 0
+        # NLV baseline per currency, e.g. {"GBP": 9882.45}. None until first sample.
+        self._last_nlv: dict[str, float] = {}
         self._load_state()
 
     def _load_state(self) -> None:
@@ -85,15 +99,23 @@ class ReconciliationStrategy(Strategy):
                 data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
                 self._last_alert_hash = data.get("hash")
                 self._last_alert_ts_ns = int(data.get("ts_ns", 0))
+                self._last_nlv = dict(data.get("last_nlv", {}))
         except Exception:
             self._last_alert_hash = None
             self._last_alert_ts_ns = 0
+            self._last_nlv = {}
 
     def _persist_state(self) -> None:
         try:
             STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             STATE_FILE.write_text(
-                json.dumps({"hash": self._last_alert_hash, "ts_ns": self._last_alert_ts_ns}),
+                json.dumps(
+                    {
+                        "hash": self._last_alert_hash,
+                        "ts_ns": self._last_alert_ts_ns,
+                        "last_nlv": self._last_nlv,
+                    }
+                ),
                 encoding="utf-8",
             )
         except Exception as e:
@@ -118,6 +140,36 @@ class ReconciliationStrategy(Strategy):
         except Exception as e:
             # Watchdog must NEVER crash the runtime. Log loudly, swallow.
             self.log.error(f"Reconciliation scan failed: {e}")
+
+    def _sample_nlv(self) -> dict[str, float]:
+        """Return current broker NLV per currency (e.g. {"GBP": 9882.45}).
+
+        Uses ``self.portfolio.account(venue)`` for the bar-type's venue,
+        falling back to ``self.cache.accounts()`` if the portfolio lookup
+        fails. Returns an empty dict on any error so D4 simply skips.
+        """
+        try:
+            account = None
+            try:
+                account = self.portfolio.account(self.bar_type.instrument_id.venue)
+            except Exception:
+                pass
+            if account is None:
+                try:
+                    accounts = list(self.cache.accounts())
+                    account = accounts[0] if accounts else None
+                except Exception:
+                    return {}
+            if account is None:
+                return {}
+            try:
+                balances = account.balances()
+            except Exception:
+                return {}
+            return {str(ccy): float(bal.total.as_double()) for ccy, bal in balances.items()}
+        except Exception as e:
+            self.log.warning(f"Reconciliation: _sample_nlv failed: {e}")
+            return {}
 
     # ── core reconciliation logic ─────────────────────────────────────
 
@@ -179,10 +231,36 @@ class ReconciliationStrategy(Strategy):
                     f"{age_min:.0f} minutes (status={order.status})"
                 )
 
+        # D4. NLV drop. Sample broker NLV per currency; alert on absolute
+        # drops greater than nlv_drop_threshold_pct since previous sample.
+        # First sample seeds the baseline (no alert).
+        nlv_now = self._sample_nlv()
+        nlv_changed = False
+        for ccy, nlv_curr in nlv_now.items():
+            nlv_prev = self._last_nlv.get(ccy)
+            if nlv_prev is None or nlv_prev <= 0:
+                continue
+            drop_pct = (nlv_prev - nlv_curr) / nlv_prev
+            if drop_pct > self.config.nlv_drop_threshold_pct:
+                findings.append(
+                    f"[D4 nlv-drop] {ccy}: NLV dropped {drop_pct * 100:.2f}% from "
+                    f"{nlv_prev:,.2f} to {nlv_curr:,.2f} (threshold "
+                    f"{self.config.nlv_drop_threshold_pct * 100:.1f}%)"
+                )
+        # Always update baseline so the next cycle compares against the
+        # most recent sample (alert is "since last bar", not "since launch").
+        if nlv_now != self._last_nlv:
+            self._last_nlv = nlv_now
+            nlv_changed = True
+
         if not findings:
+            if nlv_changed:
+                # Persist the updated baseline even when no alert fires.
+                self._persist_state()
             self.log.debug(
                 f"Reconciliation OK at {bar_dt.isoformat()}: "
-                f"{len(open_positions)} open positions, {len(open_orders)} open orders"
+                f"{len(open_positions)} open positions, {len(open_orders)} open orders, "
+                f"NLV {nlv_now}"
             )
             return
 
