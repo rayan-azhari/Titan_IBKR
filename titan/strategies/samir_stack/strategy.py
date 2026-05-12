@@ -1,11 +1,27 @@
 """samir_stack/strategy.py — Samir-Stack live NautilusTrader Strategy.
 
-Regime-gated 40/60 leveraged-equity + bond stack. Two trading instruments
-(leveraged-equity ETF + bond ETF) plus signal sources (SPY index proxy,
-VIX, HYG, IEF for the regime classifier).
+Regime-gated leveraged-equity + bond stack. Two trading instruments
+(equity ETF held on margin + bond ETF) plus signal sources (SPY proxy,
+VIX, HYG, IEF for the multi-indicator regime classifier).
 
-Research lineage: research/samir_stack/
-WFO 5/5 folds positive, mean Calmar 0.655, sanctuary 1.05.
+Research lineage: ``research/samir_stack/``, see
+``directives/Samir-Stack Margin Drift Research 2026-05-11.md`` §13.
+
+Live champion config (May 12 2026):
+  Equity sleeve: CSPX (margin L=3 in v1; MES futures planned for Phase 2)
+  Bond sleeve:   IEF (or static cash for v1; rotation planned for Phase 2)
+  Capital split: 10% equity / 90% bond
+  Vol target:    8% annualised, 30-day rolling realised vol scaler,
+                 capped at 2× and lagged 1 day
+  Capitulation:  disabled (current parameters drag at this baseline)
+
+WFO validation (16 OOS folds):
+  Stitched Sharpe 2.285 | CI lo 1.792 | CAGR 20.03% | MaxDD -6.62%
+  Calmar 3.03 | 100% positive folds.
+
+Bootstrap risk-of-ruin (10y, 5,000 paths):
+  Median MaxDD -8.07% | worst-of-5,000 -20.44%
+  P(MaxDD>15%) = 1.04% | P(end < starting capital) = 0%
 
 Execution flow:
 1. On each daily bar of SPY (the regime-driving signal):
@@ -26,7 +42,7 @@ Pre-flight gates required before deployment (see directives/Pre-Flight Checklist
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 from nautilus_trader.config import StrategyConfig
@@ -86,9 +102,9 @@ class SamirStackConfig(StrategyConfig):
     fx_rate_equity_quote_to_base: float = 1.0
     fx_rate_bond_quote_to_base: float = 1.0
 
-    # Strategy parameters (defaults from research)
-    equity_weight: float = 0.40
-    bond_weight: float = 0.60
+    # Strategy parameters (May 12 2026 champion config — see header).
+    equity_weight: float = 0.10
+    bond_weight: float = 0.90
     L_max: float = 3.0
     tier_thresholds: tuple[float, ...] = (0.30, 0.50, 0.75)
     hysteresis_buffer: float = 0.05
@@ -99,6 +115,15 @@ class SamirStackConfig(StrategyConfig):
     dd_kill: float = 0.15
     dd_re_entry_score: float = 0.70
     dd_re_entry_bars: int = 5
+
+    # Vol-targeting overlay (Tier 13.4 of the directive write-up).
+    # Multiplicative scaler applied to the equity-sleeve target notional
+    # on every rebalance. Computed as ``target_vol / realised_vol_30d``,
+    # capped at ``vol_target_max_scale``, lagged 1 bar to avoid look-ahead.
+    # Set ``vol_target_annual <= 0`` to disable (returns to baseline sizing).
+    vol_target_annual: float = 0.08
+    vol_target_window: int = 30
+    vol_target_max_scale: float = 2.0
 
     # Operational
     initial_equity: float = 10_000.0
@@ -121,6 +146,13 @@ class _StrategyState:
     quiet_bars: int = 9999
     dd_recovery_bars: int = 0
     last_rebalance_ts: pd.Timestamp | None = None
+    # Daily equity-curve sample for the vol-target rolling vol. Stored as
+    # a list of base-ccy NLV values; computed differences are the daily
+    # returns. Bounded to ~vol_target_window × 4 to keep memory tiny.
+    equity_curve: list[float] = field(default_factory=list)
+    # Last computed vol-target scale, persisted across rebalances so a
+    # missing-bar day doesn't reset to 1.0.
+    last_vol_scale: float = 1.0
 
 
 class SamirStackStrategy(Strategy):
@@ -197,11 +229,19 @@ class SamirStackStrategy(Strategy):
             initial_equity=self.config.initial_equity,
         )
         portfolio_risk_manager.register_strategy(self._prm_id, self.config.initial_equity)
+
+        # Rehydrate any pre-existing broker positions (Tier 1.1 pattern,
+        # post-May-11 fix). MUST run before the first on_bar so the
+        # rebalance logic compares against actual broker state, not zero.
+        self._rehydrate_position_from_broker()
+
         self.log.info(
             f"Samir-Stack started: equity={self.equity_id} ({self.config.equity_quote_ccy}), "
             f"bond={self.bond_id} ({self.config.bond_quote_ccy}), base_ccy={self.config.base_ccy}, "
             f"split={self.config.equity_weight}/{self.config.bond_weight}, "
-            f"L_max={self.config.L_max}"
+            f"L_max={self.config.L_max}, "
+            f"vol_target={self.config.vol_target_annual:.0%} "
+            f"(window={self.config.vol_target_window}d)"
         )
 
     def on_stop(self) -> None:
@@ -378,6 +418,97 @@ class SamirStackStrategy(Strategy):
 
     # ── Order management ─────────────────────────────────────────────────
 
+    def _vol_target_scale(self, equity_value: float) -> float:
+        """Compute the vol-target multiplicative scale for the equity sleeve.
+
+        Samples the strategy's own NLV onto an internal buffer (one entry
+        per rebalance call), computes 30-day rolling realised vol of the
+        daily NLV returns, and returns ``min(target / realised, max_scale)``.
+        Returns 1.0 (no-op) when:
+          - vol_target_annual <= 0 (feature disabled)
+          - insufficient history to compute realised vol
+          - realised vol degenerate (zero / NaN)
+
+        The scale is persisted as ``state.last_vol_scale`` so a single
+        missing-bar day doesn't snap us back to 1.0 unexpectedly.
+
+        Lag: scale is computed from history *up to and including* the
+        most recent bar's NLV, then returned for the *current* rebalance.
+        Because NLV is updated by yesterday's MTM (positions are evaluated
+        on close), this is effectively scale-from-yesterday's-vol applied
+        to today's sizing — the same lag-by-1 semantics as the research
+        ``vol_target()`` wrapper in ``run_overlay_sweep.py``.
+        """
+        target = self.config.vol_target_annual
+        if target is None or target <= 0:
+            return 1.0
+        # Append current NLV (skip duplicates from same bar)
+        if self._state.equity_curve and self._state.equity_curve[-1] == equity_value:
+            pass  # idempotent
+        else:
+            self._state.equity_curve.append(equity_value)
+        # Bound buffer
+        max_keep = self.config.vol_target_window * 4
+        if len(self._state.equity_curve) > max_keep:
+            self._state.equity_curve = self._state.equity_curve[-max_keep:]
+
+        n = len(self._state.equity_curve)
+        if n < self.config.vol_target_window + 1:
+            return self._state.last_vol_scale  # warmup
+
+        # Daily returns from the buffered NLV samples
+        eq = self._state.equity_curve
+        rets = [(eq[i] - eq[i - 1]) / eq[i - 1] for i in range(1, n) if eq[i - 1] != 0]
+        window_rets = rets[-self.config.vol_target_window :]
+        if len(window_rets) < 2:
+            return self._state.last_vol_scale
+        # Sample std × sqrt(252) for annualised
+        mean_r = sum(window_rets) / len(window_rets)
+        var = sum((r - mean_r) ** 2 for r in window_rets) / (len(window_rets) - 1)
+        if var <= 0:
+            return self._state.last_vol_scale
+        realised_vol = (var**0.5) * (252.0**0.5)
+        if realised_vol < 1e-8:
+            return self._state.last_vol_scale
+        scale = min(target / realised_vol, self.config.vol_target_max_scale)
+        # Floor at small positive value to avoid zero notional from
+        # transient extreme realised vol
+        scale = max(scale, 0.01)
+        self._state.last_vol_scale = scale
+        return scale
+
+    def _rehydrate_position_from_broker(self) -> None:
+        """Adopt any open broker positions for our equity / bond instruments.
+
+        Mirrors the Tier 1.1 pattern (see
+        ``titan/strategies/bond_gold/strategy.py`` and
+        ``directives/Operational Robustness Framework 2026-05-12.md``).
+        Critical: must NOT filter ``cache.positions`` by ``strategy_id``
+        — EXTERNAL-tagged positions reconciled by NT's ExecEngine on
+        startup carry no ``strategy_id`` from the prior session.
+
+        Adoption sets ``last_rebalance_ts`` to "very old" so the next
+        on_bar evaluation will trigger a rebalance check against the
+        rehydrated state — the strategy then either holds (target ==
+        current) or trades to true-up (target != current).
+        """
+        try:
+            adopted: list[str] = []
+            for instrument_id in (self.equity_id, self.bond_id):
+                positions = [
+                    p for p in self.cache.positions(instrument_id=instrument_id) if not p.is_closed
+                ]
+                if not positions:
+                    continue
+                qty = sum(float(p.signed_qty) for p in positions)
+                tags = sorted({str(p.strategy_id) for p in positions})
+                if qty != 0:
+                    adopted.append(f"{instrument_id} qty={qty:+.0f} tags={tags}")
+            if adopted:
+                self.log.info("REHYDRATED Samir-Stack: " + " | ".join(adopted))
+        except Exception as e:
+            self.log.warning(f"_rehydrate_position_from_broker failed: {e}")
+
     def _rebalance_if_needed(
         self,
         target_eq_w: float,
@@ -390,12 +521,16 @@ class SamirStackStrategy(Strategy):
             else self.config.initial_equity
         )
 
+        # Vol-target scale applied ONLY to the equity sleeve. The bond
+        # sleeve is the defensive ballast and shouldn't be vol-scaled
+        # (it's already low-vol by construction; scaling it up at calm
+        # times defeats the purpose).
+        vol_scale = self._vol_target_scale(equity_value)
+        target_eq_w_scaled = target_eq_w * vol_scale
+
         # Target notional in BASE currency.
-        # Equity sleeve effective notional = target_eq_w × equity_value
-        # (the leveraged ETF provides the L multiplier internally, so we hold
-        # target_eq_w fraction of NAV in 3USL — which gives target_eq_w × L
-        # effective S&P exposure).
-        target_eq_notional = target_eq_w * equity_value
+        # Equity sleeve effective notional = target_eq_w_scaled × equity_value
+        target_eq_notional = target_eq_w_scaled * equity_value
         target_bd_notional = target_bd_w * equity_value
 
         # FX-aware unit conversion per project contract (see CLAUDE.md).
