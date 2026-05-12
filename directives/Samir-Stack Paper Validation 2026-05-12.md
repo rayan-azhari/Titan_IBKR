@@ -41,6 +41,40 @@ entry. Layering them in comes after a clean v1 baseline.
 
 ---
 
+## 2.5 Equity allocation — why Samir gets `weight=3.0`
+
+Samir-Stack uses a 10/90 split (10% capital → equity sleeve, 90% → bond
+sleeve). At equal-allocation across 5 trading strategies on a £30k
+paper account:
+
+  - Each strategy gets ~$7.6k
+  - Samir's equity sleeve = 10% × $7.6k = **$760** (1-2 CSPX shares,
+    50bps per fill at IBKR's $4 minimum — too costly)
+  - Samir's bond sleeve = 90% × $7.6k = $6.8k (~70 IEF shares — fine)
+
+To make the equity sleeve viable, the registry entry sets
+``"weight": 3.0`` on samir_stack_paper. New auto-equity allocation:
+
+| Strategy | weight | share of NLV (5-strategy set) | At £30k paper |
+|---|---|---|---|
+| mr_audjpy | 1.0 | 1/7 ≈ 14% | ~$4.3k |
+| bond_equity_ihyu_cspx | 1.0 | 1/7 ≈ 14% | ~$4.3k |
+| bond_equity_ihyg_vusd | 1.0 | 1/7 ≈ 14% | ~$4.3k |
+| bond_equity_ihyg_eimi | 1.0 | 1/7 ≈ 14% | ~$4.3k |
+| **samir_stack_paper** | **3.0** | **3/7 ≈ 43%** | **~$12.9k** |
+
+Samir's equity sleeve becomes 10% × $12.9k = **$1.3k → 2-3 CSPX shares,
+~30bps per fill** — workable. Bond sleeve = $11.6k → ~120 IEF shares.
+
+**Caveat:** The bond_equity strategies' allocation drops from $9.5k to
+$4.3k each during the validation window. They'll trade smaller positions
+and pay marginally higher per-fill commission ratios. This is acceptable
+for a 4-week window; the operator should monitor that bond_equity
+positions don't fall below the $10k floor's intent.
+
+If preferred, top up the paper account to $60k+ so all 5 strategies
+sit comfortably above $10k (no weight needed).
+
 ## 3. Pre-deployment checklist
 
 Run each of these before kicking off the validation period.

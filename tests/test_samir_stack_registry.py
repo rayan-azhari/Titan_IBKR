@@ -147,3 +147,96 @@ def test_samir_stack_paper_contracts_have_required_fields():
         assert getattr(c, "primaryExchange", None) or getattr(c, "exchange", None), (
             f"Need exchange or primaryExchange on {c}"
         )
+
+
+# ── Per-strategy weighted equity allocation ──────────────────────────
+
+
+def test_samir_stack_paper_uses_weight_above_one():
+    """Samir's 10/90 split puts only 10% of its share into CSPX. At the
+    default equal-allocation, the equity sleeve would be too small to
+    trade above IBKR's $4 minimum commission cost-effectively. Weighted
+    above 1.0 to fix this."""
+    weight = STRATEGY_REGISTRY["samir_stack_paper"].get("weight", 1.0)
+    assert weight > 1.0, (
+        f"samir_stack_paper has weight={weight}; expected > 1.0 to "
+        f"compensate for the 10/90 split's small equity sleeve"
+    )
+
+
+def test_other_strategies_use_default_weight():
+    """All non-Samir trading strategies should use the implicit default
+    weight (1.0). If you change one, document it explicitly."""
+    expected_default = [
+        "mr_audjpy",
+        "bond_equity_ihyu_cspx",
+        "bond_equity_ihyg_vusd",
+        "bond_equity_ihyg_eimi",
+    ]
+    for name in expected_default:
+        weight = STRATEGY_REGISTRY[name].get("weight", 1.0)
+        assert weight == 1.0, (
+            f"{name} has explicit weight={weight}; default is 1.0. "
+            f"If intentional, update this test."
+        )
+
+
+def weighted_allocation_pure(nlv_usd: float, weights: dict[str, float]) -> dict[str, float]:
+    """Pure-function copy of the weighted-allocation math in
+    ``_auto_allocate_initial_equity``. Tested here so the math is
+    locked in even though the surrounding function calls into ibapi."""
+    total_w = sum(weights.values())
+    if total_w <= 0:
+        # Fallback: equal allocation
+        n = len(weights)
+        return dict.fromkeys(weights, nlv_usd / n) if n > 0 else {}
+    return {name: nlv_usd * (w / total_w) for name, w in weights.items()}
+
+
+def test_weighted_allocation_equal_weights_matches_legacy():
+    """When all weights are 1.0, output matches the old equal-divide
+    behaviour exactly."""
+    nlv = 30_000.0
+    weights = {f"s{i}": 1.0 for i in range(4)}
+    out = weighted_allocation_pure(nlv, weights)
+    assert all(abs(v - 7500.0) < 0.01 for v in out.values())
+
+
+def test_weighted_allocation_proportional():
+    """Weights divide NLV in proportion. 4 strategies with weights
+    1+1+1+3 → ratios 1/6, 1/6, 1/6, 3/6 = 50%."""
+    nlv = 30_000.0
+    weights = {"a": 1.0, "b": 1.0, "c": 1.0, "samir": 3.0}
+    out = weighted_allocation_pure(nlv, weights)
+    assert abs(out["a"] - 5000.0) < 0.01
+    assert abs(out["samir"] - 15000.0) < 0.01
+    assert abs(sum(out.values()) - nlv) < 0.01
+
+
+def test_weighted_allocation_zero_total_falls_back_to_equal():
+    """Defensive: if all weights are 0, don't divide-by-zero. Fall back
+    to equal allocation."""
+    nlv = 30_000.0
+    weights = {"a": 0.0, "b": 0.0}
+    out = weighted_allocation_pure(nlv, weights)
+    assert abs(out["a"] - 15000.0) < 0.01
+    assert abs(out["b"] - 15000.0) < 0.01
+
+
+def test_samir_validation_set_allocation_at_30k_paper():
+    """End-to-end check at a realistic paper NLV: with 4 default-weight
+    + 1 weight=3 strategy, Samir gets 3/7 of NLV."""
+    nlv = 30_000.0
+    weights = {
+        "mr_audjpy": 1.0,
+        "bond_equity_ihyu_cspx": 1.0,
+        "bond_equity_ihyg_vusd": 1.0,
+        "bond_equity_ihyg_eimi": 1.0,
+        "samir_stack_paper": 3.0,
+    }
+    out = weighted_allocation_pure(nlv, weights)
+    # Samir gets 3/7 ≈ 42.9% → ~$12,857
+    assert 12_000 < out["samir_stack_paper"] < 14_000
+    # Each other strategy gets 1/7 ≈ 14.3% → ~$4,286
+    for name in ["mr_audjpy", "bond_equity_ihyu_cspx"]:
+        assert 4_000 < out[name] < 5_000

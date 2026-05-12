@@ -314,6 +314,13 @@ def _auto_allocate_initial_equity(
     account NLV. Uses ``TITAN_PORTFOLIO_USD_EQUITY`` env override if set,
     else queries the broker. On any failure, registry defaults are kept.
 
+    Per-strategy weights: each registry entry may set ``"weight": float``
+    (default 1.0). Total NLV is divided in proportion to weights, not
+    equally. Use to give a high-conviction strategy more capital, or
+    to bring a small-notional strategy above the cost-floor without
+    starving the rest. Example: ``"weight": 3.0`` allocates 3× the
+    baseline share.
+
     Mutates ``STRATEGY_REGISTRY[name]["config_kwargs"]["initial_equity"]``
     in place for each strategy ``name`` flagged ``trading=True``.
     """
@@ -355,10 +362,28 @@ def _auto_allocate_initial_equity(
             )
             return
 
-    per_strategy = total_usd / n
+    # Per-strategy weights (default 1.0 each = equal allocation, the
+    # legacy behaviour). Setting ``"weight": 3.0`` on an entry gives it
+    # 3× the baseline share. Useful when a high-equity-need strategy
+    # (e.g., samir_stack with 10/90 split) is co-deployed alongside
+    # smaller-notional strategies during paper validation.
+    weights = {name: float(STRATEGY_REGISTRY[name].get("weight", 1.0)) for name in trading}
+    total_weight = sum(weights.values())
+    if total_weight <= 0:
+        logger.warning("  Auto-equity: total weight <= 0, falling back to equal allocation")
+        weights = dict.fromkeys(trading, 1.0)
+        total_weight = float(n)
+
+    per_strategy_map: dict[str, float] = {
+        name: total_usd * (w / total_weight) for name, w in weights.items()
+    }
+    min_alloc = min(per_strategy_map.values())
+    is_weighted = any(abs(w - 1.0) > 1e-9 for w in weights.values())
+    weight_note = " (weighted)" if is_weighted else ""
     logger.info(
         f"  Auto-equity: account NLV = ${total_usd:,.2f} (USD), "
-        f"divided across {n} trading strategies = ${per_strategy:,.2f} each"
+        f"divided across {n} trading strategies{weight_note}; "
+        f"min ${min_alloc:,.2f}, max ${max(per_strategy_map.values()):,.2f}"
     )
 
     # Min-notional guardrail (May 2026 cost audit). At IBKR's $4 minimum
@@ -367,23 +392,29 @@ def _auto_allocate_initial_equity(
     # edge. Operator override via TITAN_MIN_STRATEGY_EQUITY_USD env.
     # See: directives/Cost Model Audit 2026-05-11.md
     min_floor = float(os.getenv("TITAN_MIN_STRATEGY_EQUITY_USD", "10000"))
-    if per_strategy < min_floor:
-        cost_bps_per_fill = 4.0 / per_strategy * 10_000
+    if min_alloc < min_floor:
+        cost_bps_per_fill = 4.0 / min_alloc * 10_000
+        below_floor = [
+            f"{n}=${per_strategy_map[n]:,.0f}" for n in trading if per_strategy_map[n] < min_floor
+        ]
         logger.warning(
-            f"  Auto-equity: per-strategy notional ${per_strategy:,.2f} is "
-            f"BELOW the ${min_floor:,.0f} floor (TITAN_MIN_STRATEGY_EQUITY_USD). "
-            f"At IBKR's $4 min commission this is {cost_bps_per_fill:.0f} bps "
-            f"per fill — likely eating 2-6% per year of strategy edge. "
-            f"Recommended: increase NLV or reduce active trading-strategy "
-            f"count from {n} to {max(1, int(total_usd / min_floor))}."
+            f"  Auto-equity: {len(below_floor)} strategy(s) below ${min_floor:,.0f} "
+            f"floor ({', '.join(below_floor)}). At IBKR's $4 min commission this is "
+            f"up to {cost_bps_per_fill:.0f} bps per fill — likely eating 2-6% per "
+            f"year of strategy edge. Recommended: increase NLV, reduce active "
+            f"trading-strategy count, or set per-strategy `weight` in the "
+            f"registry to redirect capital."
         )
 
     for name in trading:
         entry = STRATEGY_REGISTRY[name]
         old = entry["config_kwargs"].get("initial_equity")
+        per_strategy = per_strategy_map[name]
         entry["config_kwargs"]["initial_equity"] = per_strategy
         old_str = f"${old:,.2f}" if isinstance(old, (int, float)) else "(default)"
-        logger.info(f"    {name:<30} initial_equity {old_str} → ${per_strategy:,.2f}")
+        weight = weights[name]
+        weight_str = f" [weight {weight:g}]" if abs(weight - 1.0) > 1e-9 else ""
+        logger.info(f"    {name:<30} initial_equity {old_str} → ${per_strategy:,.2f}{weight_str}")
 
 
 # ── Strategy Registry ────────────────────────────────────────────────────────
@@ -722,6 +753,16 @@ STRATEGY_REGISTRY = {
     # via ``--strategies samir_validation`` to keep existing live
     # strategies' sizing undisturbed during the trial.
     "samir_stack_paper": {
+        # Weighted at 3.0 — Samir-Stack's 10/90 split puts only 10% of
+        # its share into CSPX; at the equal-allocation default the equity
+        # sleeve would be too small to cross IBKR's $4-minimum commission
+        # threshold without prohibitive per-fill cost. With weight=3.0
+        # against the current 4 default-weight champion strategies
+        # (4 × 1.0 + 1 × 3.0 = 7), Samir gets 3/7 ≈ 43% of NLV. At £30k
+        # paper that's ~$13k → $1.3k CSPX equity sleeve → 2-3 shares,
+        # commission ratio ~30bps per trade. Workable; bond sleeve gets
+        # a healthy ~$11.7k.
+        "weight": 3.0,
         "module": "titan.strategies.samir_stack.strategy",
         "config_cls": "SamirStackConfig",
         "strategy_cls": "SamirStackStrategy",
