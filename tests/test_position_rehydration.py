@@ -68,3 +68,23 @@ def test_rehydration_does_not_filter_by_strategy_id(strategy_cls):
         f"broker positions and re-introduces the May 2026 phantom-position "
         f"bug. See directives/Rehydration Bug 2026-05-11.md."
     )
+
+
+def test_bond_gold_does_not_use_brittle_position_side_string_check():
+    """Locks in the May 12 2026 fix: bond_gold must not gate entries on
+    ``str(position.side) == "LONG"``.
+
+    The bug: NautilusTrader 1.221's PositionSide Cython enum renders as
+    ``"PositionSide.LONG"`` rather than ``"LONG"`` for EXTERNAL-rehydrated
+    positions, so the brittle string comparison silently evaluated to False
+    and bond_gold layered a fresh BUY on top of the rehydrated inventory.
+    Use ``signed_qty`` (numeric) or the enum value directly instead.
+    """
+    source = inspect.getsource(BondGoldStrategy)
+    assert 'str(position.side) == "LONG"' not in source, (
+        "BondGoldStrategy uses the brittle string comparison "
+        '`str(position.side) == "LONG"` which fails for EXTERNAL-rehydrated '
+        "positions in NautilusTrader 1.221 (Cython enum str() returns "
+        "'PositionSide.LONG' not 'LONG'). Use signed_qty or the enum value "
+        "directly. See directives/Rehydration Bug 2026-05-11.md."
+    )
