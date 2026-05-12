@@ -90,6 +90,16 @@ _STRATEGY_WARMUP_FILES: dict[str, list[str]] = {
         "EIMI_D.parquet",
         "IHYG_D.parquet",
     ],
+    # Samir-Stack v1 paper deployment — uses the multi-indicator regime
+    # panel built from CSPX (equity) + IEF (bond) + SPY/HYG signals.
+    # VIX intentionally absent (no live subscription configured); the
+    # research regime score gracefully NaN-skips that column.
+    "samir_stack_paper": [
+        "CSPX_D.parquet",
+        "IEF_D.parquet",
+        "SPY_D.parquet",
+        "HYG_D.parquet",
+    ],
 }
 
 
@@ -699,6 +709,85 @@ STRATEGY_REGISTRY = {
             "ticker": "NOC",
         },
     },
+    # ── Samir-Stack 4-week paper validation deployment (May 2026) ────────
+    #
+    # Phase 1 v1 config — CSPX margin equity, single IEF bond, NO MES
+    # futures, NO bond rotation, NO live VIX subscription. The 5-indicator
+    # regime score (without VIX) still scores high in the research panel.
+    # Promotion to ``champion_portfolio`` requires 4 weeks of clean
+    # operation (no D5 alerts, replay-audit reports zero actionable
+    # mismatches). See ``directives/Samir-Stack Paper Validation 2026-05-12.md``.
+    #
+    # Capital allocation: NOT in champion_portfolio — operator opts in
+    # via ``--strategies samir_validation`` to keep existing live
+    # strategies' sizing undisturbed during the trial.
+    "samir_stack_paper": {
+        "module": "titan.strategies.samir_stack.strategy",
+        "config_cls": "SamirStackConfig",
+        "strategy_cls": "SamirStackStrategy",
+        "contracts": [
+            # Equity (margin-traded UCITS S&P 500 — already in container)
+            IBContract(
+                secType="STK",
+                symbol="CSPX",
+                exchange="SMART",
+                primaryExchange="LSEETF",
+                currency="USD",
+            ),
+            # Bond (US Treasuries 7-10y)
+            IBContract(
+                secType="STK",
+                symbol="IEF",
+                exchange="SMART",
+                primaryExchange="ARCA",
+                currency="USD",
+            ),
+            # Signal: SPY (regime driver — primary)
+            IBContract(
+                secType="STK",
+                symbol="SPY",
+                exchange="SMART",
+                primaryExchange="ARCA",
+                currency="USD",
+            ),
+            # Signal: HYG (credit-spread indicator vs IEF)
+            IBContract(
+                secType="STK",
+                symbol="HYG",
+                exchange="SMART",
+                primaryExchange="ARCA",
+                currency="USD",
+            ),
+        ],
+        "config_kwargs": {
+            "equity_instrument_id": "CSPX.LSEETF",
+            "bond_instrument_id": "IEF.ARCA",
+            "signal_spy_id": "SPY.ARCA",
+            "signal_hyg_id": "HYG.ARCA",
+            "signal_ief_id": "IEF.ARCA",
+            "bar_type_equity_d": "CSPX.LSEETF-1-DAY-LAST-EXTERNAL",
+            "bar_type_bond_d": "IEF.ARCA-1-DAY-LAST-EXTERNAL",
+            "bar_type_spy_d": "SPY.ARCA-1-DAY-LAST-EXTERNAL",
+            "bar_type_hyg_d": "HYG.ARCA-1-DAY-LAST-EXTERNAL",
+            # NOTE: signal_vix_id intentionally omitted — VIX index data
+            # requires a paid IBKR market-data subscription. The 5-indicator
+            # regime score (sans VIX) is still the research-blessed default
+            # behaviour when an indicator is missing (NaN-skip semantics).
+            # equity_quote_ccy/bond_quote_ccy stay USD (defaults). Account
+            # base on the UK paper container is GBP — fx_rate_*_quote_to_base
+            # is read from env at startup (TITAN_FX_USD_TO_GBP) or stays 1.0
+            # which raises on_start unless explicitly overridden.
+            "L_max": 3.0,
+            "equity_weight": 0.10,
+            "bond_weight": 0.90,
+            "vol_target_annual": 0.08,
+            "vol_target_window": 30,
+            # Phase 2 + 3 deferred — keep v1 simple for validation
+            "equity_is_future": False,
+            "bond_rotation_instruments": (),
+            "bond_rotation_bar_types": (),
+        },
+    },
 }
 
 # Pre-defined strategy sets
@@ -724,6 +813,20 @@ STRATEGY_SETS = {
         "bond_equity_ihyg_eimi",  # added 2026-05-01 (see project_ihyg_emim_discovery.md)
         "daily_summary",
         "reconciliation",  # added 2026-05-12 (see Operational Robustness Framework)
+    ],
+    # 4-week paper validation set — adds Samir-Stack alongside the
+    # champion portfolio. Once 4 weeks complete with zero D5 alerts and
+    # replay-audit reports zero actionable mismatches, samir_stack_paper
+    # promotes into champion_portfolio. See
+    # ``directives/Samir-Stack Paper Validation 2026-05-12.md``.
+    "samir_validation": [
+        "mr_audjpy",
+        "bond_equity_ihyu_cspx",
+        "bond_equity_ihyg_vusd",
+        "bond_equity_ihyg_eimi",
+        "daily_summary",
+        "reconciliation",
+        "samir_stack_paper",
     ],
 }
 
