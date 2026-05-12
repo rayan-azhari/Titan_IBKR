@@ -41,7 +41,7 @@ from research.samir_stack.indicators import build_indicator_panel  # noqa: E402
 from research.samir_stack.margin_model import (  # noqa: E402
     cfd_returns,
     drift_margin_returns,
-    futures_returns,
+    futures_returns_tr,
 )
 from research.samir_stack.regime_score import regime_score_equal  # noqa: E402
 from research.samir_stack.run_samir_improvements import (  # noqa: E402
@@ -84,7 +84,7 @@ def _engine_cfd(spy: pd.Series, leverage: float) -> pd.Series:
 def _engine_futures(spy: pd.Series, leverage: float) -> pd.Series:
     if leverage <= 0:
         return pd.Series(0.0, index=spy.index)
-    return futures_returns(spy, leverage=leverage).reindex(spy.index).fillna(0.0)
+    return futures_returns_tr(spy, leverage=leverage).reindex(spy.index).fillna(0.0)
 
 
 # ── Strategy runner ──────────────────────────────────────────────────────
@@ -103,7 +103,7 @@ def _auto_tier_thresholds(L_max: int) -> tuple[float, ...]:
 
 def run_with_engine(
     spy: pd.Series,
-    efa: pd.Series,
+    _efa: pd.Series,
     ief: pd.Series,
     hyg: pd.Series,
     tlt: pd.Series,
@@ -114,34 +114,28 @@ def run_with_engine(
     equity_weight: float = 0.15,
     bond_weight: float = 0.85,
 ) -> pd.DataFrame:
-    """Run improved Samir-Stack (I1+I2+I3) with the chosen engine and L_max."""
+    """Run improved Samir-Stack with the chosen engine and L_max.
+
+    Uses I1 (rate-shock) + I2 (bond rotation, properly lagged) + chosen
+    engine. I3 (opt-in EFA) DROPPED per remediation plan §0(1) — the
+    ``_efa`` arg is retained positionally for back-compat but unused.
+    """
     common = (
-        spy.index.intersection(efa.index)
-        .intersection(ief.index)
+        spy.index.intersection(ief.index)
         .intersection(hyg.index)
         .intersection(tlt.index)
         .intersection(samir_score.index)
     )
     spy_a = spy.reindex(common)
-    efa_a = efa.reindex(common)
     ief_a = ief.reindex(common)
     hyg_a = hyg.reindex(common)
     tlt_a = tlt.reindex(common)
     samir_a = samir_score.reindex(common)
 
-    # I3: opt-in EFA
-    spy_ret = spy_a.pct_change().fillna(0.0)
-    efa_ret = efa_a.pct_change().fillna(0.0)
-    spy_12m = spy_a.pct_change(252)
-    efa_12m = efa_a.pct_change(252)
-    use_efa_mask = (efa_12m - spy_12m) > 0.05
-    chosen_ret = pd.Series(
-        np.where(use_efa_mask.fillna(False), efa_ret.values, spy_ret.values),
-        index=common,
-    )
-    equity_underlying = (1.0 + chosen_ret).cumprod() * float(spy_a.iloc[0])
+    # I3 (opt-in EFA) DROPPED — see header comment.
+    equity_underlying = spy_a
 
-    # I2: bond rotation
+    # I2: bond rotation (now properly lagged inside bond_rotation_returns)
     rot_rets = bond_rotation_returns(ief_a, hyg_a)
     bond_underlying = (1.0 + rot_rets.reindex(common).fillna(0.0)).cumprod() * float(ief_a.iloc[0])
 

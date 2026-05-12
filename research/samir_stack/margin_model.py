@@ -1,6 +1,6 @@
 """Margin-financed equity returns — alternative to daily-rebalanced leveraged ETFs.
 
-Two models are exposed:
+Three models are exposed:
 
 1. ``constant_leverage_margin_returns(spy, L, ...)``: holder targets a
    constant L every day and rebalances at the close. Mathematically
@@ -33,6 +33,8 @@ cost-model audit context.
 """
 
 from __future__ import annotations
+
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -218,33 +220,98 @@ def futures_returns(
     roll_slippage_bps: float = SPX_FUTURES_ROLL_SLIPPAGE_BPS_DEFAULT,
     trading_days_per_year: int = 252,
 ) -> pd.Series:
-    """Daily equity-return series of a constant-L SPX futures position.
+    """DEPRECATED — has a dividend double-count bug when input is TR-adjusted.
 
-    Cost decomposition (per $E equity, per year):
+    Use ``futures_returns_tr`` for new code. This function is retained only
+    for reproducing pre-2026-05-12 backtests.
 
-      ``L × spx_price_return``                 # gross levered exposure
+    The bug (per the 2026-05-12 audit): the formula subtracts
+    ``L * (funding - dividend)`` as basis decay, which is correct ONLY if
+    ``underlying_close`` is a price-only series. In practice the input is
+    SPY's adjusted close from yfinance, which already includes dividend
+    reinvestment (i.e. total return). The result is that the function adds
+    back the dividend yield as an extra ``+L*div/yr`` of synthetic return,
+    inflating CAGR by ~+1.46pp/yr at L=1 and ~+4.75pp/yr at L=3.
+
+    Old cost decomposition (left here for reference):
+
+      ``L × spy_close_ret``                    # gross levered exposure
       ``- L × (funding - dividend_yield)``     # basis decay (cost of carry)
       ``+ T_bill_yield``                       # IBKR pays interest on free cash
       ``- L × roll_slippage``                  # quarterly roll bid/ask cost
+    """
+    warnings.warn(
+        "futures_returns has a dividend double-count bug when input is "
+        "TR-adjusted. Use futures_returns_tr instead. See "
+        "directives/Samir-Stack Remediation Plan 2026-05-12.md §1 (audit "
+        "finding A3).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    if leverage <= 0:
+        raise ValueError(f"leverage must be > 0, got {leverage}")
+    if leverage * margin_pct >= 1.0:
+        raise ValueError(
+            f"leverage × margin_pct = {leverage * margin_pct:.2f} >= 1; "
+            f"insufficient cash to support {leverage}x leverage at "
+            f"{margin_pct:.0%} margin requirement. Use a CFD or margin engine."
+        )
+    spy_ret = underlying_close.pct_change()
+    funding = funding_series(underlying_close.index)
+    daily_funding = funding / trading_days_per_year
+    daily_div = dividend_yield / trading_days_per_year
+    daily_basis = daily_funding - daily_div
+    daily_roll = (rolls_per_year * roll_slippage_bps / 10_000.0) / trading_days_per_year
+    return (
+        (leverage * spy_ret)
+        - (leverage * daily_basis)
+        + daily_funding  # T-bill earned on cash equity
+        - (leverage * daily_roll)
+    )
 
-    Sanity check at L=1: futures_return + T-bill on cash ≈ spx_total_return,
-    which matches direct holding of the index. The model assumes IBKR pays
-    the full benchmark rate on the cash balance net of posted margin (true
-    above the $10k threshold for IBKR Pro). For ``L × margin_pct >= 1`` the
-    holder would need to borrow against margin which this simple model
-    rejects — use a smaller L or a CFD/margin engine for that range.
 
-    The futures wrapper has no TER (no daily-rebalanced ETF carrying a
-    management fee), no per-night borrow interest (financing is implicit
-    in the basis), and no dividend cashflow (dividends are reflected in
-    the spot-vs-futures spread).
+def futures_returns_tr(
+    underlying_tr_close: pd.Series,
+    leverage: float,
+    *,
+    dividend_yield: float = SPX_DIVIDEND_YIELD_DEFAULT,
+    margin_pct: float = ES_OVERNIGHT_MARGIN_PCT_DEFAULT,
+    rolls_per_year: int = SPX_FUTURES_ROLLS_PER_YEAR,
+    roll_slippage_bps: float = SPX_FUTURES_ROLL_SLIPPAGE_BPS_DEFAULT,
+    trading_days_per_year: int = 252,
+) -> pd.Series:
+    """Daily equity-return series of a constant-L SPX futures position.
+
+    Input contract: ``underlying_tr_close`` MUST be a total-return-adjusted
+    series (e.g. yfinance's adjusted close for SPY). The dividend is
+    stripped internally to recover the price-only return that the futures
+    contract actually delivers.
+
+    Derivation (per $E equity, daily):
+
+        spy_PRICE_ret = spy_TR_ret - dividend_yield/252
+        daily_return  = L * spy_PRICE_ret
+                      + funding/252            # T-bill on full cash equity
+                      - L * roll/252           # quarterly roll slippage
+
+    Equivalently:
+
+        daily_return  = L * spy_TR_ret
+                      - L * dividend_yield/252
+                      + funding/252
+                      - L * roll/252
+
+    Sanity check at L=1: daily_return ≈ spy_TR_ret + (funding - div - roll)/252.
+    The futures wrapper at L=1 should track total-return SPY plus the
+    T-bill pickup minus the dividend it doesn't pay minus quarterly roll.
+    Over 2003-2026 (SPY TR ≈ 11.27% CAGR, avg funding ≈ 2%, div ≈ 1.5%,
+    roll ≈ 0.2%) the model gives ~11.6% CAGR — within 0.5pp of SPY TR.
 
     Parameters
     ----------
-    underlying_close
-        Close prices of the SPX cash index proxy (e.g. SPY total-return-
-        adjusted, or CSPX, or a synthetic SPX series). The model treats
-        this as the cash-index price; basis decay is added on top.
+    underlying_tr_close
+        Close prices of the underlying as a TOTAL-RETURN-adjusted series.
+        For yfinance-sourced SPY this is the default ``close`` column.
     leverage
         Constant target leverage (notional / equity). 1.0 = unlevered.
     dividend_yield
@@ -266,17 +333,15 @@ def futures_returns(
             f"insufficient cash to support {leverage}x leverage at "
             f"{margin_pct:.0%} margin requirement. Use a CFD or margin engine."
         )
-    spy_ret = underlying_close.pct_change()
-    funding = funding_series(underlying_close.index)
+    spy_tr_ret = underlying_tr_close.pct_change()
+    funding = funding_series(underlying_tr_close.index)
     daily_funding = funding / trading_days_per_year
     daily_div = dividend_yield / trading_days_per_year
-    daily_basis = daily_funding - daily_div
     daily_roll = (rolls_per_year * roll_slippage_bps / 10_000.0) / trading_days_per_year
+    # Strip the dividend from TR to get the price-only return that futures track,
+    # then add the T-bill earned on the cash equity balance.
     return (
-        (leverage * spy_ret)
-        - (leverage * daily_basis)
-        + daily_funding  # T-bill earned on cash equity
-        - (leverage * daily_roll)
+        (leverage * spy_tr_ret) - (leverage * daily_div) + daily_funding - (leverage * daily_roll)
     )
 
 
