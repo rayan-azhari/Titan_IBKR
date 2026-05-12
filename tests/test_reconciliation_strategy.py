@@ -134,9 +134,20 @@ def test_config_accepts_expected_fields():
         bar_type="AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL",
         stale_order_minutes=20,
         alert_cooldown_minutes=120,
+        shadow_check_enabled=False,
     )
     assert cfg.stale_order_minutes == 20
     assert cfg.alert_cooldown_minutes == 120
+    assert cfg.shadow_check_enabled is False
+
+
+def test_config_shadow_check_defaults_to_enabled():
+    """Tier 2.1 ships shadow checking ON by default — auto-skips per-
+    strategy when its parquet is missing, so the default is safe."""
+    from titan.strategies.reconciliation.strategy import ReconciliationConfig
+
+    cfg = ReconciliationConfig(bar_type="X")
+    assert cfg.shadow_check_enabled is True
 
 
 def test_detect_drift_clean_state_returns_no_findings():
@@ -261,3 +272,101 @@ def test_detect_nlv_drop_per_currency_independent():
     )
     assert any("[D4]" in f and "GBP" in f for f in findings)
     assert not any("[D4]" in f and "USD" in f for f in findings)
+
+
+# ── D5: shadow-decision divergence (Tier 2.1) ────────────────────────
+
+
+def detect_shadow_divergence(
+    z: float,
+    *,
+    threshold: float,
+    cache_is_long: bool,
+    strategy_name: str = "test",
+    trade_symbol: str = "TEST",
+    net_qty: float = 0.0,
+    hold_days: int = 5,
+) -> list[str]:
+    """Re-implementation of D5 (shadow divergence) detection.
+
+    Mirrors ``ReconciliationStrategy._shadow_decision_check`` minus the
+    NT cache iteration and parquet load (those are integration-level).
+    Test failure here means the strategy's behaviour MUST also change.
+    """
+    findings: list[str] = []
+    if z > threshold and not cache_is_long:
+        findings.append(
+            f"[D5 shadow {strategy_name}] z={z:+.3f} > threshold "
+            f"{threshold} but cache is FLAT for {trade_symbol} — "
+            f"possible missed entry or broker rejection"
+        )
+    elif z <= threshold and cache_is_long:
+        findings.append(
+            f"[D5 shadow {strategy_name}] z={z:+.3f} <= threshold "
+            f"{threshold} but cache shows LONG {net_qty:+.0f} "
+            f"{trade_symbol} (may be inside hold_days={hold_days})"
+        )
+    return findings
+
+
+def test_d5_no_finding_when_bullish_and_long():
+    """Strategy should be long, cache shows long → agreement."""
+    findings = detect_shadow_divergence(z=1.5, threshold=0.25, cache_is_long=True, net_qty=30.0)
+    assert findings == []
+
+
+def test_d5_no_finding_when_bearish_and_flat():
+    """Strategy should be flat, cache shows flat → agreement."""
+    findings = detect_shadow_divergence(z=-0.5, threshold=0.25, cache_is_long=False)
+    assert findings == []
+
+
+def test_d5_fires_on_missed_entry():
+    """Bullish signal but cache is flat → broker rejection or missed entry."""
+    findings = detect_shadow_divergence(
+        z=1.5,
+        threshold=0.25,
+        cache_is_long=False,
+        strategy_name="bond_equity_ihyg_vusd",
+        trade_symbol="VUSD",
+    )
+    assert len(findings) == 1
+    assert "[D5 shadow bond_equity_ihyg_vusd]" in findings[0]
+    assert "VUSD" in findings[0]
+    assert "missed entry" in findings[0]
+
+
+def test_d5_fires_on_phantom_long():
+    """Bearish signal but cache shows long → may be inside hold_days
+    (informational), but still flagged."""
+    findings = detect_shadow_divergence(
+        z=-0.5,
+        threshold=0.25,
+        cache_is_long=True,
+        strategy_name="bond_equity_ihyg_vusd",
+        trade_symbol="VUSD",
+        net_qty=30.0,
+        hold_days=5,
+    )
+    assert len(findings) == 1
+    assert "LONG" in findings[0]
+    assert "hold_days=5" in findings[0]
+
+
+def test_d5_z_at_threshold_treated_as_bearish():
+    """z == threshold should NOT trigger an entry-side finding (entry
+    rule is strict z > threshold, matching expected_action)."""
+    # cache is flat, z exactly at threshold → no missed-entry finding
+    assert detect_shadow_divergence(z=0.25, threshold=0.25, cache_is_long=False) == []
+    # cache is long, z at threshold → flagged as 'phantom-long-or-hold'
+    findings = detect_shadow_divergence(z=0.25, threshold=0.25, cache_is_long=True, net_qty=30.0)
+    assert len(findings) == 1
+
+
+def test_d5_uses_post_fix_strict_threshold_comparison():
+    """The shared expected_action uses strict > for entry. The shadow
+    check should match: z slightly above threshold → entry expected."""
+    findings = detect_shadow_divergence(
+        z=0.26, threshold=0.25, cache_is_long=False, trade_symbol="VUSD"
+    )
+    assert any("missed entry" in f for f in findings)

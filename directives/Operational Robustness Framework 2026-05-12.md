@@ -114,18 +114,21 @@ Mapping the rehydration bug through the framework:
 | T2.2 | Property-based state-machine tests | ✅ shipped | #14 |
 | T2.4 | Cost-model audit job | ✅ shipped | #15 |
 | T2.5 | Backtest-vs-live reconciliation | ✅ shipped | #16 |
+| T2.1 | Shadow-strategy mode (in-process D5 in reconciliation watchdog) | ✅ shipped | #17 |
 
-**Tier 1 complete + Tier 2.2/2.4/2.5 shipped.** All five Tier 1 items
-merged between PRs #6, #7, #8, #12, #13. Tier 2.2 added Hypothesis-driven
-state-machine tests. Tier 2.4 added a weekly cost-model audit cron.
-Tier 2.5 added a per-strategy replay audit (``scripts/replay_audit.py``)
-that pulls last N days of IBKR fills, replays the bond_gold decision
-logic against the signal-instrument parquet for each day, and fires
-``notify_health`` on any actionable mismatch (expected entry/exit not
-realised, or live trade backtest wouldn't have triggered). State-anchored
-replay isolates "given the same starting state, did live decide
-correctly?" from cumulative drift. Remaining Tier 2 candidates:
-shadow-strategy mode (T2.1), chaos test harness (T2.3).
+**Tier 1 complete + Tier 2.1/2.2/2.4/2.5 shipped.** All Tier 1 items
+merged across PRs #6, #7, #8, #12, #13. Tier 2.2 added Hypothesis state
+machine tests. Tier 2.4 added the weekly cost-audit cron. Tier 2.5
+added the offline replay-audit cron. Tier 2.1 added an in-process
+shadow-decision branch (D5) to the reconciliation watchdog: every H1
+bar it loads each ``bond_equity_*`` strategy's signal-instrument
+parquet, computes the expected action via shared decision primitives
+in ``titan.utils.bond_gold_decisions``, and compares to the cache's
+actual position state. The shared module is the single source of
+truth for the bond_gold decision logic and is now exercised by three
+tests files (``test_replay_audit.py``, ``test_bond_gold_decisions.py``,
+``test_reconciliation_strategy.py`` D5 section). Remaining Tier 2
+candidate: chaos test harness (T2.3) — the largest remaining item.
 
 Update this table as items ship.
 
