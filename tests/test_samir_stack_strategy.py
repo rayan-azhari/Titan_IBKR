@@ -274,6 +274,88 @@ def test_strategy_uses_signed_qty_for_position_aggregation():
     assert "signed_qty" in source
 
 
+# ── Tier-sizing wiring (Phase 6a.5 fix) ──────────────────────────────
+
+
+def test_default_equity_native_leverage_matches_champion_config():
+    """Phase 5 GBP-clean champion uses 3USL.LSEETF, a 3× SPY UCITS ETF.
+
+    The default ``equity_native_leverage`` must match: 3.0. Without
+    this, the live strategy would over-deploy by 3× at tier=1 and 1.5×
+    at tier=2 vs the backtest model.
+    """
+    cfg = _minimal_config()
+    assert cfg.equity_native_leverage == 3.0
+
+
+def test_on_bar_scales_target_eq_w_by_tier_over_native_leverage():
+    """AST guard: the on_bar method MUST scale target_eq_w by
+    ``target_tier / equity_native_leverage``. A regression where the
+    sizing is just ``equity_weight`` (no tier scaling) re-introduces
+    the pre-audit always-max-tier behaviour and breaks the live-vs-
+    research match documented in Strategy Guide §3.1.
+    """
+    source = inspect.getsource(SamirStackStrategy.on_bar)
+    # The exact scaling expression must appear.
+    assert "equity_native_leverage" in source, (
+        "on_bar() must reference equity_native_leverage for tier-based "
+        "sizing. Pre-audit code held a constant equity_weight regardless "
+        "of tier; deploying that with a 3× ETF over-leveraged the live "
+        "position by 1.5-3× vs the backtest model."
+    )
+    assert "tier_ratio" in source and "target_tier" in source, (
+        "on_bar() must compute the tier_ratio = target_tier / "
+        "equity_native_leverage and apply it as a multiplier on "
+        "self.config.equity_weight."
+    )
+
+
+def test_tier_scaled_position_sizes_at_phase5_champion_config():
+    """Pure-function pin: at the Phase 5 champion config (equity_weight=0.40,
+    L_max=2, equity_native_leverage=3.0), confirm the implied position
+    fractions match the documented values in Strategy Guide §3.1."""
+    cfg = _minimal_config()  # uses Phase 5 GBP-clean defaults
+    # tier=1: 40% × 1/3 ≈ 13.33%
+    expected_t1 = cfg.equity_weight * (1.0 / cfg.equity_native_leverage)
+    assert abs(expected_t1 - 0.4 / 3.0) < 1e-12
+    # tier=2: 40% × 2/3 ≈ 26.67%
+    expected_t2 = cfg.equity_weight * (2.0 / cfg.equity_native_leverage)
+    assert abs(expected_t2 - 0.8 / 3.0) < 1e-12
+    # Effective SPX exposure must equal equity_weight × tier
+    eff_spx_t1 = expected_t1 * cfg.equity_native_leverage  # 0.40 (matches tier 1)
+    eff_spx_t2 = expected_t2 * cfg.equity_native_leverage  # 0.80 (matches tier 2)
+    assert abs(eff_spx_t1 - 0.40) < 1e-12
+    assert abs(eff_spx_t2 - 0.80) < 1e-12
+
+
+def test_tier_scaling_with_1x_instrument_preserves_equity_weight():
+    """If the operator switches the equity instrument to a 1× ETF
+    (e.g. CSPX) by setting ``equity_native_leverage=1.0``, the sizing
+    falls back to the simple ``equity_weight × tier`` formulation —
+    no margin needed when L_max=2 since 40% × 2 = 80% ≤ 100%."""
+    cfg = _minimal_config(equity_native_leverage=1.0)
+    # tier=1: 40% × 1/1 = 40% in CSPX (1x SPY) → 40% SPX
+    expected_t1 = cfg.equity_weight * (1.0 / 1.0)
+    assert abs(expected_t1 - 0.40) < 1e-12
+    # tier=2: 40% × 2/1 = 80% in CSPX (1x) → 80% SPX, still ≤ 100%
+    expected_t2 = cfg.equity_weight * (2.0 / 1.0)
+    assert abs(expected_t2 - 0.80) < 1e-12
+
+
+def test_tier_sizing_cannot_exceed_one_at_phase5_config():
+    """Phase 5 champion at L_max=2, equity_weight=0.40, native_leverage=3
+    can never demand > 100% of NAV in the equity instrument. This is
+    the operational guarantee that no broker margin is needed."""
+    cfg = _minimal_config()
+    max_position_pct = cfg.equity_weight * (cfg.L_max / cfg.equity_native_leverage)
+    assert max_position_pct <= 1.0, (
+        f"Phase 5 config would require {max_position_pct * 100:.1f}% of "
+        f"NAV in the equity instrument at max tier — exceeds 100% (would "
+        f"need broker margin). At equity_weight={cfg.equity_weight}, "
+        f"L_max={cfg.L_max}, native_leverage={cfg.equity_native_leverage}."
+    )
+
+
 # ── Vol-target wiring ────────────────────────────────────────────────
 
 

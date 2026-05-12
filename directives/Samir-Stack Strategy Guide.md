@@ -127,6 +127,7 @@ L_max         = 2.0
 tier_thresholds   = [0.30, 0.55]
 hysteresis_buffer = 0.05
 re_entry_quiet_bars = 20
+equity_native_leverage = 3.0   # 3USL is a 3x ETF → scale position by tier/3
 
 dd_throttle = 0.10
 dd_kill     = 0.15
@@ -138,6 +139,23 @@ bond_quote_ccy   = "GBP"
 fx_rate_equity_quote_to_base = 0.7519   # 1 USD = 0.7519 GBP at GBPUSD=1.33
 fx_rate_bond_quote_to_base   = 1.0
 ```
+
+### 3.1 Live sizing: tier ↔ position size
+
+The strategy holds ``equity_weight × (target_tier / equity_native_leverage)`` of NAV in the equity instrument. With 3USL (a 3× leveraged ETF) the actual GBP-denominated position size is:
+
+| Regime tier | Position size (% of NAV in 3USL) | Effective SPX exposure |
+|---|---:|---:|
+| tier 0 (cash) | 0% | 0% |
+| tier 1 | 40% × 1/3 ≈ **13.3%** | 13.3% × 3 = **40%** |
+| tier 2 (L_max) | 40% × 2/3 ≈ **26.7%** | 26.7% × 3 = **80%** |
+
+The account stays *unleveraged at the broker level* — the leverage is provided by the ETF itself, and the strategy holds less of it at lower tiers. This avoids broker margin and matches the Phase 5 backtest model exactly.
+
+For deployments using a different equity instrument:
+- **CSPX or SPY (1× ETF):** set `equity_native_leverage = 1.0`. Position size = `equity_weight × tier`. At tier=2 this would mean **80% of NAV in CSPX** — fine, no margin needed since L_max ≤ 2.5 at 40% sleeve.
+- **SSO (2× SPY ETF):** set `equity_native_leverage = 2.0`. tier=2 → 40% × 1 = 40% in SSO → 80% effective SPX.
+- **MES futures (mechanical winner cell):** the strategy class currently uses ETF sizing (`equity_is_future=False`). Switching to futures requires `equity_is_future=True` and integer-contract sizing — different code path, deployable only at NAV ≥ £30k (Phase 4 finding).
 
 ---
 

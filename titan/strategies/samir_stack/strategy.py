@@ -129,6 +129,24 @@ class SamirStackConfig(StrategyConfig):
     hysteresis_buffer: float = 0.05
     re_entry_quiet_bars: int = 20
 
+    # Native leverage of the equity-trading instrument. For a 3x ETF
+    # (3USL.LSEETF, UPRO) this is 3.0; for a 2x ETF (SSO) this is 2.0;
+    # for a 1x ETF (CSPX, SPY) this is 1.0.
+    #
+    # The strategy holds ``equity_weight × (target_tier / equity_native_leverage)``
+    # of NAV in the equity instrument. This makes the LIVE effective
+    # SPX exposure match the BACKTEST model:
+    #
+    #   tier=1: live holds 40%/3 ≈ 13.3% of NAV in 3USL → 40% effective SPX
+    #   tier=2: live holds 40%×2/3 ≈ 26.7% of NAV in 3USL → 80% effective SPX
+    #
+    # Without this scaling the live class would over-deploy: holding 40%
+    # of NAV in 3USL gives 120% effective SPX regardless of tier — the
+    # pre-audit behaviour that was inconsistent with the L_max=N research
+    # model. See ``Samir-Stack Remediation Plan 2026-05-12.md`` §6 for
+    # the live-vs-research mismatch this fixes.
+    equity_native_leverage: float = 3.0
+
     # DD circuit breaker
     dd_throttle: float = 0.10
     dd_kill: float = 0.15
@@ -413,13 +431,25 @@ class SamirStackStrategy(Strategy):
         # DD circuit breaker
         target_tier, bond_active = self._apply_dd_breaker(target_tier, score)
 
-        # Compute target weights
+        # Compute target weights.
+        #
+        # The equity-sleeve weight is scaled by ``target_tier /
+        # equity_native_leverage`` so that the LIVE effective SPX
+        # exposure matches the BACKTEST model. For 3USL (native
+        # leverage 3) the actual position held is:
+        #   tier=1: 40% × 1/3 ≈ 13.3% of NAV in 3USL → 40% SPX
+        #   tier=2: 40% × 2/3 ≈ 26.7% of NAV in 3USL → 80% SPX
+        # See SamirStackConfig.equity_native_leverage docstring for the
+        # rationale; this corrects a live-vs-research mismatch
+        # documented in directives/Samir-Stack Remediation Plan
+        # 2026-05-12.md §6.
         if target_tier == 0.0 and not bond_active:
             target_eq_w, target_bd_w = 0.0, 0.0
         elif target_tier == 0.0:
             target_eq_w, target_bd_w = 0.0, self.config.bond_weight
         else:
-            target_eq_w = self.config.equity_weight
+            tier_ratio = target_tier / self.config.equity_native_leverage
+            target_eq_w = self.config.equity_weight * tier_ratio
             target_bd_w = self.config.bond_weight if bond_active else 0.0
 
         # Issue rebalance if material change
