@@ -102,6 +102,17 @@ def bond_rotation_returns(
 ) -> pd.Series:
     """DMFI-inspired bond-sleeve rotation: pick highest 60d-momentum
     among {IEF, HYG, cash (0%)}. Returns the chosen daily return per bar.
+
+    Contract: returned value at bar t = decision_made_at_(t-1) * asset_ret_t.
+    The winner at t-1 (computed from closes through t-1) is what determines
+    which asset's return is collected at t. This is the only legitimate
+    semantics for a backtest — a real implementation can only act on
+    yesterday's close at today's open.
+
+    A prior version of this function used winner_at_t (computed from close
+    at t) to assign asset_ret_t — that is a same-bar look-ahead and was
+    found by the 2026-05-12 audit to inflate Sharpe by +1.36 and CAGR by
+    +10.06pp on the bond sleeve. Fixed by lagging the winner mask one bar.
     """
     common = ief_close.index.intersection(hyg_close.index)
     ief = ief_close.reindex(common)
@@ -115,6 +126,8 @@ def bond_rotation_returns(
     winner = pd.Series("CASH", index=common)
     winner[(ief_mom > 0) & (ief_mom >= hyg_mom)] = "IEF"
     winner[(hyg_mom > 0) & (hyg_mom > ief_mom)] = "HYG"
+    # Lag by one bar — today's return is earned under yesterday's decision.
+    winner = winner.shift(1).fillna("CASH")
 
     out = pd.Series(0.0, index=common)
     out[winner == "IEF"] = ief_ret[winner == "IEF"]
@@ -158,12 +171,14 @@ def run_stacked_with_optin_efa(
     L_max: float = 3.0,
     relmom_gap_pct: float = 0.05,
 ) -> pd.DataFrame:
-    """Equity sleeve trades EFA only when EFA's 12m return beats SPY by
-    more than ``relmom_gap_pct``. Otherwise stays in SPY.
+    """DEPRECATED — I3 overlay dropped per 2026-05-12 remediation plan §0(1).
 
-    Compared to the variant E in the GEM hybrid (always pick the rel-mom
-    winner), this only flips on STRONG signals — fewer flips, fewer
-    times exposed to EFA tail risk.
+    Contains a same-bar look-ahead in the ``use_efa`` mask (uses today's
+    close for both signal and return). Audit 2026-05-12 measured +2.33pp
+    CAGR / +0.11 Sharpe inflation on the equity sleeve. Kept for
+    historical reproductions of pre-2026-05-12 backtests only.
+
+    DO NOT call from new code. Use plain SPY in the equity sleeve.
     """
     sig = gem_signal(spy, efa)
     common = sig.index.intersection(samir_score.index).intersection(ief.index)

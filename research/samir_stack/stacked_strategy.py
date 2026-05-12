@@ -13,11 +13,19 @@ where the vol drag comes from).
 
 Optional: independent bond regime gate. When equity is benign but bonds
 are hostile (e.g., 2022 rate shock), bond sleeve also goes to cash.
+
+Phase 2 of the 2026-05-12 remediation introduced ``equity_engine`` and
+``bond_sleeve`` kwargs to ``run_stacked_strategy``. They default to None,
+in which case the function behaves exactly as before (synthetic 3x ETF
++ static IEF return via ``ief.pct_change()``). Passing an explicit engine
+or sleeve overrides the corresponding default — the state machine itself
+is unchanged.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -29,6 +37,9 @@ from research.samir_stack.capitulation import (
     detect_stabilisation,
 )
 from research.samir_stack.synthetic_3x import synthetic_leveraged_returns
+
+if TYPE_CHECKING:
+    from research.samir_stack.engines import BondSleeve, EquityEngine
 
 
 @dataclass
@@ -119,6 +130,8 @@ def run_stacked_strategy(
     *,
     tlt_close: pd.Series | None = None,
     indicator_panel: pd.DataFrame | None = None,
+    equity_engine: "EquityEngine | None" = None,
+    bond_sleeve: "BondSleeve | None" = None,
 ) -> pd.DataFrame:
     """Simulate the stacked strategy.
 
@@ -129,6 +142,17 @@ def run_stacked_strategy(
         each in [0, 1]). Required when ``cfg.capitulation`` is set so the
         overlay can detect capitulation events. If ``cfg.capitulation`` is
         None this argument is unused.
+    equity_engine : EquityEngine, optional
+        Pluggable equity-sleeve return generator. When None (default),
+        the state machine uses ``synthetic_leveraged_returns`` with
+        ``cfg.leverage_ter_annual`` for tiers > 1 — preserving the
+        pre-Phase-2 behaviour bit-exactly. Pass an explicit engine to
+        switch to MarginEngine / FuturesEngine etc.
+    bond_sleeve : BondSleeve, optional
+        Pluggable bond-sleeve return generator. When None (default), the
+        state machine uses ``ief_close.pct_change()`` — preserving the
+        pre-Phase-2 behaviour bit-exactly. Pass an explicit sleeve to
+        switch to a rotating sleeve etc.
 
     Returns DataFrame with columns:
         score, equity_tier, equity_pos (notional %), bond_pos (notional %),
@@ -162,22 +186,28 @@ def run_stacked_strategy(
     else:
         opp_entry_series = pd.Series(False, index=common)
 
-    # Pre-compute leveraged equity returns per tier
+    # Pre-compute leveraged equity returns per tier.
+    # Engine selection: if an explicit ``equity_engine`` is supplied, use it;
+    # otherwise fall back to the legacy synthetic-leveraged-ETF path so
+    # pre-Phase-2 callers reproduce bit-exactly.
     tier_eq_returns: dict[float, pd.Series] = {0.0: pd.Series(0.0, index=common)}
     for L_int in range(1, int(cfg.L_max) + 1):
         L = float(L_int)
-        rets_L = (
-            synthetic_leveraged_returns(
+        if equity_engine is None:
+            rets_L = synthetic_leveraged_returns(
                 spy,
                 leverage=L,
                 ter_annual=cfg.leverage_ter_annual if L > 1.0 else 0.0,
             )
-            .reindex(common)
-            .fillna(0.0)
-        )
-        tier_eq_returns[L] = rets_L
+        else:
+            rets_L = equity_engine.daily_returns(spy, L)
+        tier_eq_returns[L] = rets_L.reindex(common).fillna(0.0)
 
-    bond_rets = ief.pct_change().reindex(common).fillna(0.0)
+    # Bond sleeve: explicit sleeve overrides; otherwise legacy ief.pct_change().
+    if bond_sleeve is None:
+        bond_rets = ief.pct_change().reindex(common).fillna(0.0)
+    else:
+        bond_rets = bond_sleeve.daily_returns(common).reindex(common).fillna(0.0)
 
     # State
     equity_tier = 0.0

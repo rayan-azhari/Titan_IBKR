@@ -46,7 +46,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from research.samir_stack.capitulation import CapitulationConfig  # noqa: E402
 from research.samir_stack.data_loader import _load_close, load_panel  # noqa: E402
 from research.samir_stack.indicators import build_indicator_panel  # noqa: E402
-from research.samir_stack.margin_model import futures_returns  # noqa: E402
+from research.samir_stack.margin_model import futures_returns_tr  # noqa: E402
 from research.samir_stack.regime_score import regime_score_equal  # noqa: E402
 from research.samir_stack.run_samir_improvements import (  # noqa: E402
     bond_rotation_returns,
@@ -72,7 +72,7 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 def _engine_futures(spy: pd.Series, leverage: float) -> pd.Series:
     if leverage <= 0:
         return pd.Series(0.0, index=spy.index)
-    return futures_returns(spy, leverage=leverage).reindex(spy.index).fillna(0.0)
+    return futures_returns_tr(spy, leverage=leverage).reindex(spy.index).fillna(0.0)
 
 
 # ── V2: vol-targeting wrapper ────────────────────────────────────────
@@ -109,7 +109,7 @@ def vol_target(
 
 def run_with_overlays(
     spy: pd.Series,
-    efa: pd.Series,
+    _efa: pd.Series,
     ief: pd.Series,
     hyg: pd.Series,
     tlt: pd.Series,
@@ -125,35 +125,27 @@ def run_with_overlays(
     vol_window: int = 30,
 ) -> pd.DataFrame:
     """Run improved Samir-Stack with optional V1 (capitulation) and V2 (vol
-    target). Always uses the I1+I2+I3 base improvements + MES futures L=3."""
+    target). Uses I1 (rate-shock) + I2 (bond rotation, properly lagged) +
+    MES futures (corrected). I3 (opt-in EFA) DROPPED per remediation plan
+    §0(1) — the ``_efa`` arg is retained positionally for back-compat but
+    unused."""
     common = (
-        spy.index.intersection(efa.index)
-        .intersection(ief.index)
+        spy.index.intersection(ief.index)
         .intersection(hyg.index)
         .intersection(tlt.index)
         .intersection(samir_score.index)
     )
     spy_a = spy.reindex(common)
-    efa_a = efa.reindex(common)
     ief_a = ief.reindex(common)
     hyg_a = hyg.reindex(common)
     tlt_a = tlt.reindex(common)
     samir_a = samir_score.reindex(common)
     panel_a = indicator_panel.reindex(common)
 
-    # I3: opt-in EFA
-    spy_ret = spy_a.pct_change().fillna(0.0)
-    efa_ret = efa_a.pct_change().fillna(0.0)
-    spy_12m = spy_a.pct_change(252)
-    efa_12m = efa_a.pct_change(252)
-    use_efa_mask = (efa_12m - spy_12m) > 0.05
-    chosen_ret = pd.Series(
-        np.where(use_efa_mask.fillna(False), efa_ret.values, spy_ret.values),
-        index=common,
-    )
-    equity_underlying = (1.0 + chosen_ret).cumprod() * float(spy_a.iloc[0])
+    # I3 (opt-in EFA) DROPPED — equity underlying is plain SPY.
+    equity_underlying = spy_a
 
-    # I2: bond rotation
+    # I2: bond rotation (now properly lagged inside bond_rotation_returns)
     rot_rets = bond_rotation_returns(ief_a, hyg_a)
     bond_underlying = (1.0 + rot_rets.reindex(common).fillna(0.0)).cumprod() * float(ief_a.iloc[0])
 

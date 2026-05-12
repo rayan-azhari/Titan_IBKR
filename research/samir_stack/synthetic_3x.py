@@ -8,8 +8,17 @@ Volatility drag emerges naturally from compounding L*r daily. There is no
 need to add a `0.5*L*(L-1)*sigma^2` term explicitly — the path of leveraged
 daily returns produces it on its own.
 
-Validated against actual 3USL.LSEETF 2018-2024 history (see
-`validate_against_3usl()`).
+Validated against actual UPRO (ProShares 3x S&P 500, NYSE, 2009-2026) on
+2026-05-13 — see ``.tmp/reports/samir_stack/synthetic_3x_validation.md``.
+At UPRO's 0.91% TER the synthetic model tracks the real product with
+daily-return correlation 0.9983, CAGR diff +1.21pp/yr over 16.8 years,
+and MaxDD diff 0.65pp. All three gates documented in
+``validate_against_3usl()`` pass. The prior docstring claim of
+"validated against actual 3USL.LSEETF 2018-2024 history" was unsupported
+(audit 2026-05-12 finding A8) — that file did not exist in the repo and
+3USL.L is not reachable via yfinance. UPRO is a stronger reference
+anyway: same construction (daily-rebalanced 3x SPX swap-based), longer
+history, US-domiciled so funding aligns with the model's assumptions.
 """
 
 from __future__ import annotations
