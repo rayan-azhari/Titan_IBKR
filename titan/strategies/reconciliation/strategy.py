@@ -1,0 +1,216 @@
+"""reconciliation/strategy.py — passive position-drift watchdog.
+
+Tier 1.1 of the operational-robustness framework
+(``directives/Operational Robustness Framework 2026-05-12.md``).
+
+Subscribes to a clock-tick bar (default AUD/JPY H1) and on every fire
+runs a battery of cheap drift checks against the in-process NT cache:
+
+  D1.  **Multiple open positions per instrument.** A single instrument
+       holding more than one open position usually means an EXTERNAL
+       rehydrated position is sitting alongside a strategy-tagged
+       position — which is exactly the symptom of the May 11 bug
+       (BondGoldStrategy doubled its inventory because the entry guard
+       didn't recognise the EXTERNAL position).
+
+  D2.  **Cache-vs-portfolio sum drift.** If the sum of signed quantities
+       across all cache positions for an instrument differs from
+       ``portfolio.net_position(instrument_id)``, NT's internal
+       reconciliation has diverged from its own portfolio accounting.
+       Should never happen; fire loud if it does.
+
+  D3.  **Stale open orders.** Any order in ``ACCEPTED`` / ``PENDING_*``
+       state for longer than ``stale_order_minutes`` (default 15) is
+       worth flagging. Most legitimate orders fill within seconds; a
+       stale order is usually a forgotten partial fill, a cancelled-but-
+       acknowledged-at-exchange ghost, or a strategy that submitted an
+       order then died before tracking it.
+
+Doesn't trade. Doesn't subscribe to anything the trading strategies
+aren't already using. Cost on the message-bus is one cache scan per H1
+bar.
+
+State persistence: tracks last-seen alert hash in
+``.tmp/reconciliation_last.json`` so a transient drift that resolves on
+its own doesn't repeatedly spam the channel.
+"""
+
+from __future__ import annotations
+
+import json
+from collections import defaultdict
+from pathlib import Path
+
+from nautilus_trader.config import StrategyConfig
+from nautilus_trader.core.datetime import unix_nanos_to_dt
+from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.trading.strategy import Strategy
+
+from titan.utils.notification import notify_health
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+STATE_FILE = PROJECT_ROOT / ".tmp" / "reconciliation_last.json"
+
+
+class ReconciliationConfig(StrategyConfig):
+    """Configuration for the position-reconciliation watchdog."""
+
+    # Bar type to subscribe to as a clock tick source. Default: AUD/JPY H1
+    # (already subscribed-to by other strategies, so no extra IBKR cost).
+    bar_type: str = "AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL"
+    # Threshold in absolute quantity units below which sum-drift is
+    # ignored as floating-point noise.
+    qty_epsilon: float = 1e-6
+    # Open orders older than this are flagged as stale.
+    stale_order_minutes: int = 15
+    # Minimum minutes between identical alerts (suppress repeat spam if
+    # a drift persists across several bars).
+    alert_cooldown_minutes: int = 60
+
+
+class ReconciliationStrategy(Strategy):
+    """Detects position-state drift between strategy view, NT cache, and
+    portfolio accounting; alerts on any mismatch."""
+
+    def __init__(self, config: ReconciliationConfig) -> None:
+        super().__init__(config)
+        self.bar_type = BarType.from_str(config.bar_type)
+        self._last_alert_hash: str | None = None
+        self._last_alert_ts_ns: int = 0
+        self._load_state()
+
+    def _load_state(self) -> None:
+        try:
+            if STATE_FILE.exists():
+                data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+                self._last_alert_hash = data.get("hash")
+                self._last_alert_ts_ns = int(data.get("ts_ns", 0))
+        except Exception:
+            self._last_alert_hash = None
+            self._last_alert_ts_ns = 0
+
+    def _persist_state(self) -> None:
+        try:
+            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            STATE_FILE.write_text(
+                json.dumps({"hash": self._last_alert_hash, "ts_ns": self._last_alert_ts_ns}),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            self.log.warning(f"Reconciliation: persist state failed: {e}")
+
+    def on_start(self) -> None:
+        self.subscribe_bars(self.bar_type)
+        self.log.info(
+            f"Reconciliation watchdog started | tick={self.bar_type} | "
+            f"stale_order_minutes={self.config.stale_order_minutes} | "
+            f"cooldown_minutes={self.config.alert_cooldown_minutes}"
+        )
+
+    def on_stop(self) -> None:
+        self.log.info("Reconciliation watchdog stopped.")
+
+    def on_bar(self, bar: Bar) -> None:
+        if bar.bar_type != self.bar_type:
+            return
+        try:
+            self._reconcile(bar.ts_event)
+        except Exception as e:
+            # Watchdog must NEVER crash the runtime. Log loudly, swallow.
+            self.log.error(f"Reconciliation scan failed: {e}")
+
+    # ── core reconciliation logic ─────────────────────────────────────
+
+    def _reconcile(self, ts_event_ns: int) -> None:
+        findings: list[str] = []
+        bar_dt = unix_nanos_to_dt(ts_event_ns)
+
+        open_positions = [p for p in self.cache.positions() if p.is_open]
+        # Group by instrument
+        by_instrument: dict = defaultdict(list)
+        for p in open_positions:
+            by_instrument[p.instrument_id].append(p)
+
+        # D1. Multiple open positions per instrument
+        for instrument_id, positions in by_instrument.items():
+            if len(positions) > 1:
+                pos_summary = ", ".join(
+                    f"{str(p.strategy_id)}={float(p.signed_qty):+.0f}" for p in positions
+                )
+                findings.append(
+                    f"[D1 multi-position] {instrument_id} has {len(positions)} open "
+                    f"positions: {pos_summary}. Likely orphan + strategy double-up."
+                )
+
+        # D2. Cache sum vs portfolio.net_position
+        for instrument_id, positions in by_instrument.items():
+            cache_sum = sum(float(p.signed_qty) for p in positions)
+            try:
+                net = self.portfolio.net_position(instrument_id)
+                portfolio_net = float(net) if net is not None else 0.0
+            except Exception as e:
+                self.log.warning(
+                    f"Reconciliation: portfolio.net_position({instrument_id}) failed: {e}"
+                )
+                continue
+            if abs(cache_sum - portfolio_net) > self.config.qty_epsilon:
+                findings.append(
+                    f"[D2 sum-drift] {instrument_id}: cache_sum={cache_sum:+.4f} "
+                    f"vs portfolio.net_position={portfolio_net:+.4f}"
+                )
+
+        # D3. Stale open orders
+        try:
+            open_orders = [o for o in self.cache.orders() if o.is_open]
+        except Exception as e:
+            self.log.warning(f"Reconciliation: cache.orders() failed: {e}")
+            open_orders = []
+        stale_threshold_ns = ts_event_ns - self.config.stale_order_minutes * 60 * 1_000_000_000
+        for order in open_orders:
+            ts_init = getattr(order, "ts_init", None)
+            if ts_init is None:
+                continue
+            if int(ts_init) < stale_threshold_ns:
+                age_min = (ts_event_ns - int(ts_init)) / 60_000_000_000
+                client_oid = str(getattr(order, "client_order_id", "?"))
+                instrument = str(getattr(order, "instrument_id", "?"))
+                findings.append(
+                    f"[D3 stale-order] {instrument} order {client_oid} open for "
+                    f"{age_min:.0f} minutes (status={order.status})"
+                )
+
+        if not findings:
+            self.log.debug(
+                f"Reconciliation OK at {bar_dt.isoformat()}: "
+                f"{len(open_positions)} open positions, {len(open_orders)} open orders"
+            )
+            return
+
+        # Build alert hash to suppress repeats during cooldown
+        alert_hash = "|".join(sorted(findings))
+        cooldown_ns = self.config.alert_cooldown_minutes * 60 * 1_000_000_000
+        if (
+            alert_hash == self._last_alert_hash
+            and (ts_event_ns - self._last_alert_ts_ns) < cooldown_ns
+        ):
+            self.log.warning(
+                f"Reconciliation findings unchanged (cooldown "
+                f"{self.config.alert_cooldown_minutes}m); skipping repeat alert. "
+                f"Findings:\n  " + "\n  ".join(findings)
+            )
+            return
+
+        self._last_alert_hash = alert_hash
+        self._last_alert_ts_ns = ts_event_ns
+        self._persist_state()
+
+        msg = "Position-reconciliation watchdog detected drift:\n  " + "\n  ".join(findings)
+        self.log.error(msg)
+        try:
+            notify_health(
+                event="reconciliation_drift",
+                severity="critical",
+                detail=msg,
+            )
+        except Exception as e:
+            self.log.warning(f"Reconciliation: notify_health failed: {e}")
