@@ -112,14 +112,18 @@ Mapping the rehydration bug through the framework:
 | T1.3 | NLV divergence alarm | ✅ shipped | #12 (was #9) |
 | T1.2 | Double-restart smoke script | ✅ shipped | #13 (was #10) |
 | T2.2 | Property-based state-machine tests | ✅ shipped | #14 |
+| T2.4 | Cost-model audit job | ✅ shipped | #15 |
 
-**Tier 1 complete + Tier 2.2 shipped.** All five Tier 1 items merged
-between PRs #6, #7, #8, #12, #13. Tier 2.2 began the property-based
-testing layer with Hypothesis-driven random sequences of (rehydrate,
-bar, restart, external_close, reconnect) verifying invariants like
-"never more than one open position per instrument" and "strategy state
-agrees with broker." Next Tier 2 candidates: cost-model audit job
-(T2.4), shadow-strategy mode (T2.1).
+**Tier 1 complete + Tier 2.2/2.4 shipped.** All five Tier 1 items merged
+between PRs #6, #7, #8, #12, #13. Tier 2.2 added Hypothesis-driven
+state-machine tests. Tier 2.4 added a weekly cost-model audit cron
+(``scripts/cost_audit.py``) that pulls last N days of IBKR executions
+via ``reqExecutions()``, compares per-fill realised commission vs the
+``realistic_cost_bps()`` model used in research, and fires
+``notify_health(severity="warning")`` when notional-weighted drift
+exceeds threshold (default 50%). Next Tier 2 candidates: shadow-strategy
+mode (T2.1), backtest-vs-live reconciliation (T2.5), chaos test
+harness (T2.3).
 
 Update this table as items ship.
 
