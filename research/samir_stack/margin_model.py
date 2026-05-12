@@ -56,6 +56,31 @@ CSPX_TER_ANNUAL = 0.0007
 # drift to L > 1/0.30 ≈ 3.33 triggers a call.
 DEFAULT_MAINTENANCE_MARGIN = 0.30
 
+# SPX trailing 12-month dividend yield. Long-run average ~1.8%; current
+# ~1.4%. Used in the futures cost model: basis carry ≈ funding_rate -
+# dividend_yield (cost-of-carry minus what spot holders earn).
+SPX_DIVIDEND_YIELD_DEFAULT = 0.015
+
+# IBKR overnight initial margin for ES/MES Micro E-mini S&P 500 as
+# fraction of notional. CME exchange minimum is ~3-5%; IBKR holds a
+# buffer above that. ES initial ≈ $13.2k / $290k ≈ 4.6%; conservative
+# value chosen here for headroom.
+ES_OVERNIGHT_MARGIN_PCT_DEFAULT = 0.06
+
+# Quarterly roll slippage cost on SPX futures. Calendar-spread quote
+# typically 0.25-0.50 ES points = ~5bps of notional per roll. Four
+# rolls per year (Mar/Jun/Sep/Dec) → ~20bps/yr drag.
+SPX_FUTURES_ROLL_SLIPPAGE_BPS_DEFAULT = 5.0
+SPX_FUTURES_ROLLS_PER_YEAR = 4
+
+# IBKR US500 CFD overnight financing spread (long side). Per IBKR
+# website: SOFR + 1.5% on long index CFDs (matches Pro margin).
+IBKR_CFD_LONG_SPREAD_OVER_BENCHMARK = 0.015
+
+# IBKR US500 CFD commission: 0.005% of notional per side. For a
+# turnover-light strategy this is negligible vs financing cost.
+IBKR_CFD_COMMISSION_PCT_PER_SIDE = 0.00005
+
 
 def margin_funding_series(
     index: pd.DatetimeIndex,
@@ -181,3 +206,125 @@ def drift_margin_returns(
         },
         index=underlying_close.index,
     )
+
+
+def futures_returns(
+    underlying_close: pd.Series,
+    leverage: float,
+    *,
+    dividend_yield: float = SPX_DIVIDEND_YIELD_DEFAULT,
+    margin_pct: float = ES_OVERNIGHT_MARGIN_PCT_DEFAULT,
+    rolls_per_year: int = SPX_FUTURES_ROLLS_PER_YEAR,
+    roll_slippage_bps: float = SPX_FUTURES_ROLL_SLIPPAGE_BPS_DEFAULT,
+    trading_days_per_year: int = 252,
+) -> pd.Series:
+    """Daily equity-return series of a constant-L SPX futures position.
+
+    Cost decomposition (per $E equity, per year):
+
+      ``L × spx_price_return``                 # gross levered exposure
+      ``- L × (funding - dividend_yield)``     # basis decay (cost of carry)
+      ``+ T_bill_yield``                       # IBKR pays interest on free cash
+      ``- L × roll_slippage``                  # quarterly roll bid/ask cost
+
+    Sanity check at L=1: futures_return + T-bill on cash ≈ spx_total_return,
+    which matches direct holding of the index. The model assumes IBKR pays
+    the full benchmark rate on the cash balance net of posted margin (true
+    above the $10k threshold for IBKR Pro). For ``L × margin_pct >= 1`` the
+    holder would need to borrow against margin which this simple model
+    rejects — use a smaller L or a CFD/margin engine for that range.
+
+    The futures wrapper has no TER (no daily-rebalanced ETF carrying a
+    management fee), no per-night borrow interest (financing is implicit
+    in the basis), and no dividend cashflow (dividends are reflected in
+    the spot-vs-futures spread).
+
+    Parameters
+    ----------
+    underlying_close
+        Close prices of the SPX cash index proxy (e.g. SPY total-return-
+        adjusted, or CSPX, or a synthetic SPX series). The model treats
+        this as the cash-index price; basis decay is added on top.
+    leverage
+        Constant target leverage (notional / equity). 1.0 = unlevered.
+    dividend_yield
+        SPX trailing 12-month dividend yield, decimal. Default 1.5%.
+    margin_pct
+        IBKR overnight initial margin / notional for ES/MES. Default 6%.
+    rolls_per_year
+        Number of contract rolls per year (default 4 — quarterly).
+    roll_slippage_bps
+        Bid/ask cost per roll, in basis points of notional. Default 5bps.
+    trading_days_per_year
+        Annualisation denominator (default 252).
+    """
+    if leverage <= 0:
+        raise ValueError(f"leverage must be > 0, got {leverage}")
+    if leverage * margin_pct >= 1.0:
+        raise ValueError(
+            f"leverage × margin_pct = {leverage * margin_pct:.2f} >= 1; "
+            f"insufficient cash to support {leverage}x leverage at "
+            f"{margin_pct:.0%} margin requirement. Use a CFD or margin engine."
+        )
+    spy_ret = underlying_close.pct_change()
+    funding = funding_series(underlying_close.index)
+    daily_funding = funding / trading_days_per_year
+    daily_div = dividend_yield / trading_days_per_year
+    daily_basis = daily_funding - daily_div
+    daily_roll = (rolls_per_year * roll_slippage_bps / 10_000.0) / trading_days_per_year
+    return (
+        (leverage * spy_ret)
+        - (leverage * daily_basis)
+        + daily_funding  # T-bill earned on cash equity
+        - (leverage * daily_roll)
+    )
+
+
+def cfd_returns(
+    underlying_close: pd.Series,
+    leverage: float,
+    *,
+    cfd_spread_over_benchmark: float = IBKR_CFD_LONG_SPREAD_OVER_BENCHMARK,
+    commission_pct_per_side: float = IBKR_CFD_COMMISSION_PCT_PER_SIDE,
+    annual_turnover: float = 1.0,
+    trading_days_per_year: int = 252,
+) -> pd.Series:
+    """Daily equity-return series of a constant-L IBKR US500 CFD position.
+
+    Cost decomposition (per $E equity, per year):
+
+      ``L × spx_total_return``           # CFD pays/receives dividends as cash adj
+      ``- (L - 1) × cfd_funding_rate``   # financing on the borrowed portion
+      ``- L × commission × turnover``    # round-trip commission cost
+
+    CFDs differ from leveraged ETFs in three ways:
+      1. No TER (no fund wrapper).
+      2. Financing is on the BORROWED portion only — at L=1 financing = 0.
+      3. Dividends are paid/received as price adjustments → use
+         underlying_total_return (price + dividend_yield) as the gross.
+
+    The model approximates underlying_total_return as ``spx_price_return``
+    if the input series is total-return-adjusted (e.g. CSPX) or as
+    ``spx_price_return + dividend_yield/year`` if the input is price-only.
+    To keep the function simple we assume the input is total-return like
+    the existing ``constant_leverage_margin_returns`` does — pass a
+    total-return series in.
+
+    Cost ranking at typical strategy turnover:
+      - vs ETF margin: CFD saves the TER (~7bps/yr), pays similar
+        financing (IBKR Pro spread = CFD spread = SOFR+1.5%).
+      - vs futures L=2: CFD costs ~6.5% on borrowed portion (= 6.5%
+        per equity); futures cost ~5% × 2 - T-bill = 5% per equity.
+        Futures slightly cheaper. Gap widens at higher L.
+    """
+    if leverage <= 0:
+        raise ValueError(f"leverage must be > 0, got {leverage}")
+    spy_ret = underlying_close.pct_change()
+    funding = funding_series(underlying_close.index)
+    cfd_rate = funding + cfd_spread_over_benchmark
+    daily_cfd_rate = cfd_rate / trading_days_per_year
+    borrow_factor = max(leverage - 1.0, 0.0)
+    daily_commission = (
+        leverage * commission_pct_per_side * 2.0 * annual_turnover
+    ) / trading_days_per_year
+    return (leverage * spy_ret) - (borrow_factor * daily_cfd_rate) - daily_commission
