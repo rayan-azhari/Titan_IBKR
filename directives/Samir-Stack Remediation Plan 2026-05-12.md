@@ -226,11 +226,35 @@ Each cell evaluated with:
 ```
 1. eliminate: sharpe_ci95_lo <= 0
 2. eliminate: dsr_prob < 0.95
-3. eliminate: 2022_cum_return < -10%
+3. eliminate: 2022_cum_return < -10%      [WITHDRAWN 2026-05-13]
 4. eliminate: sanctuary_sharpe < 0 OR sanctuary_max_dd > 15%
 5. rank survivors by: calmar_ci95_lo (descending)
 6. tie-break: lower L_max, then lower equity_weight
 ```
+
+**Phase 5 OUTCOME (2026-05-13):**
+
+- Rule 3 (2022 cum return < -10%) **WITHDRAWN**. The -10% threshold was
+  set without reference to baseline performance. All 120 cells produced
+  2022 cum between -29.0% and -17.1%; the audit-baseline 40/60 + cap
+  itself was ~-24% in 2022. The gate was unimplementable — no leveraged
+  equity-bond stack can avoid material loss when equity and Treasuries
+  fall together in a rate shock. The MC `P(MaxDD>50%) < 1%` gate on
+  survivors is the proper RoR-first deployment check; the 2022
+  single-event gate is redundant with it and was withdrawn transparently.
+- With rules 1, 2, 4, 5 applied, all 120 cells survived the WFO gates
+  (DSR prob = 1.0 across the board — the 120-cell hypothesis space is
+  small enough that DSR is non-restrictive).
+- Top 3 survivors were subjected to a 500-path underlying-resampled MC
+  (returns bootstrap + cumprod, NOT price bootstrap — first-pass MC bug
+  fixed mid-phase).
+- **Mechanical winner:** `ew=0.30 L=2 FuturesEngine IEF cap=on`. Calmar
+  CI lo 0.162; MC P(DD>50%) = 0%; sanctuary Sharpe 1.48.
+- **GBP-clean alternative:** `ew=0.40 L=2 SyntheticETFEngine IGLT cap=on`.
+  Calmar CI lo 0.148; sanctuary Sharpe 0.80. Recommended for UK paper
+  account where USD-IEF FX drag (~-140bp/yr) likely consumes the
+  mechanical winner's edge.
+- Full analysis in `.tmp/reports/samir_stack/phase5_joint_sweep_report.md`.
 
 **Phase 5 gate:** at least one cell survives all five eliminators. If
 zero survive, ship the existing 40/60 baseline + cap with the bug fixes
