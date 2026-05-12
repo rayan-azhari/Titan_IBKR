@@ -69,3 +69,8 @@ testpaths = ["tests"]
 
 [tool.setuptools]
 packages = ["titan"]
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.152.6",
+]
