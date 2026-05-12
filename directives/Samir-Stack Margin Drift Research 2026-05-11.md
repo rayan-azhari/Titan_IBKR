@@ -597,14 +597,18 @@ champion. v1 MVP scope:
 
 **NOT YET in `STRATEGY_REGISTRY`.** Promotion to live requires:
 
-1. **Phase 2: MES futures execution** (separate PR). v1 uses the
-   existing CSPX margin path. Switching the equity sleeve to MES
-   futures L=3 unlocks the documented carry-cost savings (~1.3%/yr)
-   but needs IBContract setup with quarterly rollover and integer-
-   contract sizing.
-2. **Phase 3: bond rotation overlay** (separate PR). v1 holds the
-   bond sleeve in a single `bond_instrument_id` (IEF). Adding the
-   IEF/HYG/cash rotation captures I2 from the research overlays.
+1. **Phase 2: MES futures execution** ✅ shipped. ``equity_is_future``
+   config flag + ``futures_multiplier`` field + integer-contract sizing
+   via ``_futures_target_contracts``. Operator must set
+   ``equity_instrument_id`` to the front-month MES contract and
+   manually update each quarterly roll (Mar/Jun/Sep/Dec). Auto-rollover
+   is deferred to a future PR.
+2. **Phase 3: bond rotation overlay** ✅ shipped. ``bond_rotation_instruments``
+   + ``bond_rotation_bar_types`` config tuples + ``_select_bond_instrument``
+   selector. When configured, picks the bond candidate with highest
+   60d log-momentum (default lookback ``bond_rotation_lookback_days=60``);
+   returns to cash if all candidates have negative momentum. Backwards-
+   compat: empty rotation tuples → falls back to single ``bond_instrument_id``.
 3. **Pre-flight**: paper-validate for at least 4 weeks against the
    research backtest, run T2.5 replay-audit weekly during validation.
 
@@ -613,7 +617,8 @@ champion. v1 MVP scope:
 - Capitulation overlay re-tune on the L=3 10/90 baseline (probably modest uplift)
 - Yield-curve recession gate added to regime score
 - Multi-strategy combination at portfolio level (Samir-Stack 70% + mr_audjpy 15% + bond_equity 15%) — likely the biggest real-money uplift remaining
-- Phase 2/3 above (MES futures, bond rotation)
+- **Auto-rollover for MES contracts** (currently manual quarterly: Mar/Jun/Sep/Dec)
+- **4-week paper validation** before adding to ``STRATEGY_REGISTRY``
 
 ### 13.9 Files in the May 12 update
 
