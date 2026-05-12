@@ -147,7 +147,10 @@ def main(symbols: list[str]) -> int:
         action = "SELL" if pos > 0 else "BUY"
         oid = app.next_order_id
         app.next_order_id += 1
-        print(f"\nClosing {action} {qty:.0f} {contract.symbol}.{contract.primaryExchange}  (oid={oid})...")
+        print(
+            f"\nClosing {action} {qty:.0f} "
+            f"{contract.symbol}.{contract.primaryExchange}  (oid={oid})..."
+        )
         app.placeOrder(oid, contract, _market_order(action, qty))
         submitted.append(oid)
         time.sleep(0.5)
