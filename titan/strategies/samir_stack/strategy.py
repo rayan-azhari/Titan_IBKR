@@ -1,27 +1,45 @@
 """samir_stack/strategy.py — Samir-Stack live NautilusTrader Strategy.
 
 Regime-gated leveraged-equity + bond stack. Two trading instruments
-(equity ETF held on margin + bond ETF) plus signal sources (SPY proxy,
-VIX, HYG, IEF for the multi-indicator regime classifier).
+(equity ETF + bond ETF) plus signal sources (SPY proxy, VIX, HYG, IEF
+for the multi-indicator regime classifier).
 
-Research lineage: ``research/samir_stack/``, see
-``directives/Samir-Stack Margin Drift Research 2026-05-11.md`` §13.
+Research lineage: ``research/samir_stack/``. The 2026-05-12 audit found
+three deployment-blocking bugs in the prior research pipeline (look-ahead
+in bond rotation and EFA overlay; dividend double-count in futures
+engine); see ``directives/Samir-Stack Remediation Plan 2026-05-12.md``.
+After Phases 1-5 of the remediation plan, this strategy is rebuilt on:
 
-Live champion config (May 12 2026):
-  Equity sleeve: CSPX (margin L=3 in v1; MES futures planned for Phase 2)
-  Bond sleeve:   IEF (or static cash for v1; rotation planned for Phase 2)
-  Capital split: 10% equity / 90% bond
-  Vol target:    8% annualised, 30-day rolling realised vol scaler,
-                 capped at 2× and lagged 1 day
-  Capitulation:  disabled (current parameters drag at this baseline)
+Live champion config (Phase 5 GBP-clean variant — 2026-05-13):
+  Equity sleeve: 3USL.LSEETF (synthetic 3x SPY UCITS, daily-rebalanced).
+                 Validated against UPRO (real 3x SPY): daily-return
+                 correlation 0.9983 over 16.8y, CAGR diff +1.21pp.
+  Bond sleeve:   IGLT.LSEETF (UK 7-10y gilts, GBP-native — no FX risk
+                 on the defensive ballast for a GBP-base account).
+  Capital split: 40% equity / 60% bond.
+  L_max:         2.0 (tiers 1, 2 only — vol drag at L=3 erodes Calmar
+                 more than the marginal upside from extra leverage).
+  Tier thresholds: (0.30, 0.55) — regime score ≥ 0.30 enters tier 1;
+                 ≥ 0.55 enters tier 2.
+  Vol target:    DISABLED. Phase 5 found uniform Calmar-CI-lo
+                 improvement from the regime gate without vol-targeting.
+  I1/I2/I3:      ALL DROPPED. Phase 3 rejected bond rotation on the
+                 churn gate (>22 flips/year); I3 EFA had a same-bar
+                 look-ahead and was dropped per remediation plan §0(1).
+  Capitulation:  RESEARCH-ONLY in this config. The Phase 5 winner uses
+                 capitulation=on, but the overlay is not yet wired into
+                 the live strategy class (Phase 6b follow-up). This
+                 deployment is a strict subset of the Phase 5 cell;
+                 expected Sharpe is ~0.91 vs the with-cap 0.96.
 
-WFO validation (16 OOS folds):
-  Stitched Sharpe 2.285 | CI lo 1.792 | CAGR 20.03% | MaxDD -6.62%
-  Calmar 3.03 | 100% positive folds.
+Phase 5 validation summary (with cap on, 18.9y backtest 2007-2026):
+  WFO stitched Sharpe 0.961 | CI lo 0.428
+  Calmar CI lo 0.148 | Sanctuary Sharpe 0.80
+  MC P(MaxDD>50%) < 1% (RoR-acceptable per Samir framework)
 
-Bootstrap risk-of-ruin (10y, 5,000 paths):
-  Median MaxDD -8.07% | worst-of-5,000 -20.44%
-  P(MaxDD>15%) = 1.04% | P(end < starting capital) = 0%
+This config replaces the prior 10/90 + 8% vol-target "champion" which
+the audit found delivered honest Sharpe 0.64 / CAGR 5% (not the
+claimed 2.28 / 20%).
 
 Execution flow:
 1. On each daily bar of SPY (the regime-driving signal):
@@ -36,8 +54,9 @@ Execution flow:
 
 Pre-flight gates required before deployment (see directives/Pre-Flight Checklist.md):
 - Live parity test asserting one bar of regime/score/tier matches research.
-- FX handling: equity sleeve quoted in USD, account base may be GBP — use
-  convert_notional_to_units with explicit fx_rate.
+- FX handling: equity sleeve 3USL is USD-quoted; UK paper account is GBP-base.
+  Bond sleeve IGLT is GBP-native (no FX). Use convert_notional_to_units with
+  explicit fx_rate for the equity sleeve.
 """
 
 from __future__ import annotations
@@ -102,11 +121,11 @@ class SamirStackConfig(StrategyConfig):
     fx_rate_equity_quote_to_base: float = 1.0
     fx_rate_bond_quote_to_base: float = 1.0
 
-    # Strategy parameters (May 12 2026 champion config — see header).
-    equity_weight: float = 0.10
-    bond_weight: float = 0.90
-    L_max: float = 3.0
-    tier_thresholds: tuple[float, ...] = (0.30, 0.50, 0.75)
+    # Strategy parameters — Phase 5 GBP-clean champion (2026-05-13).
+    equity_weight: float = 0.40
+    bond_weight: float = 0.60
+    L_max: float = 2.0
+    tier_thresholds: tuple[float, ...] = (0.30, 0.55)
     hysteresis_buffer: float = 0.05
     re_entry_quiet_bars: int = 20
 
@@ -116,12 +135,14 @@ class SamirStackConfig(StrategyConfig):
     dd_re_entry_score: float = 0.70
     dd_re_entry_bars: int = 5
 
-    # Vol-targeting overlay (Tier 13.4 of the directive write-up).
-    # Multiplicative scaler applied to the equity-sleeve target notional
-    # on every rebalance. Computed as ``target_vol / realised_vol_30d``,
-    # capped at ``vol_target_max_scale``, lagged 1 bar to avoid look-ahead.
-    # Set ``vol_target_annual <= 0`` to disable (returns to baseline sizing).
-    vol_target_annual: float = 0.08
+    # Vol-targeting overlay — DISABLED by default (vol_target_annual <= 0).
+    # Phase 5 found the regime gate captures the same risk-management benefit
+    # without the operational complexity. Kept in the config for opt-in
+    # experimentation only. The pre-Phase-5 default of 0.08 was based on a
+    # buggy backtest (audit 2026-05-12); honest backtests show vol-target
+    # adds only ~+0.07 Sharpe at significant operational cost (scaling on
+    # already-leveraged ETF positions inflates vol drag).
+    vol_target_annual: float = 0.0
     vol_target_window: int = 30
     vol_target_max_scale: float = 2.0
 

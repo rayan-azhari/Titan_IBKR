@@ -1,21 +1,26 @@
-# Samir-Stack live configuration — IBKR UK paper account.
+# Samir-Stack live configuration — IBKR UK paper account (GBP base).
 #
-# Research lineage: research/samir_stack/
-# WFO 5/5 folds positive, mean Calmar 0.655, sanctuary 1.05.
-# P(MaxDD > 50%) = 0.0% (RoR-acceptable per user spec).
+# Phase 5 GBP-clean champion (2026-05-13). See:
+#   - directives/Samir-Stack Strategy Guide.md (operator-facing summary)
+#   - directives/Samir-Stack Remediation Plan 2026-05-12.md (full audit trail)
+#   - .tmp/reports/samir_stack/phase5_joint_sweep_report.md (sweep results)
 #
-# Validated against research/samir_stack/ using SPY (US) + IEF (USD 7-10y Treasuries).
-# Live mapping for IBKR UK:
-#   * 3USL.LSEETF — WisdomTree 3x S&P 500 UCITS (USD-quoted on LSE)
-#   * IGLT.LSEETF — iShares Core UK Gilts UCITS (GBP-quoted, no FX exposure)
+# This config supersedes the prior 10/90 + 8%-vol-target "champion" which
+# the 2026-05-12 audit found delivered honest Sharpe 0.64 / CAGR 5% — not
+# the claimed Sharpe 2.28 / CAGR 20% — due to look-ahead and cost-model
+# bugs (all fixed in the audit-remediation phases 1-5).
 #
-# Account base ccy: GBP. The equity sleeve has FX exposure (USD), bond sleeve
-# is GBP-native. Historical analysis (research/samir_stack/) shows USD-haven
-# behaviour during crises typically reduces drawdown by 3-10pp for UK investors.
-# Net FX cost ~140bp/yr (volatility drag overwhelms slight currency tailwind).
+# Phase 5 validation (with capitulation on, 18.9y backtest 2007-2026):
+#   WFO stitched Sharpe 0.961 | CI lo 0.428
+#   Calmar CI lo 0.148 | Sanctuary Sharpe 0.80
+#   MC P(MaxDD>50%) < 1% (RoR-acceptable per Samir framework).
+#
+# IMPORTANT: capitulation overlay is NOT yet wired into the live strategy
+# class (Phase 6b follow-up). This deployment runs without the overlay;
+# expected live Sharpe is ~0.91 vs the with-cap 0.96.
 
 [strategy]
-# Trading instruments
+# Trading instruments — both GBP-tradable on LSE, no FX on the bond sleeve.
 equity_instrument_id = "3USL.LSEETF"
 bond_instrument_id   = "IGLT.LSEETF"
 
@@ -25,8 +30,8 @@ signal_vix_id = "VIX.CBOE"
 signal_hyg_id = "HYG.ARCA"
 signal_ief_id = "IEF.NASDAQ"
 
-# Bar types (all daily) — note: IGLT bars used as bond return source AND
-# IEF bars subscribed separately for credit-spread indicator.
+# Bar types (all daily) — IGLT bars used as bond return source AND IEF
+# bars subscribed separately for the credit-spread indicator (HYG/IEF z).
 bar_type_equity_d  = "3USL.LSEETF-1-DAY-LAST-EXTERNAL"
 bar_type_bond_d    = "IGLT.LSEETF-1-DAY-LAST-EXTERNAL"
 bar_type_spy_d     = "SPY.ARCA-1-DAY-LAST-EXTERNAL"
@@ -35,29 +40,53 @@ bar_type_hyg_d     = "HYG.ARCA-1-DAY-LAST-EXTERNAL"
 bar_type_ief_d     = "IEF.NASDAQ-1-DAY-LAST-EXTERNAL"
 
 # Per-instrument quote currency (must match what IB returns)
-equity_quote_ccy = "USD"   # 3USL.LSEETF is USD-quoted
+equity_quote_ccy = "USD"   # 3USL.LSEETF is USD-quoted (even though LSE-listed)
 bond_quote_ccy   = "GBP"   # IGLT.LSEETF is GBP-native
 
-# FX rate seed (GBP base): 1 USD = how many GBP. Updated on each GBPUSD bar
-# if signal_gbpusd_id is set. Otherwise this static value is used and the
-# operator must update periodically.
-# At 2026-04-02: GBPUSD = 1.33 → 1 USD = 1/1.33 = 0.7519 GBP
-fx_rate_usd_to_gbp = 0.7519
-fx_rate_gbp_to_gbp = 1.0  # bond sleeve, no conversion
+# FX rate seed (GBP base): 1 USD = how many GBP.
+# At 2026-04-02: GBPUSD = 1.33 → 1 USD = 1/1.33 = 0.7519 GBP.
+# Operator should update this monthly (or wire a GBPUSD bar subscription
+# for dynamic updates in a v2 enhancement).
+fx_rate_equity_quote_to_base = 0.7519
+fx_rate_bond_quote_to_base   = 1.0  # bond sleeve GBP-native, no conversion
 
-# Strategy parameters (validated defaults — research/samir_stack/)
+# Strategy parameters — Phase 5 GBP-clean champion (committed 2026-05-13).
 equity_weight = 0.40
 bond_weight   = 0.60
-L_max         = 3.0
-tier_thresholds   = [0.30, 0.50, 0.75]
+L_max         = 2.0
+tier_thresholds   = [0.30, 0.55]
 hysteresis_buffer = 0.05
 re_entry_quiet_bars = 20
 
-# DD circuit breaker
+# DD circuit breaker (unchanged from prior config)
 dd_throttle = 0.10
 dd_kill     = 0.15
 dd_re_entry_score = 0.70
 dd_re_entry_bars  = 5
+
+# Vol-targeting overlay — DISABLED per Phase 5 finding.
+# Set to a positive value (e.g. 0.06-0.10) to opt back in.
+vol_target_annual = 0.0
+vol_target_window = 30
+vol_target_max_scale = 2.0
+
+# Phase 2 futures execution — OFF. 3USL.LSEETF as ETF is the deployable
+# variant for UK paper. To switch to MES futures, set:
+#   equity_is_future = true
+#   equity_instrument_id = "MES.CME-front-month"
+#   futures_multiplier = 5.0
+# and accept the integer-contract sizing chunkiness (operational floor
+# NAV ≈ £30k for clean fills — see Phase 4 report).
+equity_is_future = false
+futures_multiplier = 5.0
+
+# Phase 3 bond rotation — OFF. Phase 3 rejected the IGLT/IGLS rotation
+# on the operational churn gate (22+ flips/year at 60d lookback, 8+
+# even at 252d). Future rotation hypotheses must be pre-registered with
+# their own gate.
+bond_rotation_instruments = []
+bond_rotation_bar_types   = []
+bond_rotation_lookback_days = 60
 
 # Operational — base currency = GBP for IBKR UK paper
 initial_equity   = 10000.0
