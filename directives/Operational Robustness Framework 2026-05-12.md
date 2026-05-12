@@ -110,7 +110,11 @@ Mapping the rehydration bug through the framework:
 | T1.4 | Order-rejection page (audit + global hook) | ✅ shipped | #7 |
 | T1.1 | Position-reconciliation watchdog | ✅ shipped | #8 |
 | T1.3 | NLV divergence alarm | ✅ shipped | #9 |
-| T1.2 | Double-restart smoke script | pending | — |
+| T1.2 | Double-restart smoke script | ✅ shipped | #10 |
+
+**Tier 1 complete.** All five items shipped between PRs #6-#10. Next:
+Tier 2 begins with shadow-strategy mode and property-based state-machine
+tests. Defer until Tier 1 has bake-time in production.
 
 Update this table as items ship.
 
