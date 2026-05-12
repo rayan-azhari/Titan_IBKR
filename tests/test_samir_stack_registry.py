@@ -119,13 +119,22 @@ def test_samir_stack_paper_warmup_files_listed():
 
 
 def test_samir_stack_paper_warmup_parquets_exist_on_disk():
-    """The warmup files must actually exist in data/. Running the
-    container with a missing parquet would silently disable that
-    indicator and degrade the regime score — failing here at test
-    time is much louder."""
+    """The warmup files must actually exist in data/ on the deployment
+    machine. Running the container with a missing parquet would silently
+    disable that indicator and degrade the regime score.
+
+    In CI ``data/`` is empty (parquets are gitignored / refreshed
+    locally), so we SKIP rather than FAIL. The check still runs
+    locally before deploy and via the operator's pre-deployment
+    checklist (see directives/Samir-Stack Paper Validation 2026-05-12.md
+    §3 item 3).
+    """
     project_root = Path(__file__).resolve().parents[1]
+    data_dir = project_root / "data"
     files = _STRATEGY_WARMUP_FILES.get("samir_stack_paper", [])
-    missing = [f for f in files if not (project_root / "data" / f).exists()]
+    if not data_dir.exists() or not any(data_dir.glob("*.parquet")):
+        pytest.skip("data/ has no parquets — CI environment, deferred to local pre-deploy check")
+    missing = [f for f in files if not (data_dir / f).exists()]
     if missing:
         pytest.fail(
             f"Missing warmup parquets for samir_stack_paper: {missing}. "
