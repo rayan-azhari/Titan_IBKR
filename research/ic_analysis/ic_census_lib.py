@@ -402,21 +402,81 @@ def _intraday_range_atr(close: pd.Series, period: int, high: pd.Series, low: pd.
     return today_range / atr.replace(0, np.nan) - 1.0
 
 
+# ── Cross-asset factories ──────────────────────────────────────────────────
+# Each takes the target's close plus one or more EXTERNAL closes already
+# anchored to the target's index by the orchestrator. The orchestrator MUST
+# apply ``anchored_aggregate(..., higher_tf=False)`` (i.e. ``.shift(1)``
+# followed by causal ffill onto the target index) BEFORE handing the
+# external series to these factories. That is the Anchored MTF Rule (audit
+# A2 / EUR/USD MTF +1.94 Sharpe bug pattern).
+#
+# Self-correlation guard (target instrument == external instrument) is the
+# orchestrator's job; these factories assume distinct instruments.
+
+
+def _hyg_ief_z(close: pd.Series, *, hyg: pd.Series, ief: pd.Series, lookback: int) -> pd.Series:
+    """Rolling z-score of the high-yield / investment-grade spread.
+
+    Mechanism: when HY narrows vs IG (spread tightens), risk appetite is
+    on -- equity tends to grind up. When HY widens, risk-off -- equity
+    falls. The IC sign is expected POSITIVE on the equity targets (high
+    spread z → high forward equity return is the canonical bond-equity
+    pattern observed in Migrate.md's IHYU→CSPX, IHYG→VUSD candidates,
+    and in the broader literature on credit-spread mean reversion).
+
+    ``hyg`` and ``ief`` MUST already be ``.shift(1)``-ed and aligned to
+    the target's index by the orchestrator via ``anchored_aggregate``.
+    The reindex below is a defensive no-op when the contract holds and
+    a corrective alignment if it doesn't.
+    """
+    hyg = hyg.reindex(close.index)
+    ief = ief.reindex(close.index)
+    spread = np.log(hyg) - np.log(ief)
+    mu = spread.rolling(lookback, min_periods=lookback).mean()
+    sd = spread.rolling(lookback, min_periods=lookback).std(ddof=1)
+    return (spread - mu) / sd.replace(0.0, np.nan)
+
+
+def _dxy_z(close: pd.Series, *, eur_usd: pd.Series, lookback: int) -> pd.Series:
+    """USD-index proxy z-score. ``-log(EUR_USD)`` rises when USD strengthens.
+
+    Mechanism: a strong USD typically headwinds risk assets and ex-US
+    equities. Expected IC sign is NEGATIVE on most equity / EM /
+    commodity targets.
+
+    ``eur_usd`` MUST already be ``.shift(1)``-ed and aligned via
+    ``anchored_aggregate`` by the orchestrator. The reindex below is a
+    defensive no-op when the contract holds.
+    """
+    eur_usd = eur_usd.reindex(close.index)
+    dxy_proxy = -np.log(eur_usd)
+    mu = dxy_proxy.rolling(lookback, min_periods=lookback).mean()
+    sd = dxy_proxy.rolling(lookback, min_periods=lookback).std(ddof=1)
+    return (dxy_proxy - mu) / sd.replace(0.0, np.nan)
+
+
 SignalCallable = Callable[..., pd.Series]
 
 
 def signal_factories() -> dict[str, dict[str, Any]]:
-    """Return a registry of signal name -> {fn, required_columns}.
+    """Return a registry of signal name -> {fn, needs, externals}.
 
-    ``required_columns`` is the list of OHLCV columns the factory needs
-    (subset of ``["close", "high", "low", "open", "volume"]``). Most
-    factories take only ``close``; ``intraday_range_atr`` needs HLC.
+    * ``needs`` -- target OHLCV columns the factory wants (subset of
+      ``["close", "high", "low", "open", "volume"]``). Most factories take
+      only ``close``; ``intraday_range_atr`` needs HLC.
+    * ``externals`` -- (optional) list of external instrument tickers
+      whose close series must be anchored to the target's index via
+      ``anchored_aggregate(..., higher_tf=False)`` before invocation.
+      The orchestrator passes each as a kwarg named with the
+      instrument's lowercase ticker (``HYG`` → ``hyg``,
+      ``EUR_USD`` → ``eur_usd``). Cross-asset signals MUST declare
+      ``externals``; absence means single-instrument signal.
 
-    Cross-asset / cross-region factories are NOT in this registry --
-    they live in run_ic_census.py because their inputs include external
-    series anchored via anchored_aggregate().
+    Self-correlation guard (target instrument == one of the externals)
+    is the orchestrator's job; factories assume distinct instruments.
     """
     return {
+        # ── Single-instrument signals ─────────────────────────────────
         "momentum":          {"fn": _momentum,          "needs": ["close"]},
         "ewmac":             {"fn": _ewmac,             "needs": ["close"]},
         "ma_distance":       {"fn": _ma_distance,       "needs": ["close"]},
@@ -433,4 +493,11 @@ def signal_factories() -> dict[str, dict[str, Any]]:
         "overnight_gap_z":   {"fn": _overnight_gap_z,   "needs": ["close"]},
         "intraday_range_atr": {"fn": _intraday_range_atr,
                                "needs": ["close", "high", "low"]},
+        # ── Cross-asset signals (Anchored MTF Rule applied by runner) ─
+        "hyg_ief_z":         {"fn": _hyg_ief_z,
+                              "needs": ["close"],
+                              "externals": ["HYG", "IEF"]},
+        "dxy_z":             {"fn": _dxy_z,
+                              "needs": ["close"],
+                              "externals": ["EUR_USD"]},
     }

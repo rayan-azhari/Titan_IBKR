@@ -160,3 +160,15 @@ A separate decision step, not bundled into this directive. Recorded here so it d
 | Signal retired on AUD/JPY H1 as IC-justified? | **Yes** under this pre-registration |
 | Strategy `mr_audjpy` flagged for review? | **Yes** (recommended action 1 above) |
 | Re-pre-registration permitted? | Only as a structurally different signal class (recommended action 3) |
+
+### 4.7 Re-run note (fold-quorum tightening)
+
+The first run of this scan executed before the orchestrator wired the `fold_sign_quorum = 4` value from the universe TOML into `fold_ic_signs` (the previous code defaulted to a `>= 3 of 5` threshold, which is tautological per pigeonhole on 5 non-NaN folds). After fixing the orchestrator to pass the configured quorum + introducing a near-zero-IC carve-out (`|IC| < 0.005` → sign-agnostic vote), the scan was re-run. **Headline outcome unchanged:**
+
+| Horizon | First-run fold_stable | Re-run (quorum=4) fold_stable |
+|---|:---:|:---:|
+| 1 (anchor=3 headline) | True (5/5 negative) | True (5/5 negative — unchanged) |
+| 8 (anchor=3 headline) | True (3/5 negative — looser gate) | **False** (modal=3 < quorum=4) |
+| 40 (anchor=12 headline) | False (mixed signs) | False |
+
+The h=1 verdict — the central finding of §4 — is robust to the gate tightening. The h=8 row was already not deployment-eligible (failed plateau, BH, DSR); the only change is its `fold_stable` flag now correctly reads False, removing a tautological positive. §4.1-§4.6 stand without retroactive edits.

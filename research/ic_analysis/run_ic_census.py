@@ -40,8 +40,6 @@ import logging
 import math
 import sys
 import tomllib
-from collections.abc import Iterable
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -56,6 +54,8 @@ sys.path.insert(0, str(ROOT))
 
 from research.ic_analysis.ic_census_lib import (  # noqa: E402
     CellResult,
+    anchored_aggregate,
+    assert_causal,
     deflated_t_pvalue,
     fold_ic_signs,
     mtf_agreement,
@@ -118,19 +118,70 @@ def ic_with_nw_tstat(
 # ── Per-cell evaluation ─────────────────────────────────────────────────────
 
 
+def _anchor_external_close(
+    ext_ohlcv: pd.DataFrame,
+    target_index: pd.DatetimeIndex,
+    sanctuary_start: pd.Timestamp,
+    *,
+    label: str,
+    causal_trials: int = 3,
+) -> pd.Series:
+    """Apply the Anchored MTF Rule to an external close series.
+
+    1. Drop sanctuary bars from the external (keep math symmetric with target).
+    2. ``anchored_aggregate(higher_tf=False)`` -- ``.shift(1)`` + reindex+ffill
+       onto ``target_index``. At target time T, the aligned series sees only
+       external values at times strictly less than T.
+    3. ``assert_causal`` smoke test on the alignment function (3 random
+       corruption trials). Raises AssertionError if the wrapping leaks.
+    """
+    ext_close = ext_ohlcv["close"][ext_ohlcv.index < sanctuary_start]
+    if len(ext_close) < 50:
+        raise ValueError(f"{label}: only {len(ext_close)} pre-sanctuary bars")
+
+    def _agg(s: pd.Series, di: pd.DatetimeIndex) -> pd.Series:
+        return anchored_aggregate(s, di, higher_tf=False)
+
+    # Causality check on the alignment function -- mandatory wrap per §4.1 of
+    # directives/IC Signal Census 2026-05-13.md. Uses a sliced dst_index so the
+    # test runs in <1s per external.
+    test_dst = target_index[: min(len(target_index), 300)]
+    assert_causal(_agg, ext_close, test_dst, n_trials=causal_trials)
+    return _agg(ext_close, target_index)
+
+
 def evaluate_cell(
     *,
     signal_name: str,
     signal_fn,
     needs: list[str],
+    externals: list[str],
     params: dict[str, Any],
     ohlcv: pd.DataFrame,
+    instrument: str,
+    timeframe: str,
     horizons: list[int],
     sanctuary_months: int,
     n_folds: int,
+    fold_quorum: int,
+    ohlcv_cache: dict[tuple[str, str], pd.DataFrame],
 ) -> list[dict[str, Any]]:
     """Evaluate one (signal, params) cell across all horizons. Returns one
-    dict per horizon ready to enter the output parquet."""
+    dict per horizon ready to enter the output parquet.
+
+    Cross-asset signals: when ``externals`` is non-empty, the function
+    loads each external instrument at the SAME timeframe as the target,
+    applies ``_anchor_external_close`` (Anchored MTF Rule + assert_causal),
+    and passes each as a kwarg named with the lowercase ticker.
+
+    Self-correlation guard: if any external == ``instrument``, the cell
+    is skipped (signal would be trivially auto-correlated).
+    """
+    # Self-correlation guard for cross-asset signals.
+    if externals and instrument in externals:
+        logger.debug(f"  Skip {signal_name} on {instrument}: external == target")
+        return []
+
     visible, sanc_start, sanc_end = slice_sanctuary(ohlcv, months=sanctuary_months)
     if len(visible) < 200:
         logger.warning(
@@ -139,9 +190,42 @@ def evaluate_cell(
         return []
     # Build kwargs for the signal function from the OHLCV columns it needs.
     inputs = {col: visible[col] for col in needs}
+
+    # Load + anchor externals (cross-asset signals). Each goes through
+    # anchored_aggregate(higher_tf=False) + assert_causal smoke test.
+    ext_kwargs: dict[str, pd.Series] = {}
+    for ext_inst in externals:
+        ext_key = (ext_inst, timeframe)
+        if ext_key not in ohlcv_cache:
+            try:
+                from research.ic_analysis.run_ic import load_ohlcv
+                ohlcv_cache[ext_key] = load_ohlcv(ext_inst, timeframe)
+            except FileNotFoundError:
+                logger.warning(
+                    f"  Skip {signal_name} on {instrument}: external "
+                    f"{ext_inst}_{timeframe} parquet missing"
+                )
+                return []
+        ext_ohlcv = ohlcv_cache[ext_key]
+        if ext_ohlcv.empty:
+            return []
+        try:
+            aligned = _anchor_external_close(
+                ext_ohlcv, visible.index, sanc_start, label=f"{ext_inst}@{timeframe}"
+            )
+        except (ValueError, AssertionError) as exc:
+            logger.error(
+                f"  Skip {signal_name} on {instrument}: external "
+                f"{ext_inst} anchoring failed: {exc}"
+            )
+            return []
+        ext_kwargs[ext_inst.lower()] = aligned
+
     # Pass parameters as kwargs; the close column is the first positional.
     try:
-        if "close" in needs and len(needs) == 1:
+        if externals:
+            signal = signal_fn(inputs["close"], **ext_kwargs, **params)
+        elif "close" in needs and len(needs) == 1:
             signal = signal_fn(inputs["close"], **params)
         else:
             # Functions like intraday_range_atr take (close, period, high, low).
@@ -155,8 +239,8 @@ def evaluate_cell(
     for h in horizons:
         fwd_col = f"fwd_{h}"
         ic, t_nw, n_obs = ic_with_nw_tstat(signal, fwd[fwd_col], horizon=h)
-        fold_ic, sign_stable, quorum = fold_ic_signs(
-            signal, fwd[fwd_col], n_folds=n_folds
+        fold_ic, sign_stable, modal = fold_ic_signs(
+            signal, fwd[fwd_col], n_folds=n_folds, quorum=fold_quorum
         )
         rows.append({
             "signal": signal_name,
@@ -168,7 +252,7 @@ def evaluate_cell(
             "raw_p_value": _ic_two_tailed_p(t_nw, n_obs),
             "fold_ic": fold_ic,
             "fold_stable": bool(sign_stable),
-            "fold_quorum": int(quorum),
+            "fold_quorum": int(modal),
             "sanctuary_start": sanc_start,
             "sanctuary_end": sanc_end,
         })
@@ -359,6 +443,7 @@ def enumerate_cells(
                             "params": params,
                             "horizons": tf_horizons[tf],
                             "needs": sig_registry[sig_name]["needs"],
+                            "externals": sig_registry[sig_name].get("externals", []),
                             "leveraged_etf": instrument in leveraged,
                         })
     return cells, cell_order
@@ -418,11 +503,16 @@ def run(args: argparse.Namespace) -> Path:
             signal_name=cell["signal"],
             signal_fn=sig_registry[cell["signal"]]["fn"],
             needs=cell["needs"],
+            externals=cell["externals"],
             params=cell["params"],
             ohlcv=ohlcv,
+            instrument=cell["instrument"],
+            timeframe=cell["timeframe"],
             horizons=cell["horizons"],
             sanctuary_months=meta["sanctuary_months"],
             n_folds=meta["fold_count"],
+            fold_quorum=meta["fold_sign_quorum"],
+            ohlcv_cache=cache,
         )
         for r in rows:
             r["instrument"] = cell["instrument"]

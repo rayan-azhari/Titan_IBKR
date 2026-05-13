@@ -293,7 +293,7 @@ The census produces `ic_census.parquet` with columns:
 | `bh_pvalue_adj` | float | BH-adjusted p-value across full pool |
 | `bh_significant` | bool | Survives BH at α=0.05 |
 | `fold_ic` | list[float] | IC per fold (5 folds) |
-| `fold_stable` | bool | Sign agrees in ≥ 3 of 5 |
+| `fold_stable` | bool | Sign agrees in ≥ 4 of 5 (one tolerated near-zero fold with `|IC| < 0.005`) |
 | `dsr_pvalue` | float | Deflated-Sharpe-style p-value at total N |
 | `plateau_stable` | bool | Two grid neighbours also clear t > 3 AND IC range < 30% |
 | `mtf_agree` | bool | Headline gate clears at ≥ 2 of 3 TFs same sign |
