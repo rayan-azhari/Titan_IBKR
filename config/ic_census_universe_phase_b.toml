@@ -1,0 +1,107 @@
+# Phase B pre-registration.
+#
+# Parent universe:  config/ic_census_universe.toml
+# Parent directive: directives/IC Signal Census 2026-05-13.md
+# This pre-reg:     directives/IC Signal Census Phase B 2026-05-13.md
+#
+# Phase A's universe stays frozen in its own TOML for V3.1 reproducibility.
+# This file adds three new target instruments + four new signal classes
+# (term structure, VRP, cross-region lead-lag) that require external data
+# downloaded after Phase A ran.
+
+[meta]
+version = 1
+created = "2026-05-13"
+phase = "B"
+sanctuary_months = 12
+fold_count = 5
+dsr_t_floor_phase_a = 4.5      # combined Phase A + Phase B stays below 25k cells
+dsr_t_floor_combined = 5.0
+bh_alpha = 0.05
+plateau_neighbour_t_floor = 3.0
+plateau_ic_range_max = 0.30
+mtf_quorum = 2                 # not applicable (Phase B is D-only) — kept for orchestrator compatibility
+fold_sign_quorum = 4
+
+[timeframes]
+D = { horizons = [1, 5, 21] }
+
+# ── Phase B targets ───────────────────────────────────────────────────────
+# IWM joins the single-instrument scan; EU indices act as both targets and
+# externals (the latter for the us_lead_eu cross-region signal).
+
+[phase_a.instruments]
+# Equity (re-scanned at D for the new term-structure / VRP signal classes,
+# AND for the trend / MR / volatility single-instrument classes since IWM is new)
+SPY      = ["D"]
+QQQ      = ["D"]
+IWB      = ["D"]
+TQQQ     = ["D"]
+CSPX     = ["D"]
+IWM      = ["D"]                  # new Phase B target
+EFA      = ["D"]
+EEM      = ["D"]
+GLD      = ["D"]
+DBC      = ["D"]
+STOXX50  = ["D"]                  # new Phase B target
+FTSE100  = ["D"]                  # new Phase B target
+GDAXI    = ["D"]                  # new Phase B target (existing parquet refreshed via yfinance)
+# Bonds re-included for the VRP / term-structure scans (they get NaN signal
+# on equity-class signals — those cells just don't apply)
+TLT      = ["D"]
+IEF      = ["D"]
+HYG      = ["D"]
+LQD      = ["D"]
+TIP      = ["D"]
+IHYG     = ["D"]
+# FX re-included so cross-region & VRP can scan them too
+EUR_USD  = ["D"]
+AUD_JPY  = ["D"]
+AUD_USD  = ["D"]
+USD_JPY  = ["D"]
+GBP_USD  = ["D"]
+
+[phase_a.leveraged_etfs]
+TQQQ = 3.0
+
+# ── New signal classes ────────────────────────────────────────────────────
+# Each cross-asset signal declares ``external = [...]`` so the orchestrator
+# applies anchored_aggregate + assert_causal before invocation.
+
+[signals.term_structure]
+[signals.term_structure.vix9d_over_vix]
+external = ["VIX9D", "VIX"]
+applies_to_tfs = ["D"]
+cells = [
+    { smoothing = 1 },
+    { smoothing = 5 },
+    { smoothing = 21 },
+]
+[signals.term_structure.vix_over_vix3m]
+external = ["VIX", "VIX3M"]
+applies_to_tfs = ["D"]
+cells = [
+    { smoothing = 1 },
+    { smoothing = 5 },
+    { smoothing = 21 },
+]
+
+[signals.volatility_phase_b]
+[signals.volatility_phase_b.vrp_z]
+external = ["VIX"]
+applies_to_tfs = ["D"]
+cells = [
+    { rv_window = 20 },
+    { rv_window = 60 },
+    { rv_window = 120 },
+]
+
+[signals.cross_region]
+[signals.cross_region.us_lead_eu]
+external = ["SPY"]
+applies_to_tfs = ["D"]
+cells = [
+    { window = 1 },
+    { window = 5 },
+    { window = 21 },
+]

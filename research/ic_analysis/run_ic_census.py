@@ -143,10 +143,21 @@ def _anchor_external_close(
         return anchored_aggregate(s, di, higher_tf=False)
 
     # Causality check on the alignment function -- mandatory wrap per §4.1 of
-    # directives/IC Signal Census 2026-05-13.md. Uses a sliced dst_index so the
-    # test runs in <1s per external.
-    test_dst = target_index[: min(len(target_index), 300)]
-    assert_causal(_agg, ext_close, test_dst, n_trials=causal_trials)
+    # directives/IC Signal Census 2026-05-13.md. The test must run over the
+    # INDEX OVERLAP between the external src and the target dst; otherwise
+    # the corruption point can land before dst_index starts and there is no
+    # past baseline to compare against (degenerate-test trap, not a real
+    # causality violation). Bound both src and dst to their overlap before
+    # invoking assert_causal.
+    overlap_start = max(ext_close.index[0], target_index[0])
+    overlap_end = min(ext_close.index[-1], target_index[-1])
+    src_test = ext_close[(ext_close.index >= overlap_start) & (ext_close.index <= overlap_end)]
+    dst_test_full = target_index[
+        (target_index >= overlap_start) & (target_index <= overlap_end)
+    ]
+    test_dst = dst_test_full[: min(len(dst_test_full), 300)]
+    if len(src_test) >= 50 and len(test_dst) >= 10:
+        assert_causal(_agg, src_test, test_dst, n_trials=causal_trials)
     return _agg(ext_close, target_index)
 
 

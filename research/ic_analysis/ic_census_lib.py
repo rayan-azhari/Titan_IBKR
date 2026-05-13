@@ -437,6 +437,121 @@ def _hyg_ief_z(close: pd.Series, *, hyg: pd.Series, ief: pd.Series, lookback: in
     return (spread - mu) / sd.replace(0.0, np.nan)
 
 
+def _vix_term_ratio_z(
+    close: pd.Series,
+    *,
+    numerator: pd.Series,
+    denominator: pd.Series,
+    smoothing: int,
+    norm_window: int = 60,
+) -> pd.Series:
+    """Generic VIX-term-structure ratio z-score.
+
+    ``ratio = numerator / denominator`` smoothed by ``rolling_mean(smoothing)``,
+    then z-scored over ``rolling_window=norm_window`` (the normalisation
+    window is FIXED across cells per Phase B directive §2.1; only
+    ``smoothing`` is the swept parameter).
+
+    Used by ``_vix9d_over_vix`` and ``_vix_over_vix3m``. Both externals
+    must already be anchored by the orchestrator via anchored_aggregate.
+    """
+    numerator = numerator.reindex(close.index)
+    denominator = denominator.reindex(close.index)
+    ratio = numerator / denominator.replace(0.0, np.nan)
+    if smoothing > 1:
+        ratio = ratio.rolling(smoothing, min_periods=smoothing).mean()
+    mu = ratio.rolling(norm_window, min_periods=norm_window).mean()
+    sd = ratio.rolling(norm_window, min_periods=norm_window).std(ddof=1)
+    return (ratio - mu) / sd.replace(0.0, np.nan)
+
+
+def _vix9d_over_vix(
+    close: pd.Series,
+    *,
+    vix9d: pd.Series,
+    vix: pd.Series,
+    smoothing: int,
+) -> pd.Series:
+    """Z-score of (VIX9D / VIX), smoothed. Backwardation indicator.
+
+    Mechanism: ratio > 1 means near-term implied vol exceeds 30-day
+    implied vol — typical right at a vol spike, AFTER which equities
+    tend to recover. Expected IC sign on equity targets: POSITIVE for
+    high z-score (post-spike rebound)."""
+    return _vix_term_ratio_z(
+        close, numerator=vix9d, denominator=vix, smoothing=smoothing
+    )
+
+
+def _vix_over_vix3m(
+    close: pd.Series,
+    *,
+    vix: pd.Series,
+    vix3m: pd.Series,
+    smoothing: int,
+) -> pd.Series:
+    """Z-score of (VIX / VIX3M), smoothed. Canonical contango/backwardation.
+
+    Mechanism: ratio > 1 (backwardation) is a stress signal — VIX
+    futures are pricing near-term fear above medium-term fear.
+    Historically a precursor to equity weakness. Expected IC sign on
+    equity targets: NEGATIVE for high z-score."""
+    return _vix_term_ratio_z(
+        close, numerator=vix, denominator=vix3m, smoothing=smoothing
+    )
+
+
+def _vrp_z(
+    close: pd.Series,
+    *,
+    vix: pd.Series,
+    rv_window: int,
+    norm_window: int = 60,
+) -> pd.Series:
+    """Vol-risk-premium z-score: implied vol minus realised vol.
+
+    ``vrp = VIX / 100 - rolling_std(log_returns, rv_window) * sqrt(252)``
+    where VIX is in percent units. Positive VRP means options are
+    pricing more vol than the market is actually realising — vol-seller's
+    edge. Expected IC sign on equity targets: POSITIVE.
+
+    The realised-vol leg uses the target's own close (causal rolling).
+    VIX must already be anchored by the orchestrator.
+    """
+    vix = vix.reindex(close.index)
+    log_rets = np.log(close).diff()
+    rv = log_rets.rolling(rv_window, min_periods=rv_window).std(ddof=1) * math.sqrt(252)
+    vrp = (vix / 100.0) - rv
+    mu = vrp.rolling(norm_window, min_periods=norm_window).mean()
+    sd = vrp.rolling(norm_window, min_periods=norm_window).std(ddof=1)
+    return (vrp - mu) / sd.replace(0.0, np.nan)
+
+
+def _us_lead_eu(
+    close: pd.Series,
+    *,
+    spy: pd.Series,
+    window: int,
+) -> pd.Series:
+    """Yesterday's SPY return (smoothed over ``window`` bars) predicts
+    today's EU index return.
+
+    Continuous version of Migrate.md §2.8 sign-only formulation. The
+    SPY series must already be anchored by the orchestrator
+    (``.shift(1)`` + ffill onto the target's daily index), so at target
+    time T the SPY value is from time strictly less than T.
+
+    The lead-lag mechanism: US markets close after Europe opens; their
+    overnight moves are partially priced into European opens. Expected
+    IC sign: POSITIVE (positive SPY → positive EU follow-through).
+    """
+    spy = spy.reindex(close.index)
+    spy_log_rets = np.log(spy).diff()
+    if window > 1:
+        return spy_log_rets.rolling(window, min_periods=window).mean()
+    return spy_log_rets
+
+
 def _dxy_z(close: pd.Series, *, eur_usd: pd.Series, lookback: int) -> pd.Series:
     """USD-index proxy z-score. ``-log(EUR_USD)`` rises when USD strengthens.
 
@@ -500,4 +615,24 @@ def signal_factories() -> dict[str, dict[str, Any]]:
         "dxy_z":             {"fn": _dxy_z,
                               "needs": ["close"],
                               "externals": ["EUR_USD"]},
+        # ── Phase B cross-asset signals ──────────────────────────────
+        # Term structure: VIX9D / VIX and VIX / VIX3M ratios as predictors
+        # of forward equity returns. Sweep parameter is the ratio-smoothing
+        # window before z-score normalisation (which uses a fixed 60-bar
+        # window per Phase B directive §2.1).
+        "vix9d_over_vix":    {"fn": _vix9d_over_vix,
+                              "needs": ["close"],
+                              "externals": ["VIX9D", "VIX"]},
+        "vix_over_vix3m":    {"fn": _vix_over_vix3m,
+                              "needs": ["close"],
+                              "externals": ["VIX", "VIX3M"]},
+        # Vol-risk-premium: VIX minus rolling realised vol, z-scored.
+        "vrp_z":             {"fn": _vrp_z,
+                              "needs": ["close"],
+                              "externals": ["VIX"]},
+        # Cross-region lead-lag: yesterday's SPY return predicting today's
+        # EU index return.
+        "us_lead_eu":        {"fn": _us_lead_eu,
+                              "needs": ["close"],
+                              "externals": ["SPY"]},
     }

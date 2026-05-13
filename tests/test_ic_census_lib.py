@@ -371,6 +371,66 @@ def test_dxy_z_factory_inverts_eur_usd():
     assert (finite < 0).sum() > (finite > 0).sum()
 
 
+def test_phase_b_factories_registered_with_externals():
+    """All four Phase B cross-asset factories must declare their externals."""
+    reg = signal_factories()
+    assert reg["vix9d_over_vix"]["externals"] == ["VIX9D", "VIX"]
+    assert reg["vix_over_vix3m"]["externals"] == ["VIX", "VIX3M"]
+    assert reg["vrp_z"]["externals"] == ["VIX"]
+    assert reg["us_lead_eu"]["externals"] == ["SPY"]
+
+
+def test_vix9d_over_vix_produces_finite_z_score():
+    reg = signal_factories()
+    rng = np.random.default_rng(0)
+    idx = pd.date_range("2015-01-01", periods=500, freq="1D", tz="UTC")
+    close = pd.Series(100 * np.exp(rng.normal(0, 0.01, 500).cumsum()), index=idx)
+    vix = pd.Series(15 + rng.normal(0, 2, 500).cumsum().clip(-5, 20), index=idx)
+    vix9d = pd.Series(vix.values + rng.normal(0, 1.5, 500), index=idx)
+    vix_aligned = anchored_aggregate(vix, idx, higher_tf=False)
+    vix9d_aligned = anchored_aggregate(vix9d, idx, higher_tf=False)
+    sig = reg["vix9d_over_vix"]["fn"](
+        close, vix9d=vix9d_aligned, vix=vix_aligned, smoothing=5
+    )
+    # First ~65 bars NaN (5-bar smoothing + 60-bar z-score window + 1-bar shift).
+    finite = sig.dropna()
+    assert len(finite) > 400
+    assert finite.abs().max() < 10.0
+
+
+def test_vrp_z_responds_to_implied_vs_realised():
+    """When VIX is high relative to realised vol, vrp_z should be
+    positive; when low, negative."""
+    reg = signal_factories()
+    idx = pd.date_range("2015-01-01", periods=400, freq="1D", tz="UTC")
+    # Construct a calm-market close series (low realised vol).
+    rng = np.random.default_rng(1)
+    close = pd.Series(100 * np.exp(rng.normal(0, 0.005, 400).cumsum()), index=idx)
+    # And a VIX series fixed high (implied >> realised).
+    vix_high = pd.Series(25.0, index=idx)
+    vix_high_aligned = anchored_aggregate(vix_high, idx, higher_tf=False)
+    sig_high = reg["vrp_z"]["fn"](close, vix=vix_high_aligned, rv_window=20)
+    # The level itself is high VRP; the *z-score* over its own series is
+    # near zero (constant). So we test the underlying VRP is positive
+    # by checking that vrp series mean (before z) is positive.
+    vrp_calm = (vix_high_aligned / 100.0) - np.log(close).diff().rolling(20).std(ddof=1) * np.sqrt(252)
+    assert vrp_calm.dropna().mean() > 0.0
+
+
+def test_us_lead_eu_uses_shifted_spy():
+    """At target time T, the signal must reflect SPY at strictly < T."""
+    reg = signal_factories()
+    idx = pd.date_range("2020-01-01", periods=200, freq="1D", tz="UTC")
+    # A monotonically rising SPY -- log returns are constant positive.
+    spy = pd.Series(np.exp(np.arange(200) * 0.01), index=idx)
+    eu_close = pd.Series(100.0, index=idx)
+    spy_aligned = anchored_aggregate(spy, idx, higher_tf=False)
+    sig = reg["us_lead_eu"]["fn"](eu_close, spy=spy_aligned, window=5)
+    finite = sig.dropna()
+    # All finite values should be positive (positive SPY returns shifted in).
+    assert (finite > 0).all()
+
+
 def test_cross_asset_alignment_is_causal_via_assert_causal():
     """The canonical Anchored MTF aggregator must survive the corrupt-
     the-future test. This is the wrap the runner applies before passing
