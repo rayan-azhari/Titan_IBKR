@@ -1,34 +1,48 @@
-"""Samir-Stack V3 Layer 2 — pure equity, binary regime-gated MES futures.
+"""Samir-Stack V3 — pure equity, regime-gated MES futures with layered defenses.
 
-The minimum-viable strategy that honours Samir Varma's binary-classification
-thesis. No bonds, no tier ladder, no capitulation. One signal (the V3
-regime score), one decision rule (above threshold = deploy, below = cash),
-one execution path (MES futures at constant leverage when deployed).
+Three independently-toggled defense layers on top of the VIX-HMM Layer-1+2 base:
 
-If THIS doesn't beat the baselines, nothing else built on top of it will.
+  LAYER A (asymmetric hysteresis on the HMM gate)
+    - score_enter_threshold and score_exit_threshold can differ.
+    - Slow to enter (high confidence required), fast to exit (moderate
+      evidence of regime shift is enough).
+    - When equal (default 0.5/0.5), behaviour reduces to plain Layer-1+2.
 
-Design choices
---------------
+  LAYER B (momentum confluence)
+    - Additional indicators must agree before deployment:
+        dd_velocity (21-day SPY return, normalised to [0,1] via clip)
+        12-1 momentum (Asness convention, shift 21 to 252)
+        trend (close > 200-day SMA)
+    - All must clear their thresholds for deploy_intent. Any can trigger
+      exit. AND on entry, OR on exit.
+    - When disabled (use_momentum_confluence=False), no additional gates.
 
-1. **Cash yield is earned, not zero.** When the strategy is in cash, the
-   account earns the daily T-bill rate (matches IBKR's USD cash yield).
-   Without this, the head-to-head vs "always-on MES" is unfair — the
-   always-on engine earns T-bill on its cash equity via the futures basis
-   mechanism, so the gated version must too when flat.
+  LAYER C (DD circuit breaker)
+    - Mechanical failsafe: regardless of HMM and momentum signals, if the
+      strategy's own equity drawdown (from HWM) breaches ``dd_kill``,
+      force cash. Stay in cash until ``regime_score >=
+      dd_re_entry_score`` for ``dd_re_entry_bars`` consecutive bars; on
+      exit, reset HWM to current equity (prevents permanent
+      under-water-lock-out).
+    - When disabled (dd_kill <= 0 or >= 1), no breaker.
 
-2. **Strict shift discipline.** Position at bar `t-1` (decided from score
-   `t-1`, computed from data through bar `t-1`) earns return at bar `t`.
-   The regime score itself is causally derived (filtered HMM). No look-
-   ahead.
+Each layer is independent. Each addresses a different failure mode:
+  A = speed of evidence accumulation (HMM lag on regime transitions)
+  B = single-signal blind spots (VIX-only misses price-led shocks)
+  C = the unknown unknowns (gate-failure failsafe)
 
-3. **Re-entry quiet period (optional).** Samir's "best-days cluster with
-   worst-days" insight suggests staying out for N bars after exiting to
-   avoid V-bounce whipsaw. Default: 0 (no quiet bars) for the minimum
-   viable version; available as a tunable.
+Per the V3 design directive and the Layer-1+2 MC verdict (P(MaxDD>50%)
+= 69% at L=2): the pure HMM gate is informative but at L=2 the gate's
+LAG during regime transitions produces catastrophic drawdowns in
+bootstrap-resampled paths. Layer C alone is hypothesised to drop
+P(MaxDD>50%) from 69% to ~5% by capping mechanically; B adds further
+robustness by catching shocks the HMM is slow on; A tightens the speed
+of the HMM gate itself.
 
-4. **No DD breaker, no capitulation.** Those are layer 4+ additions.
-   Phase 5 documented their incremental value; we add them only after
-   layer 1+2 has earned a deployment slot.
+Defaults
+--------
+Defaults preserve the Layer-1+2 behaviour exactly (all defenses off).
+The validation harness opts each one in to measure incremental impact.
 """
 
 from __future__ import annotations
@@ -45,15 +59,19 @@ from titan.research.metrics import BARS_PER_YEAR, annualize_vol, sharpe
 
 @dataclass
 class V3Config:
-    """Configuration for the V3 binary-regime equity strategy.
+    """Configuration for the V3 binary-regime equity strategy with
+    optional Layer-C/B/A defenses.
 
-    Conservative defaults: τ=0.5 majority-probability gate, L=2 per the
-    Phase 5 finding that L=2 dominates higher leverage on Calmar CI lo.
+    Conservative defaults: all defenses OFF (reduces to Layer-1+2 exactly).
+    Opt in by setting the relevant fields.
     """
 
+    # ── Base Layer 1+2 ───────────────────────────────────────────────
     score_threshold: float = 0.5
     """Above this, deploy. Below or equal, hold cash. Pre-registered
-    canonical choice = 0.5 (HMM filtering majority)."""
+    canonical choice = 0.5 (HMM filtering majority).
+    DEPRECATED in favour of score_enter_threshold / score_exit_threshold;
+    if those are None they fall back to this single value."""
 
     L_target: float = 2.0
     """Constant leverage when deployed. Pre-registered sweep: {2, 3, 4}."""
@@ -72,29 +90,93 @@ class V3Config:
     rolls_per_year: int = 4
     roll_slippage_bps: float = 5.0
 
+    # ── Layer A: asymmetric hysteresis on the HMM gate ──────────────
+    # When both are None, behaviour falls back to ``score_threshold`` for
+    # symmetric gating. To enable asymmetric hysteresis, set:
+    #   score_enter_threshold = 0.7  (slow entry: requires high confidence)
+    #   score_exit_threshold  = 0.5  (fast exit: moderate evidence is enough)
+    score_enter_threshold: float | None = None
+    score_exit_threshold: float | None = None
+
+    # ── Layer B: momentum confluence (additional entry gates) ────────
+    use_momentum_confluence: bool = False
+    """When True, additional indicators must all agree benign for entry."""
+
+    mom_12_1_threshold: float = 0.0
+    """12-1 momentum (price[t-21] / price[t-252] - 1) must exceed this."""
+
+    dd_velocity_threshold: float = -0.05
+    """21-day SPY return must exceed this (cumulative, NOT annualised).
+    -5% means "no worse than -5% over the last 21 days"."""
+
+    require_above_200d_sma: bool = True
+    """If True, close must be > 200-day SMA for entry."""
+
+    # ── Layer C: DD circuit breaker ──────────────────────────────────
+    # When dd_kill is in (0, 1), the breaker is active.
+    dd_kill: float = 0.0
+    """Strategy drawdown (positive number, e.g. 0.15 = 15%) at which to
+    force cash. Set to 0.0 to disable."""
+
+    dd_re_entry_score: float = 0.70
+    """After kill, the regime score must reach this level."""
+
+    dd_re_entry_bars: int = 5
+    """...for this many consecutive bars before re-entry permitted."""
+
+
+@dataclass
+class _V3State:
+    equity: float = 1.0
+    hwm: float = 1.0
+    dd_state: str = "normal"  # "normal" or "killed"
+    dd_recovery_count: int = 0
+    quiet_counter: int = 999
+    prev_deployed: int = 0
+    # B layer running buffers (for SMA / momentum lookups — pre-computed)
+    pass
+
+
+def _build_momentum_features(spy: pd.Series) -> pd.DataFrame:
+    """Pre-compute the Layer-B momentum/trend features on the full series."""
+    sma200 = spy.rolling(200, min_periods=200).mean()
+    above_200 = (spy > sma200).astype(float)
+    # 12-1 momentum: price[t-21] / price[t-252] - 1 (Asness convention).
+    # Note: this uses past data only — the formula uses bars t-252 to t-21,
+    # i.e. shifts the price back, so it's strictly causal.
+    mom_12_1 = spy.shift(21) / spy.shift(252) - 1.0
+    # 21-day SPY return (dd_velocity — captures fast drawdown).
+    dd_velocity = spy.pct_change(21)
+    return pd.DataFrame(
+        {
+            "above_200d_sma": above_200,
+            "mom_12_1": mom_12_1,
+            "dd_velocity": dd_velocity,
+        }
+    )
+
+
+def _effective_enter_threshold(cfg: V3Config) -> float:
+    return (
+        cfg.score_enter_threshold if cfg.score_enter_threshold is not None else cfg.score_threshold
+    )
+
+
+def _effective_exit_threshold(cfg: V3Config) -> float:
+    return cfg.score_exit_threshold if cfg.score_exit_threshold is not None else cfg.score_threshold
+
 
 def run_v3_strategy(
     spy_close: pd.Series,
     regime_score: pd.Series,
     cfg: V3Config,
 ) -> pd.DataFrame:
-    """Simulate the V3 binary-gate strategy on SPY-equivalent underlying.
+    """Simulate the V3 strategy with optional Layer-C/B/A defenses.
 
-    Parameters
-    ----------
-    spy_close : pd.Series
-        TR-adjusted SPY close prices. Drives the FuturesEngine return.
-    regime_score : pd.Series
-        Per-bar regime score in [0, 1], typically from
-        ``vix_hmm.vix_hmm_regime_score``. Higher = benign.
-    cfg : V3Config
-        Strategy parameters.
-
-    Returns
-    -------
-    pd.DataFrame indexed to the common dates with columns:
-        score, deployed (0/1), L_applied, equity, ret_strategy,
-        ret_levered, ret_cash, transition (bool), quiet_bars
+    Returns DataFrame with columns:
+      score, deployed (0/1), L_applied, equity, ret_strategy,
+      ret_levered, ret_cash, transition, tx_cost, dd_state,
+      dd_from_hwm, gate_a_intent, gate_b_intent, gate_c_active
     """
     common = spy_close.index.intersection(regime_score.index)
     spy = spy_close.reindex(common)
@@ -108,65 +190,162 @@ def run_v3_strategy(
         roll_slippage_bps=cfg.roll_slippage_bps,
     )
     ret_levered_full = engine.daily_returns(spy, leverage=cfg.L_target).reindex(common).fillna(0.0)
-
-    # Cash return: T-bill at the same funding-series rate the engine uses
-    # for consistency. NOT zero — flat exposure still earns cash yield.
     fund = funding_series(common).reindex(common).ffill().fillna(0.04)
     ret_cash_full = (fund / 252.0).astype(float)
 
-    # State machine: previous-bar score decides current-bar position.
-    # (Standard shift discipline: signal at t-1 earns return at t.)
+    # Layer-B feature pre-compute (uses past closes only — see docstring).
+    mom_feats = _build_momentum_features(spy)
+
+    # Lagged inputs: signal at t-1 decides position at t (shift discipline).
     score_lag = score.shift(1).fillna(0.0)
-    deployed_intent = (score_lag > cfg.score_threshold).astype(int)
+    above_200_lag = mom_feats["above_200d_sma"].shift(1).fillna(0.0)
+    mom_lag = mom_feats["mom_12_1"].shift(1).fillna(0.0)
+    dd_vel_lag = mom_feats["dd_velocity"].shift(1).fillna(0.0)
 
-    # Re-entry quiet bars: if just exited (transition deployed → cash),
-    # cannot re-enter until quiet_bars have elapsed below threshold.
-    if cfg.re_entry_quiet_bars > 0:
-        deployed = np.zeros(len(common), dtype=int)
-        quiet_counter = 999  # large initial value → no quiet block at t=0
-        for i in range(len(common)):
-            intent = int(deployed_intent.iat[i])
-            prev = deployed[i - 1] if i > 0 else 0
-            if intent == 1 and prev == 0 and quiet_counter < cfg.re_entry_quiet_bars:
-                deployed[i] = 0
-                quiet_counter += 1
+    enter_thr = _effective_enter_threshold(cfg)
+    exit_thr = _effective_exit_threshold(cfg)
+    dd_breaker_active = 0.0 < cfg.dd_kill < 1.0
+
+    # State series for output
+    n = len(common)
+    deployed_arr = np.zeros(n, dtype=int)
+    equity_arr = np.empty(n, dtype=float)
+    dd_state_arr = np.empty(n, dtype=object)
+    dd_from_hwm_arr = np.empty(n, dtype=float)
+    gate_a_intent_arr = np.zeros(n, dtype=int)
+    gate_b_intent_arr = np.zeros(n, dtype=int)
+    gate_c_active_arr = np.zeros(n, dtype=int)
+    tx_cost_arr = np.zeros(n, dtype=float)
+
+    s = _V3State()
+    cost_per_transition = cfg.transaction_cost_bps / 10_000.0
+
+    for i in range(n):
+        # ── Layer A: asymmetric-hysteresis HMM gate ──
+        score_now = float(score_lag.iat[i])
+        if s.prev_deployed == 0:
+            gate_a = 1 if score_now > enter_thr else 0
+        else:
+            gate_a = 1 if score_now > exit_thr else 0
+        gate_a_intent_arr[i] = gate_a
+
+        # ── Layer B: momentum confluence ──
+        if cfg.use_momentum_confluence:
+            sma_ok = (above_200_lag.iat[i] > 0.5) or not cfg.require_above_200d_sma
+            mom_ok = float(mom_lag.iat[i]) > cfg.mom_12_1_threshold
+            dd_ok = float(dd_vel_lag.iat[i]) > cfg.dd_velocity_threshold
+            if s.prev_deployed == 0:
+                # Entry: AND across all
+                gate_b = 1 if (sma_ok and mom_ok and dd_ok) else 0
             else:
-                deployed[i] = intent
-                if intent == 0:
-                    if prev == 1:
-                        quiet_counter = 0  # just exited
-                    else:
-                        quiet_counter += 1
+                # Exit: OR — any failure triggers exit
+                gate_b = 1 if (sma_ok and mom_ok and dd_ok) else 0
+                # Note: for binary deploy/cash this is mathematically the same
+                # as AND; the asymmetry only matters if there's intermediate
+                # state. Documented here for future tier-ladder extension.
+        else:
+            gate_b = 1
+        gate_b_intent_arr[i] = gate_b
+
+        # ── Combined deploy intent (A AND B) ──
+        deploy_intent = 1 if (gate_a and gate_b) else 0
+
+        # ── Re-entry quiet bars (from layer 1+2) ──
+        if cfg.re_entry_quiet_bars > 0:
+            if (
+                deploy_intent == 1
+                and s.prev_deployed == 0
+                and s.quiet_counter < cfg.re_entry_quiet_bars
+            ):
+                deploy_intent = 0
+                s.quiet_counter += 1
+
+        # ── Layer C: DD circuit breaker override ──
+        if dd_breaker_active:
+            if s.dd_state == "killed":
+                # Force cash. Check for recovery.
+                deploy_intent = 0
+                if score_now >= cfg.dd_re_entry_score:
+                    s.dd_recovery_count += 1
+                    if s.dd_recovery_count >= cfg.dd_re_entry_bars:
+                        s.dd_state = "normal"
+                        s.hwm = s.equity  # reset HWM
+                        s.dd_recovery_count = 0
                 else:
-                    quiet_counter = 999  # deployed, reset
-        deployed = pd.Series(deployed, index=common)
-    else:
-        deployed = deployed_intent.astype(int)
+                    s.dd_recovery_count = 0
+                gate_c_active_arr[i] = 1
 
-    # Apply transaction cost on state transitions.
-    transition = deployed.diff().fillna(0).abs().astype(int)
-    cost_bps = cfg.transaction_cost_bps
-    tx_cost = (cost_bps / 10_000.0) * transition.astype(float)
+        deployed = deploy_intent
+        deployed_arr[i] = deployed
+        dd_state_arr[i] = s.dd_state
 
-    # Compose daily return.
-    ret_strategy = (deployed * ret_levered_full + (1 - deployed) * ret_cash_full - tx_cost).astype(
-        float
+        # ── Apply transaction cost on transitions ──
+        transition = abs(deployed - s.prev_deployed)
+        tx_cost_arr[i] = cost_per_transition * transition
+
+        # ── Compute today's return using deployed at this bar ──
+        if deployed:
+            ret = float(ret_levered_full.iat[i]) - tx_cost_arr[i]
+        else:
+            ret = float(ret_cash_full.iat[i]) - tx_cost_arr[i]
+
+        # ── Update state ──
+        s.equity *= 1.0 + ret
+        equity_arr[i] = s.equity
+        if s.equity > s.hwm:
+            s.hwm = s.equity
+        dd_from_hwm = (s.equity - s.hwm) / s.hwm if s.hwm > 0 else 0.0
+        dd_from_hwm_arr[i] = dd_from_hwm
+
+        # ── Check for DD kill (only when in normal state) ──
+        if dd_breaker_active and s.dd_state == "normal" and dd_from_hwm <= -cfg.dd_kill:
+            s.dd_state = "killed"
+            s.dd_recovery_count = 0
+            # Note: kill fires AFTER the day's return is realised; we
+            # exit at the next bar. This matches V2's semantics.
+
+        # ── Update quiet counter ──
+        if cfg.re_entry_quiet_bars > 0:
+            if deployed == 0 and s.prev_deployed == 1:
+                s.quiet_counter = 0  # just exited
+            elif deployed == 0:
+                s.quiet_counter += 1
+            else:
+                s.quiet_counter = 999
+
+        s.prev_deployed = deployed
+
+    # Assemble outputs.
+    deployed_series = pd.Series(deployed_arr, index=common, name="deployed")
+    ret_strategy = pd.Series(
+        [
+            float(ret_levered_full.iat[i]) - tx_cost_arr[i]
+            if deployed_arr[i]
+            else float(ret_cash_full.iat[i]) - tx_cost_arr[i]
+            for i in range(n)
+        ],
+        index=common,
+        name="ret_strategy",
     )
-
-    L_applied = deployed.astype(float) * cfg.L_target
-    equity = (1.0 + ret_strategy.fillna(0.0)).cumprod()
-
     return pd.DataFrame(
         {
             "score": score,
-            "deployed": deployed,
-            "L_applied": L_applied,
+            "deployed": deployed_series,
+            "L_applied": deployed_series.astype(float) * cfg.L_target,
             "ret_levered": ret_levered_full,
             "ret_cash": ret_cash_full,
-            "transition": transition,
-            "tx_cost": tx_cost,
+            "transition": pd.Series(
+                [abs(deployed_arr[i] - (deployed_arr[i - 1] if i > 0 else 0)) for i in range(n)],
+                index=common,
+            ),
+            "tx_cost": pd.Series(tx_cost_arr, index=common),
             "ret_strategy": ret_strategy,
-            "equity": equity,
+            "equity": pd.Series(equity_arr, index=common),
+            "dd_state": pd.Series(dd_state_arr, index=common),
+            "dd_from_hwm": pd.Series(dd_from_hwm_arr, index=common),
+            "gate_a_intent": pd.Series(gate_a_intent_arr, index=common),
+            "gate_b_intent": pd.Series(gate_b_intent_arr, index=common),
+            "gate_c_active": pd.Series(gate_c_active_arr, index=common),
         },
         index=common,
     )
@@ -187,6 +366,7 @@ def summarize_v3_run(df: pd.DataFrame) -> dict:
     calmar = cagr / abs(maxdd) if maxdd < -1e-9 else 0.0
     frac_deployed = float(df["deployed"].mean())
     n_transitions = int(df["transition"].sum())
+    n_kill_bars = int((df["dd_state"] == "killed").sum()) if "dd_state" in df.columns else 0
     return {
         "n_years": round(n_y, 2),
         "cagr": round(cagr, 4),
@@ -197,4 +377,5 @@ def summarize_v3_run(df: pd.DataFrame) -> dict:
         "frac_deployed": round(frac_deployed, 3),
         "n_transitions": n_transitions,
         "transitions_per_year": round(n_transitions / n_y, 2),
+        "frac_in_kill_state": round(n_kill_bars / len(rets), 4),
     }
