@@ -1,0 +1,182 @@
+# IC Signal Census — Phase A universe (pre-registered).
+#
+# See: directives/IC Signal Census 2026-05-13.md
+#
+# Phase A is what we can run today against existing data/.
+# Phase B (futures, VIX family, breadth, OIS-FF) requires data download
+# and is appended later via [phase_b.*] tables.
+#
+# Editing rule (V3.1): cells can be REMOVED here only if data turns out
+# to be unavailable. ADDING cells after the scan runs is forbidden
+# without a new pre-registration PR.
+
+[meta]
+version = 1
+created = "2026-05-13"
+sanctuary_months = 12
+fold_count = 5
+dsr_t_floor_phase_a = 4.5    # |t_NW| floor at N ≈ 9.7k cells
+dsr_t_floor_combined = 5.0   # tightened if Phase A + Phase B exceed 25k total cells
+bh_alpha = 0.05
+plateau_neighbour_t_floor = 3.0
+plateau_ic_range_max = 0.30  # IC magnitude must vary by less than 30% across the 3 cells
+mtf_quorum = 2               # at least 2 of 3 timeframes must agree on sign
+fold_sign_quorum = 4         # at least 4 of 5 folds must share sign (Migrate.md "no sign flip" — one tolerated near-zero fold)
+
+# Timeframes evaluated per instrument. Empty (instrument, TF) cells skipped silently.
+[timeframes]
+D = { horizons = [1, 5, 21] }
+H4 = { horizons = [1, 6, 30] }
+H1 = { horizons = [1, 8, 40] }
+
+# ── Phase A instruments ────────────────────────────────────────────────────
+# Each instrument lists which TFs to scan. Empty list = scan all available.
+
+[phase_a.instruments]
+# US equity index proxies
+SPY    = ["D", "H1"]
+QQQ    = ["D", "H1"]
+IWB    = ["D"]
+TQQQ   = ["D"]              # leveraged_etf flag asserted downstream
+CSPX   = ["D"]
+# Sector / regional ETFs
+EFA    = ["D"]
+EEM    = ["D"]
+GLD    = ["D", "H1"]
+DBC    = ["D"]
+# Fixed income
+TLT    = ["D"]
+IEF    = ["D", "H1"]
+HYG    = ["D"]
+LQD    = ["D"]
+TIP    = ["D"]
+IHYG   = ["D"]
+# FX majors
+EUR_USD = ["D", "H4", "H1"]
+AUD_JPY = ["D", "H4", "H1"]
+AUD_USD = ["D", "H4", "H1"]
+USD_JPY = ["D", "H4", "H1"]
+GBP_USD = ["D", "H4", "H1"]
+
+[phase_a.leveraged_etfs]
+TQQQ = 3.0
+
+# ── Signal classes & pre-registered 3-cell parameter grids ────────────────
+# Cells are geometric where possible. Edge cells (first/last) are ineligible
+# to be selected as the headline cell per V3.2 plateau rule.
+
+[signals.trend]
+# Class §2.1
+[signals.trend.momentum]
+# 12-month minus 1-month style. Cells expressed for D; scaled by bars_per_day
+# at H4 (×6) and H1 (×24) at runtime.
+cells = [
+    { lookback = 252, skip = 21 },
+    { lookback = 126, skip = 21 },
+    { lookback =  63, skip = 5 },
+]
+[signals.trend.ewmac]
+cells = [
+    { fast = 8,  slow = 32 },
+    { fast = 16, slow = 64 },
+    { fast = 32, slow = 128 },
+]
+[signals.trend.ma_distance]
+cells = [
+    { window = 20 },
+    { window = 50 },
+    { window = 200 },
+]
+
+[signals.mean_reversion]
+# Class §2.2
+[signals.mean_reversion.rsi_dev]
+cells = [
+    { period = 7 },
+    { period = 14 },
+    { period = 28 },
+]
+[signals.mean_reversion.vwap_overshoot]
+# Anchored rolling mean (no-volume VWAP approximation — AUD/JPY parquet has volume = -1).
+cells = [
+    { anchor = 6 },
+    { anchor = 24 },
+    { anchor = 96 },
+]
+[signals.mean_reversion.bb_pctb]
+cells = [
+    { window = 10 },
+    { window = 20 },
+    { window = 50 },
+]
+
+[signals.cross_asset]
+# Class §2.3. Each signal computes a feature from external_series, anchored
+# to the target instrument's bars via the Anchored MTF Aggregation Rule.
+[signals.cross_asset.hyg_ief_z]
+external = ["HYG", "IEF"]
+cells = [
+    { lookback = 21 },
+    { lookback = 60 },
+    { lookback = 120 },
+]
+[signals.cross_asset.dxy_z]
+external = ["EUR_USD"]   # USD index proxied as 1 / EUR_USD
+cells = [
+    { lookback = 21 },
+    { lookback = 60 },
+    { lookback = 120 },
+]
+
+[signals.volatility]
+# Class §2.5
+[signals.volatility.realized_vol_z]
+cells = [
+    { window = 20 },
+    { window = 60 },
+    { window = 120 },
+]
+
+[signals.microstructure]
+# Class §2.6 — H1 / H4 only.
+[signals.microstructure.overnight_gap_z]
+applies_to_tfs = ["H1", "H4"]
+cells = [
+    { lookback_bars = 20 },
+    { lookback_bars = 60 },
+    { lookback_bars = 120 },
+]
+[signals.microstructure.intraday_range_atr]
+applies_to_tfs = ["H1", "H4"]
+cells = [
+    { period = 7 },
+    { period = 14 },
+    { period = 28 },
+]
+
+# ── Phase B deferred (gated on data download) ──────────────────────────────
+# Append-only — these run in a follow-up invocation once data lands.
+# Same gate values as Phase A; the only change is the universe.
+
+[phase_b.instruments]
+# Futures (Phase B — data not yet downloaded)
+# MES = ["D", "H4", "H1"]
+# ES  = ["D", "H4", "H1"]
+# NQ  = ["D", "H4", "H1"]
+# MNQ = ["D", "H4", "H1"]
+# FESX = ["D", "H4"]
+# FTSE = ["D", "H4"]
+# MDAX = ["D"]
+# VIX = ["D"]
+# VIX9D = ["D"]
+# VIX3M = ["D"]
+
+[signals.macro_flow]
+# Class §2.4 — requires Phase B data (breadth panel, OIS-FF).
+# Activated when phase_b.instruments includes the relevant series.
+
+[signals.term_structure]
+# Class §2.7 — gated on VIX9D / VIX / VIX3M / VIX futures data.
+
+[signals.cross_region]
+# Class §2.8 — gated on MES / FESX / FTSE futures data.
