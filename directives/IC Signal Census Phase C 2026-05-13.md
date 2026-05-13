@@ -71,7 +71,42 @@ Audit A8 — every deviation from Migrate.md's stated universe is logged here. A
 
 ---
 
-## 2. New signal classes (Phase C only)
+### 1.5 Discovery audit — what's actually feasible (appended 2026-05-13)
+
+The initial §1 manifest was written from best-guess Databento namespace knowledge. The pre-charge `metadata.get_cost` pass + `symbology.resolve` discovery exposed the following reality (V3.6 documentation, non-retroactive — §1.1-§1.4 above stand as the *intended* universe, this §1.5 is the *as-built* universe):
+
+| Originally claimed | Reality | Phase C action |
+|---|---|---|
+| `MES.c.0`, `MNQ.c.0` on `GLBX.MDP3`, continuous | ✓ Works. MES/MNQ from 2019-05; ohlcv-1h cost ≈ $0.0002/symbol. | Download as planned. |
+| `ES.c.0`, `NQ.c.0` on `GLBX.MDP3`, continuous | ✓ Works. ES/NQ continuous resolve from 2010-06-06 (instrument IDs `17077` and `750` respectively). My initial cost-estimate run failed due to a Databento intermittent error, not a symbology issue. | Download as planned. |
+| `FESX.c.0`, `FDAX.c.0` on `XEUR.IFEU` (Eurex) | ✗ Two issues: (a) `XEUR.IFEU` is **not** a dataset code — the correct Eurex code is `XEUR.EOBI`. (b) Even `XEUR.EOBI` only has history from **2025-03-10** (~2 months). Useless for IC research at any sample size. | **Drop from Phase C.** Eurex intraday history is too short on Databento. Re-evaluate when EOBI accumulates ≥ 2 years, or source from elsewhere. |
+| `Z.c.0` on `IFEU.IMPACT` (FTSE 100 future, ICE) | ⚠ Dataset exists (history from 2018-12-23) but my symbology `Z.c.0` resolved to empty. Correct ICE FTSE 100 future symbology TBD; would require an additional symbology-discovery pass. | **Drop from Phase C.** Defer to a follow-up directive after confirming the correct symbology. |
+| `FMDX.c.0` (MDAX-micro) on `XEUR.IFEU` | ✗ Same `XEUR.EOBI` 2-month-history constraint. | **Drop from Phase C.** Same rationale as FESX/FDAX. |
+| `VIX`, `VIX9D`, `VIX3M` on `XCBT.IFB` | ✗ `XCBT.IFB` is **not** a valid Databento dataset. The Databento catalogue contains no CBOE-index dataset. CBOE-computed indices (VIX family) are not sourceable from Databento at all. | **Move to IBKR Gateway path** (CBOE Indices Live subscription via TWS API). Pre-registered separately in §1.6 below. |
+| `VX.c.0`, `VX.c.1` (VIX futures) on `GLBX.MDP3` | ✗ Returned empty resolve. VIX futures trade on the **CFE (CBOE Futures Exchange)**, not on CME Globex. No CFE dataset in Databento's public catalogue. | **Move to IBKR Gateway path** (CFE market-data subscription). Pre-registered separately in §1.6. |
+
+### 1.6 Revised Phase C as-built universe
+
+**Approved 2026-05-13 by user.** Downloaded immediately:
+
+| Local | Dataset | Symbol | Stype | History | TFs |
+|---|---|---|---|---|---|
+| MES | GLBX.MDP3 | MES.c.0 | continuous | 2019-05-06 → today | D + H1 |
+| MNQ | GLBX.MDP3 | MNQ.c.0 | continuous | 2019-05-06 → today | D + H1 |
+| ES | GLBX.MDP3 | ES.c.0 | continuous | 2010-06-06 → today | D + H1 |
+| NQ | GLBX.MDP3 | NQ.c.0 | continuous | 2010-06-06 → today | D + H1 |
+
+Total Databento charge expected: < $0.50 USD across all 8 cells.
+
+### 1.7 IBKR Gateway path (VIX-family + VIX futures intraday)
+
+Approved as a best-effort attempt: if the IBKR Docker connection has the CBOE Indices Live + CFE subscriptions active, the script downloads VIX/VIX9D/VIX3M/VX1/VX2 at H1 (D already exists from Phase B yfinance). If the subscriptions are inactive, **the script stops cleanly without partial state** — the failure mode must be loud and the user re-tries after enabling subscriptions.
+
+Implementation goes in `scripts/download_data_phase_c_ibkr.py`. Output naming matches Phase A/B convention (e.g. `VIX_H1.parquet` to overlay the existing `VIX_D.parquet` yfinance file).
+
+### 1.8 IG Markets path (EU index DFB intraday)
+
+**Filed for later** — Phase C does not download from IG. A separate pre-registration will be drafted when needed.
 
 All H1, all causal, all anchored via `anchored_aggregate(higher_tf=False)` + `assert_causal` per the Anchored MTF Rule. Inherits the 3-cell parameter-grid pattern and plateau gate.
 
