@@ -1,0 +1,222 @@
+# IC Signal Census — Phase C pre-registration
+
+**Version:** 1.0 | **Date:** 2026-05-13 | **Author:** Architect
+**Status:** **PRE-REGISTRATION** — committed BEFORE the Databento download / scan runs (V3.1 discipline).
+**Parent directives:**
+
+- `directives/IC Signal Census 2026-05-13.md` — Phase A (single-instrument + cross-asset @ free data)
+- `directives/IC Signal Census Phase B 2026-05-13.md` — VIX-family + cross-region (@ yfinance daily)
+
+Every gate, every invariant, and every output-schema column is inherited from the Phase A parent unless explicitly overridden in §3.
+
+---
+
+## 0. Why this exists
+
+Phases A + B produced **zero TIER_A or TIER_B survivors** across ~3,400 cells. The strongest mechanism-confirming signals — VRP on equities (TQQQ +0.167 / t=+3.22 at h=21), VIX-curve backwardation → FTSE recovery (+0.142 / t=+3.16 at h=21), US short-term reversal (−0.077 / t=-3.83 at h=5), AUD/JPY microstructure (-0.027 / t=-7.71 at h=1) — were all **rejected by sample-size or by parameter-fragility**, not by signal absence. The audit-discipline gates correctly refused to deploy signals whose t_NW capped out around 3-3.7 because the daily sample (~5k bars) wasn't large enough for the DSR-corrected `|t_NW| > 4.5` floor.
+
+Phase C addresses the sample-size constraint by:
+
+1. **Going intraday on the strongest mechanisms.** Re-running VRP and VIX-term-structure at **H1**, where N multiplies by ~24× per instrument. A signal with daily IC of 0.10 over 5k bars (`t ≈ 7` before NW correction, `t ≈ 3` after) becomes an H1 signal with similar IC magnitude over 120k bars (`t ≈ 35` raw, `t ≈ 7` after NW correction at h=24). That's well above any floor — IF the daily mechanism survives the intraday resampling.
+
+2. **Adding the canonical equity-futures sleeve (MES + NQ + MNQ).** Migrate.md flagged MES as the deployment target post-Samir-Stack rewrite (commit `5d11b2e`). Phase A/B scanned SPY/QQQ ETF proxies; Phase C adds MES/NQ/MNQ as parallel targets. IC-survivors on the futures are directly deployable in the live IBKR futures stack.
+
+3. **Adding actual EU index futures (FESX, FTSE-fut, DAX-fut, MDAX-micro)** to replace the Phase B index-spot proxies. The cross-region lead-lag class becomes properly testable.
+
+4. **Adding VIX futures** (front + M2 continuous). The VIX-futures basis (`VX1/VX2 - 1`) is the canonical contango/backwardation signal — VIX-spot ratios are a proxy that loses the carry-curve information.
+
+Data source: **Databento**, paid feeds. Authorised by user 2026-05-13. Per-symbol-year costs itemised in §4.
+
+---
+
+## 1. Pre-registered Phase C universe
+
+### 1.1 New targets
+
+| Local name | Databento dataset | Symbol | TFs | Class | Venue (deployment) |
+|---|---|---|---|---|---|
+| `MES_D` / `MES_H1` | `GLBX.MDP3` | `MES.c.0` (front-month continuous) | D, H1 | US equity futures | IBKR CME |
+| `NQ_D` / `NQ_H1` | `GLBX.MDP3` | `NQ.c.0` | D, H1 | US equity futures | IBKR CME |
+| `MNQ_D` / `MNQ_H1` | `GLBX.MDP3` | `MNQ.c.0` | D, H1 | US equity futures | IBKR CME |
+| `FESX_D` / `FESX_H1` | `XEUR.IFEU` | `FESX.c.0` | D, H1 | EU equity futures | IBKR Eurex |
+| `FTSE_FUT_D` / `FTSE_FUT_H1` | `IFEU.IMPACT` | `Z.c.0` (FTSE 100 future) | D, H1 | UK equity futures | IBKR ICE |
+| `DAX_FUT_D` / `DAX_FUT_H1` | `XEUR.IFEU` | `FDAX.c.0` | D, H1 | DE equity futures | IBKR Eurex |
+| `MDAX_FUT_D` / `MDAX_FUT_H1` | `XEUR.IFEU` | `FMDX.c.0` | D, H1 | DE mid-cap futures | IBKR Eurex |
+
+### 1.2 New externals (research-only, not deployment targets)
+
+| Local name | Databento dataset | Symbol | TFs | Use |
+|---|---|---|---|---|
+| `VIX_H1` | `OPRA.PILLAR` or `XCBT.IFB` | `VIX` (index) | H1 | VRP at H1, VIX-term at H1 |
+| `VIX9D_H1` | same | `VIX9D` | H1 | term-structure at H1 |
+| `VIX3M_H1` | same | `VIX3M` | H1 | term-structure at H1 |
+| `VX1_D` / `VX1_H1` | `GLBX.MDP3` | `VX.c.0` (VIX front-month future continuous) | D, H1 | VX/VX2 basis signal |
+| `VX2_D` / `VX2_H1` | `GLBX.MDP3` | `VX.c.1` (VIX 2nd-month) | D, H1 | VX/VX2 basis signal |
+
+### 1.3 Re-scan of existing targets at H1
+
+SPY, QQQ, IWB, IWM, GLD, HYG, IEF already exist at H1 in `data/`. Phase C re-scans them with the new signal classes (intraday VRP, intraday VIX-term) — no new download needed for those.
+
+### 1.4 Documented substitution audit
+
+| Migrate.md target | Phase C source | Substitution? |
+|---|---|---|
+| MES, ES, NQ, MNQ | `GLBX.MDP3` continuous front-month | None — actual product. |
+| FESX | `XEUR.IFEU` `FESX.c.0` | None — actual product. |
+| FTSE-fut | `IFEU.IMPACT` (ICE Europe) | None — actual product. |
+| MDAX-micro | `FMDX.c.0` (DAX 40 future) and `FDAX.c.0`. **Note:** the canonical MDAX is a mid-cap index; the closest tradeable on Eurex is `FDAX` (DAX 40) which is large-cap, OR `FSMI` (Swiss) — neither is mid-cap. Phase C uses `FDAX` as large-cap and `FMDX` if Databento carries an MDAX future series. | Minor. Logged. |
+| VIX, VIX9D, VIX3M | Databento `XCBT.IFB` or `OPRA.PILLAR` for indices; `GLBX.MDP3` for futures (`VX`) | None — actual products. |
+
+Audit A8 — every deviation from Migrate.md's stated universe is logged here. Anyone reproducing Phase C can identify what was actually downloaded vs the original prescription.
+
+---
+
+## 2. New signal classes (Phase C only)
+
+All H1, all causal, all anchored via `anchored_aggregate(higher_tf=False)` + `assert_causal` per the Anchored MTF Rule. Inherits the 3-cell parameter-grid pattern and plateau gate.
+
+### 2.1 Intraday vol-risk-premium (signals.volatility_phase_c)
+
+| Signal | Externals | Param | Cells | Rationale |
+|---|---|---|---|---|
+| `vrp_z_h1` | `[VIX]` | rv_window (H1 bars) | `120`, `240`, `480` | Phase B's daily VRP at H1 resolution. rv_window cells correspond to 5 trading days / 10 days / 20 days at H1 (24-bar day). Same z-score normalisation (rolling 60-bar over the smoothed VRP). |
+
+Applied to equity targets (SPY, QQQ, IWM, MES, NQ, MNQ, FESX, FTSE_FUT, DAX_FUT). Expected sign: POSITIVE (vol-seller's edge → forward equity returns up).
+
+### 2.2 Intraday VIX term structure (signals.term_structure_h1)
+
+| Signal | Externals | Param | Cells | Rationale |
+|---|---|---|---|---|
+| `vix9d_over_vix_h1` | `[VIX9D, VIX]` | smoothing (H1 bars) | `1`, `24`, `120` | Phase B daily signal at H1. Smoothing values correspond to 1-bar / 1-day / 1-week. |
+| `vix_over_vix3m_h1` | `[VIX, VIX3M]` | smoothing | `1`, `24`, `120` | Same as above. |
+| `vx_basis_z` | `[VX1, VX2]` | smoothing | `1`, `24`, `120` | NEW class: VIX-futures basis. `(VX1 - VX2) / VX2`. Contango (VX1 < VX2) is the normal state; backwardation is stress. This is the canonical curve signal that the spot-VIX ratios approximate. |
+
+### 2.3 Cross-region lead-lag at H1 (signals.cross_region_h1)
+
+| Signal | Externals | Param | Cells | Rationale |
+|---|---|---|---|---|
+| `mes_to_fesx_h1` | `[MES]` | window (H1 bars) | `1`, `6`, `24` | Smoothed past-MES return predicting forward FESX return. Phase B inverted-sign result was on spot indices; futures cross-region may behave differently because they trade overnight (MES is 23h/day on Globex, FESX similar on Eurex). |
+| `mes_to_ftse_fut_h1` | `[MES]` | window | `1`, `6`, `24` | Same on FTSE futures. |
+| `mes_to_dax_fut_h1` | `[MES]` | window | `1`, `6`, `24` | Same on DAX futures. |
+
+### 2.4 Re-scan of Phase A + Phase B signals at H1
+
+The existing single-instrument signals (`momentum`, `ewmac`, `ma_distance`, `rsi_dev`, `vwap_overshoot`, `bb_pctb`, `realized_vol_z`, `overnight_gap_z`, `intraday_range_atr`) and cross-asset signals (`hyg_ief_z`, `dxy_z`) are re-run at H1 on the Phase C target set (MES, NQ, MNQ, FESX, FTSE_FUT, DAX_FUT, MDAX_FUT) in addition to their existing Phase A coverage. **No new factory work** — same code, expanded target list.
+
+Same H1 horizons as Phase A: `[1, 8, 40]`. The 40-bar horizon at H1 is roughly two trading days — useful for lead-lag mechanisms; less useful for VRP (which is fundamentally a multi-day phenomenon and is better tested at the daily-horizon equivalents at H1: horizons `[24, 120, 480]`).
+
+### 2.5 Banned
+
+Inherits all parent bans (§2.9 of parent). Additionally:
+
+- **No VIX-on-equity-futures self-reference.** When the target is a CME-listed equity future, VIX-derived signals are fine; when the target IS a VIX product (the VIX9D, VIX3M externals), those are never targets — only externals. Self-correlation guard applies.
+
+---
+
+## 3. Gate overrides
+
+### 3.1 DSR floor — likely tightens to `|t_NW| > 5.0`
+
+Combined Phase A + B + C N estimate:
+
+| Phase | Approx N (cells × horizons) |
+|---|---:|
+| Phase A | ~2,400 |
+| Phase B | ~850 |
+| **Phase C** | **~25,000-40,000** |
+| **Combined** | **~28,000-43,000** |
+
+Combined N likely exceeds 25k. Per parent §3.4, `dsr_t_floor_combined = 5.0` engages above 25k cells. The orchestrator should compute N at runtime and select the appropriate floor; this directive pre-commits to the **higher** floor (5.0) for Phase C cells, regardless of the final N tally. Tightening (not relaxing) is allowed without a PR per V3.1.
+
+### 3.2 MTF agreement
+
+Phase C is **D + H1**. The parent's MTF quorum (2 of 3 timeframes — D, H4, H1) applies but with H4 now mostly absent (only FX has H4 in Phase A; equity futures and VIX products are D + H1). Phase C survivors that pass at both D and H1 with same sign get `mtf_agree = True` (quorum 2 of 2 available TFs). The orchestrator's mtf_agreement function already handles this via the `>=quorum` test on the set of TFs where the cell passed; no code change needed.
+
+### 3.3 Fold quorum
+
+Unchanged. `fold_sign_quorum = 4` of 5.
+
+### 3.4 Sanctuary
+
+Unchanged. Trailing 12 months held out. The Databento download itself must end no later than `today - 12 months` AT MAXIMUM if Phase C is to use the full data immediately. **Practical compromise**: download to today, slice sanctuary at runtime exactly as Phases A/B do.
+
+### 3.5 Plateau gate
+
+Unchanged. 3-cell grid, headline must be interior, both neighbours clear `|t| > 3.0`, IC range across the 3 cells < 30%.
+
+---
+
+## 4. Databento order itemisation (pending user $ approval)
+
+Estimates from Databento public pricing, 2026 May. **User approves before any charges land.**
+
+| Symbol(s) | Dataset | Schema | History start (approx) | Est. $ |
+|---|---|---|---|---|
+| MES.c.0, NQ.c.0, MNQ.c.0 | `GLBX.MDP3` | `ohlcv-1d` + `ohlcv-1h` | 2017 (MES launched 2019; ES from 2010) | $30-60 |
+| ES.c.0 | `GLBX.MDP3` | `ohlcv-1d` + `ohlcv-1h` | 2010 | $15-25 |
+| FESX.c.0 | `XEUR.IFEU` | `ohlcv-1d` + `ohlcv-1h` | 2010 | $20-30 |
+| FDAX.c.0 (DAX futures) | `XEUR.IFEU` | `ohlcv-1d` + `ohlcv-1h` | 2010 | $20-30 |
+| FMDX.c.0 (MDAX futures) | `XEUR.IFEU` | `ohlcv-1d` + `ohlcv-1h` | 2010 (subject to availability) | $15-25 |
+| FTSE 100 future | `IFEU.IMPACT` or `IFEU.IFEU` | `ohlcv-1d` + `ohlcv-1h` | 2010 | $20-30 |
+| VIX, VIX9D, VIX3M (indices) | `XCBT.IFB` or equivalent | `ohlcv-1h` | 2010 (VIX9D from 2011) | $30-60 |
+| VX.c.0, VX.c.1 (VIX futures) | `GLBX.MDP3` | `ohlcv-1d` + `ohlcv-1h` | 2010 | $20-30 |
+| **Total estimate** | | | | **$170-290** |
+
+Estimates assume `ohlcv-1d` + `ohlcv-1h` schemas from ~2010 to today, ~15 years × 250 trading days × 24 hourly bars per future ≈ 90k bars per symbol. Databento prices on bar-count; intraday VIX may cost less because of lower per-bar fees on indices.
+
+**Authorisation gate.** Before running the downloader, I will:
+1. Connect to Databento with the existing `DATABENTO_API_KEY`.
+2. Call `client.metadata.get_cost(...)` for each symbol/dataset/schema/range — Databento's official cost estimate endpoint.
+3. Print the itemised cost table.
+4. Wait for user confirmation before invoking `client.timeseries.get_range`.
+
+---
+
+## 5. Implementation plan
+
+1. **This directive on `main`.** Pre-registration done. (THIS PR)
+2. Extend `scripts/download_data_databento.py` to:
+   - Accept `--dataset` flag (default `ARCX.PILLAR`; pass `GLBX.MDP3`, `XEUR.IFEU` etc.)
+   - Accept `--schema` flag (default `ohlcv-1d`; pass `ohlcv-1h` for intraday)
+   - Accept `--stype` flag (default `raw_symbol`; pass `continuous` for `.c.0`/`.c.1` futures rollover series)
+   - Call `client.metadata.get_cost` first; print itemised costs; require `--confirm` to actually charge.
+3. Update `research/ic_analysis/run_ic.py`'s `load_ohlcv` to handle the new symbols (no code change expected — naming pattern `{INSTRUMENT}_{TIMEFRAME}.parquet` is preserved).
+4. `config/ic_census_universe_phase_c.toml` — new universe TOML with the Phase C targets + signal-class additions.
+5. `research/ic_analysis/ic_census_lib.py` — three new factories: `vrp_z_h1`, `vx_basis_z`, `mes_to_eu_h1` (parametrised by EU target).
+6. Tests for each new factory.
+7. Run Phase C census.
+8. Append result log to §6 below — V3.6 documentation regardless of outcome.
+
+---
+
+## 6. Result log
+
+To be appended **once** after the scan runs. No retroactive edits to §1-§5 (V3.1).
+
+> _Pending download + scan — appended below after first invocation._
+
+---
+
+## 7. Deployment-venue mapping (informational)
+
+Records which IC-survivors map to which live execution path. This is **not** a deployment plan, only a routing table. Actual deployment is a separate per-strategy decision.
+
+| IC-survivor target class | Long-term venue | Short-term (intraday) venue |
+|---|---|---|
+| MES, NQ, MNQ, ES (US equity futures) | IBKR CME | IG: `IX.D.SPTRD.DAILY.IP` (US 500 DFB), `IX.D.NASDAQ.DAILY.IP` (US Tech 100 DFB) |
+| FESX, FDAX, FMDX, FTSE-fut | IBKR Eurex / ICE | IG: `IX.D.STOXX50.DAILY.IP` (Europe 50 DFB), `IX.D.FTSE.DAILY.IP` (FTSE 100 DFB), `IX.D.DAX.DAILY.IP` (Germany 40 DFB) |
+| SPY/QQQ/IWB/IWM/EFA/EEM (US ETFs) | IBKR US equities | IG: SPDR / iShares CFD spread bets (per `.tmp/ig_catalog/`) |
+| CSPX/VUSD/IHYG/IHYU UCITS | IBKR LSE | IG: spread bets per existing IG catalog |
+| AUD_JPY / EUR_USD / etc. FX | IBKR IDEALPRO | IG FX spread bets (DFB on majors) |
+| GLD | IBKR ARCA | IG: spot gold / gold ETF DFB |
+| VIX-family (research only) | n/a — externals only | n/a |
+
+The IG catalog at `.tmp/ig_catalog/MAPPING.md` confirms the IG side of this mapping. For each long-term IC-survivor we have a corresponding short-term DFB or quarterly contract on IG, enabling a short-term version of the same signal once intraday data validates it.
+
+---
+
+## 8. Change log
+
+| Version | Date | Change |
+|---|---|---|
+| 1.0 | 2026-05-13 | Initial Phase C pre-registration. Databento-sourced intraday futures + VIX-family + EU index futures. |
