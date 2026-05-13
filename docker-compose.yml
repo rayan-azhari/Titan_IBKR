@@ -77,6 +77,9 @@ services:
       # at startup to size each strategy's initial_equity correctly.
       TITAN_PORTFOLIO_USD_EQUITY: ${TITAN_PORTFOLIO_USD_EQUITY:-}
       TZ: America/New_York
+    # Strategy bundle name passed to watchdog. Override via TITAN_STRATEGIES
+    # in .env.docker (e.g. samir_validation for paper-validation runs).
+    command: ["python", "scripts/watchdog_portfolio.py", "--strategies", "${TITAN_STRATEGIES:-champion_portfolio}"]
     volumes:
       - titan-tmp:/app/.tmp              # halt.json + logs persist via named volume
       - ./data:/app/data                 # warmup parquets — RW so refresh_market_data.sh

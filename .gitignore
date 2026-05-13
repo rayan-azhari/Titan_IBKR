@@ -3,6 +3,8 @@
 .env.docker
 .env.local
 .env.*.local
+.env.ig
+.env.ig.*
 
 # Intermediates (regeneratable)
 .tmp/
