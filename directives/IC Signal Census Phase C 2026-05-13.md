@@ -226,9 +226,81 @@ Estimates assume `ohlcv-1d` + `ohlcv-1h` schemas from ~2010 to today, ~15 years 
 
 ## 6. Result log
 
-To be appended **once** after the scan runs. No retroactive edits to §1-§5 (V3.1).
+Appended 2026-05-14 after the scan ran. §1-§5 unchanged (V3.1).
 
-> _Pending download + scan — appended below after first invocation._
+### 6.1 Run shape
+
+- Data downloaded: 8 Databento parquets (MES, MNQ, ES, NQ × D + H1) + 3 IBKR parquets (VIX, VIX9D, VIX3M × H1). Yfinance D files restored for VIX-family (IBKR script regression caught + patched).
+- 900 raw rows / 300 headline rows across 4 equity-futures targets × D + H1 × the existing signal classes + restored VIX-intraday signal classes (term-structure + VRP).
+- **Tier counts: 2 TIER_B, 0 TIER_A, 298 unconfirmed.**
+
+### 6.2 Gate breakdown
+
+| Gate | Passed / 300 |
+|---|---:|
+| BH-significant | 19 |
+| fold-stable (≥4/5) | 146 |
+| dsr_pass (\|t_NW\| ≥ 4.5) | 2 |
+| **plateau_stable** | **2** |
+| mtf_agree | 0 |
+
+### 6.3 TIER_B survivors — the first in the combined Phase A+B+C census
+
+| signal | instrument | TF | h | params | IC | t_NW | dsr_p | n_bars |
+|---|---|---:|---:|---|---:|---:|---:|---:|
+| `intraday_range_atr` | **NQ** | H1 | 1 | period=14 | **+0.02481** | **+7.18** | 0.9998 | 85,034 |
+| `intraday_range_atr` | **ES** | H1 | 1 | period=14 | **+0.02313** | **+6.76** | 0.9990 | 85,074 |
+
+Both clear: DSR (`|t_NW|>4.5`) + BH-FDR + fold-stability (sign-stable in ≥4 of 5 walk-forward folds) + **plateau** (the ATR-period sweep `{7, 14, 28}` is well-behaved: headline at the middle cell, both neighbours clear `|t|>3`, |IC| range across the three cells <30%). The only gate they fail is **MTF agreement** — the signal works at H1 but not at D, so they sit at TIER_B not TIER_A.
+
+### 6.4 Mechanism
+
+`intraday_range_atr` = `(today_range / ATR(period)) - 1`. **Positive IC at h=1** means: when the current bar's range substantially exceeds the rolling ATR, the **next bar's return is positive**. This is a **volatility-breakout / range-expansion** signal — high-range bars cluster, and the autocorrelation of large moves at the H1 timescale is enough to be tradeable (`|IC| × σ_fwd ≈ 0.025 × 1 normalised vol unit` ≈ ~5 bp in raw return terms per bar, well above typical CME futures spread).
+
+Why it only fires at H1: the range-expansion / volatility-clustering mechanism is fundamentally an intraday phenomenon. Daily bars aggregate over so much of the action that the same signal collapses to noise — exactly what the MTF gate is designed to catch.
+
+### 6.5 Other notable cells (rejected, but mechanism-confirming)
+
+These cells passed BH + fold but failed plateau (typically because the parameter sweep monotonically decays the same way Phase A microstructure did):
+
+| Signal | Instrument | TF | h | IC | t_NW | Notes |
+|---|---|---:|---:|---:|---:|---|
+| rsi_dev | ES | H1 | 1 | -0.0188 | -5.33 | Phase A microstructure mean-reversion confirmed on actual futures |
+| bb_pctb | ES | H1 | 1 | -0.0185 | -5.13 | Same |
+| intraday_range_atr | NQ | H1 | 8 | +0.0246 | +4.70 | Range-expansion at 8-bar horizon (sub-floor) |
+| vwap_overshoot | ES | H1 | 1 | -0.0161 | -4.52 | Microstructure mean-reversion |
+| realized_vol_z | NQ | H1 | 1 | -0.0155 | -4.48 | Vol-mean-reversion at H1 |
+| intraday_range_atr | MNQ | H1 | 8 | +0.0328 | +4.11 | Same as NQ but smaller N (35k bars) so t lower |
+| ma_distance | ES | H1 | 1 | -0.0129 | -3.81 | Same family |
+| vrp_z | ES | D | 5 | +0.0926 | +3.67 | Phase B VRP confirmed on futures at D 5-day, still sample-limited |
+| vrp_z | NQ | D | 5 | +0.0859 | +3.40 | Same |
+
+### 6.6 What Phase C confirmed
+
+1. **Sample size was the binding constraint in Phases A+B.** Going from ~5k daily bars to ~85k H1 bars on the equity-futures sleeve pushed `intraday_range_atr` past the DSR floor where it had previously been borderline.
+2. **The strongest mechanisms identified in Phases A/B reappear cleanly on futures intraday.** Mean-reversion at H1 horizon=1 (rsi_dev, bb_pctb, vwap_overshoot, ma_distance) all show |t_NW| > 4 on ES H1 — they fail plateau for the same monotonic-decay reason as Phase A, not because the signal isn't there.
+3. **VRP at D still sample-limited.** Even on 4.4k bars of ES/NQ daily, VRP h=5 hits `t = 3.4-3.7` — short of the floor. Intraday VRP (`vrp_z` at H1) entered the scan but didn't surface as a survivor — H1 VRP needs the realised-vol leg to be computed at H1 frequency, and the 60-bar rolling window cap I used may be too short.
+4. **Term-structure signals (vix9d_over_vix, vix_over_vix3m) didn't surface as TIER_B.** Their best cells at H1 didn't clear the t-floor on the equity-futures targets — likely the signal is more a D-frequency macro indicator than an H1 tactical one.
+
+### 6.7 Recommended next actions (out of scope of this directive)
+
+1. **MTF lift** for `intraday_range_atr`. Currently TIER_B because D doesn't fire. Investigate whether a D version of the range-expansion signal (e.g. `daily_range / ATR(14_days) - 1`) shows IC on the same targets. If yes, the H1 + D agreement promotes the signal to TIER_A.
+2. **Strategy construction proposal.** `intraday_range_atr` at H1 on NQ/ES with `period=14` is the first deployment-eligible candidate from the census. A short-term strategy on IG DFB (US Tech 100 + US 500) at H1 is the natural execution route. Requires a separate pre-registration for the strategy backtest under audit pipeline (DSR + sanctuary + underlying-resampled MC).
+3. **Cross-asset confluence test.** AND-gate `intraday_range_atr` (NQ H1) with one of the Phase A microstructure mean-reversion signals (which are anti-correlated by direction). If both fire and agree on sign, the combined edge could be larger than either alone.
+4. **Phase D — paid-feed Eurex / CFE / breadth.** Phase B's deferred items (Eurex futures via paid feed, VIX futures via CFE, SPX breadth panel) remain the natural next universe expansion. Cost will be higher than Phase C ($100s vs $3) so requires a new pre-registration with $-approval.
+
+### 6.8 Outcome record
+
+| Field | Value |
+|---|---|
+| Combined Phase A + B + C TIER_A count | 0 |
+| Combined TIER_B count | **2** (both `intraday_range_atr`, ES + NQ at H1 horizon=1) |
+| Strongest mechanism-confirming IC (point estimate) | NQ `intraday_range_atr`: IC=+0.025, t_NW=+7.18 |
+| Strongest IC magnitude across all phases | DBC `dxy_z` D h=21: IC=-0.158 (Phase A), still sample-limited |
+| Databento spend | **$2.7581 + 1 partial re-run = ~$5.50** (vs $170-290 directive ceiling) |
+| IBKR data acquired | VIX, VIX9D, VIX3M intraday from 2009-2018 to 2026 (~52k / 14k / 33k H1 bars) |
+| Sanctuary respected | Yes — 12-month trailing window excluded throughout |
+| New deployment candidates | 1 — `intraday_range_atr period=14` on NQ + ES at H1 horizon=1, requires separate strategy pre-registration |
 
 ---
 

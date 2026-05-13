@@ -27,8 +27,16 @@ services:
       TIME_ZONE: America/New_York
       BYPASS_WARNING: "yes"
     expose:
-      - "4004"   # paper API (via socat) — internal-only, not published to host
+      - "4004"   # paper API (via socat) — also published below for host research scripts
       - "4003"   # live API (via socat)  — only used when TRADING_MODE=live
+    ports:
+      # Loopback-only host port mapping so research scripts on the
+      # Windows / macOS host can reach the gateway API for one-off
+      # downloads (e.g. scripts/download_data_phase_c_ibkr.py). NOT
+      # bound to 0.0.0.0 — the gateway must NOT be reachable from the
+      # network. Added 2026-05-13 per directives/IC Signal Census
+      # Phase C 2026-05-13.md §1.7.
+      - "127.0.0.1:4004:4004"
     networks:
       - titan-net
     healthcheck:

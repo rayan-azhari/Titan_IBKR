@@ -269,8 +269,13 @@ def main() -> None:
 
     req_id = 1
     failures: list[str] = []
+    # H1 only. D-frequency VIX-family files come from yfinance which has
+    # 5-25 years more history (VIX from 2000-01-03 vs IBKR's 2006-05-22;
+    # VIX9D from 2011 vs IBKR's 2018-06). The first run of this script
+    # overwrote those longer files -- subsequent invocations stay H1-only
+    # to avoid that regression.
     for spec in VIX_FAMILY:
-        for tf in ("D", "H1"):
+        for tf in ("H1",):
             try:
                 df = _fetch_full_history(app, spec, tf, req_id_start=req_id)
                 req_id += 100  # leave room for chunk req ids

@@ -135,14 +135,37 @@ cells = [
     { lookback = 120 },
 ]
 
-# Phase B VRP signal at D (no intraday VIX yet -- blocked on IBKR Gateway
-# port-mapping per directive §1.5). vrp_z stays D-only in Phase C.
+# Phase B VRP signal at D + H1 (intraday VIX unblocked 2026-05-13 after
+# docker-compose port mapping was added -- the IBKR Gateway downloader
+# in scripts/download_data_phase_c_ibkr.py wrote VIX_H1, VIX9D_H1,
+# VIX3M_H1 parquets, restoring the directive's §2.1/§2.2 originally-
+# pre-registered intraday scope).
 [signals.volatility_phase_b]
 [signals.volatility_phase_b.vrp_z]
 external = ["VIX"]
-applies_to_tfs = ["D"]
+applies_to_tfs = ["D", "H1"]
 cells = [
     { rv_window = 20 },
     { rv_window = 60 },
     { rv_window = 120 },
+]
+
+# Phase C intraday VIX term-structure signals (directive §2.2 originally
+# pre-registered, restored after IBKR Gateway unblock).
+[signals.term_structure_h1]
+[signals.term_structure_h1.vix9d_over_vix]
+external = ["VIX9D", "VIX"]
+applies_to_tfs = ["D", "H1"]
+cells = [
+    { smoothing = 1 },
+    { smoothing = 5 },
+    { smoothing = 21 },
+]
+[signals.term_structure_h1.vix_over_vix3m]
+external = ["VIX", "VIX3M"]
+applies_to_tfs = ["D", "H1"]
+cells = [
+    { smoothing = 1 },
+    { smoothing = 5 },
+    { smoothing = 21 },
 ]
