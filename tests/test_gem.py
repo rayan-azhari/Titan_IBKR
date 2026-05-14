@@ -237,6 +237,86 @@ def test_gem_lookback_blend_causality():
     gem_assert_causal(closes, cfg=GemConfig(lookback_blend=(3, 6, 12)), n_trials=5, seed=42)
 
 
+def test_vol_target_reduces_position_under_high_vol():
+    """Vol-target scales the risk-asset weight DOWN when realised vol >
+    the annual target, routing the cash portion into IEF.
+
+    Setup: a high-vol SPY series that grinds up. With no vol target,
+    GEM holds SPY at weight = 1.0. With a 10% annual vol target and
+    realised vol of ~38%, scale should be ~0.26 → IEF picks up ~0.74.
+    """
+    rng = np.random.default_rng(0)
+    # SPY with 38% ann vol (well above any reasonable target).
+    n = 252 * 3
+    spy = 100 * np.cumprod(1 + rng.normal(0.10 / 252, 0.024, n))  # ~38% ann vol
+    efa = 100 * np.cumprod(1 + rng.normal(0.02 / 252, 0.011, n))
+    ief = 100 * np.cumprod(1 + rng.normal(0.02 / 252, 0.003, n))
+    idx = pd.date_range("2020-01-02", periods=n, freq="B")
+    closes = pd.DataFrame({"SPY": spy, "EFA": efa, "IEF": ief}, index=idx)
+
+    w_no_target = gem_target_weights(closes, cfg=GemConfig())
+    w_targeted = gem_target_weights(
+        closes, cfg=GemConfig(ann_vol_target=0.10, vol_lookback_days=20)
+    )
+
+    # On bars where the unconstrained strategy is long SPY (weight=1), the
+    # vol-targeted version must have SPY weight materially BELOW 1.0.
+    spy_long_mask = w_no_target["SPY"] == 1.0
+    if spy_long_mask.any():
+        avg_spy_scaled = w_targeted.loc[spy_long_mask, "SPY"].mean()
+        avg_ief_scaled = w_targeted.loc[spy_long_mask, "IEF"].mean()
+        assert avg_spy_scaled < 0.6, f"SPY weight not reduced enough: {avg_spy_scaled:.3f}"
+        assert avg_ief_scaled > 0.4, f"IEF cash portion missing: {avg_ief_scaled:.3f}"
+        # Sum of weights should still be ~1 (no leverage).
+        sums = w_targeted.loc[spy_long_mask].sum(axis=1)
+        assert (sums.between(0.95, 1.05)).all(), (
+            f"Weight sums not in [0.95, 1.05]: min={sums.min()}, max={sums.max()}"
+        )
+
+
+def test_vol_target_no_op_under_low_vol():
+    """When realised vol < target, scale is capped at max_leverage = 1.0.
+    Weights should equal the unscaled binary version.
+    """
+    rng = np.random.default_rng(1)
+    # Very low-vol SPY: ~3% ann vol, below 10% target.
+    n = 252 * 3
+    spy = 100 * np.cumprod(1 + rng.normal(0.10 / 252, 0.002, n))
+    efa = 100 * np.cumprod(1 + rng.normal(0.02 / 252, 0.002, n))
+    ief = 100 * np.cumprod(1 + rng.normal(0.02 / 252, 0.0005, n))
+    idx = pd.date_range("2020-01-02", periods=n, freq="B")
+    closes = pd.DataFrame({"SPY": spy, "EFA": efa, "IEF": ief}, index=idx)
+
+    w_no_target = gem_target_weights(closes, cfg=GemConfig())
+    w_targeted = gem_target_weights(
+        closes, cfg=GemConfig(ann_vol_target=0.10, vol_lookback_days=20, max_leverage=1.0)
+    )
+
+    # Past the warmup, the targeted weights should equal the binary weights
+    # (cap at max_leverage = 1.0 means we don't lever up).
+    post_warmup = slice(252, None)
+    pd.testing.assert_frame_equal(
+        w_no_target.iloc[post_warmup],
+        w_targeted.iloc[post_warmup],
+        check_exact=False,
+        atol=1e-6,
+    )
+
+
+def test_vol_target_preserves_causality():
+    """Vol-target adds rolling-vol on the strategy returns. Verify the
+    shift discipline still holds: future shocks must not alter past
+    targeted weights.
+    """
+    closes = _synthetic_closes(n_years=5)
+    gem_assert_causal(
+        closes,
+        cfg=GemConfig(ann_vol_target=0.10, vol_lookback_days=20),
+        n_trials=5,
+        seed=42,
+    )
+
+
 def test_gem_buffer_does_not_freeze_against_stale_incumbent():
     """Regression test for the 2026-05-14 bug.
 

@@ -318,14 +318,18 @@ def _figure_equity_and_drawdown(
     # against. Helps the reader distinguish "this is the WFO OOS coverage"
     # from "this is the full historical strategy run".
     if oos_fold_intervals:
-        for (s, e) in oos_fold_intervals:
+        for s, e in oos_fold_intervals:
             fig.add_shape(
                 type="rect",
-                x0=s, x1=e,
-                y0=0, y1=1, yref="y domain",
+                x0=s,
+                x1=e,
+                y0=0,
+                y1=1,
+                yref="y domain",
                 fillcolor="rgba(31,119,180,0.06)",
                 line=dict(width=0),
-                row=1, col=1,
+                row=1,
+                col=1,
             )
 
     # Sanctuary boundary line. Use add_shape + add_annotation rather than

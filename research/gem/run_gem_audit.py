@@ -91,18 +91,37 @@ CELLS: dict[str, GemConfig] = {
     # (canonical). Defensive switch fires sooner because short-window returns
     # invert before the 12m, dragging the blend down faster.
     "C6_blend_3_6_12": GemConfig(
-        lookback_blend=(3, 6, 12), buffer_pct=0.005, defensive_switch=True,
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
     ),
     # Aggressive blend with shortest leg = 1 month -- maximum reactivity.
     # Risk of more whipsaw in choppy markets.
     "C7_blend_1_3_6": GemConfig(
-        lookback_blend=(1, 3, 6), buffer_pct=0.005, defensive_switch=True,
+        lookback_blend=(1, 3, 6),
+        buffer_pct=0.005,
+        defensive_switch=True,
+    ),
+    # Step 3 enhancement: C6 blend + vol-target overlay. Scales position
+    # size by min(1, target_vol / realised_vol_20d); leftover -> IEF cash.
+    # Mechanically reduces 2008/2020 magnitudes because realised vol spikes
+    # BEFORE the 12m gate inverts.
+    "C8_blend_voltarget10": GemConfig(
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
     ),
 }
 
-CANONICAL_CELL = "C6_blend_3_6_12"  # promoted from C1 after Step 2 audit
-# (C1 still RUNS so the §3 pre-reg comparison remains intact; it just isn't
-# the canonical anymore. The promotion is documented in the §4 result log.)
+CANONICAL_CELL = "C8_blend_voltarget10"  # promoted from C6 after Step 3 audit
+# Promotion history:
+#   Step 1 (buffer-bug fix):  C1 demoted but retained as pre-reg anchor.
+#   Step 2 (blend audit):      C6 promoted (dominates C1 on every axis).
+#   Step 3 (vol-target audit): C8 promoted (first DEPLOY verdict -- passes
+#                              all 4 decision-matrix axes incl. L17 rel-MC).
+# C1-C7 still RUN so all §3 pre-reg comparisons remain intact.
 
 
 def load_closes() -> pd.DataFrame:
@@ -194,6 +213,7 @@ def run_cell(
     n_trials_sweep: int,
     bars_per_year: int,
     sweep_sharpes: list[float],
+    mc_n_workers: int = 1,
 ) -> tuple[CellResult, pd.Series, pd.Series, dict]:
     """Run a single cell through the full audit pipeline.
 
@@ -257,6 +277,7 @@ def run_cell(
         periods_per_year=bars_per_year,
         seed=42,
         extra_series=extras,
+        n_workers=mc_n_workers,
     )
 
     # Relative MC: GEM vs buy-and-hold SPY on the SAME synthetic paths.
@@ -276,6 +297,7 @@ def run_cell(
         extra_series=extras,
         median_ratio_gate=0.80,
         p_strategy_better_gate=0.50,
+        n_workers=mc_n_workers,
     )
 
     # ── Sanctuary (final one-shot evaluation) ────────────────────────────
@@ -395,7 +417,16 @@ def main():
         print(f"  {cell_name}: Sharpe={sh:+.4f}  oos_bars={len(stitched)}")
 
     # ── Pass 2: full audit per cell (DSR, MC, sanctuary, decision) ───────
-    print("\n[Pass 2/2] Running full audit per cell (DSR + MC + sanctuary + decide)...")
+    # Run MC paths in parallel -- each cell still serial wrt the outer loop,
+    # but the 200 MC paths per cell are split across CPU cores. This is the
+    # main bottleneck (each path runs the strategy_fn end-to-end on a
+    # synthetic 22-year series).
+    from titan.research.framework.mc import DEFAULT_MC_WORKERS
+
+    print(
+        f"\n[Pass 2/2] Running full audit per cell "
+        f"(DSR + MC + sanctuary + decide) -- MC paths parallel x{DEFAULT_MC_WORKERS}..."
+    )
     results: list[CellResult] = []
     cell_oos_returns: dict[str, pd.Series] = {}
     cell_sanc_returns: dict[str, pd.Series] = {}
@@ -410,6 +441,7 @@ def main():
             n_trials_sweep=len(CELLS),
             bars_per_year=bars_per_year,
             sweep_sharpes=sweep_sharpes,
+            mc_n_workers=DEFAULT_MC_WORKERS,
         )
         results.append(result)
         cell_oos_returns[cell_name] = stitched_oos

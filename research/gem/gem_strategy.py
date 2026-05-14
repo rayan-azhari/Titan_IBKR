@@ -34,6 +34,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from titan.research.metrics import BARS_PER_YEAR
+
 
 @dataclass(frozen=True)
 class GemConfig:
@@ -71,6 +73,20 @@ class GemConfig:
     absolute_gate_lookback_months: int = 12
     buffer_pct: float = 0.005
     defensive_switch: bool = True
+
+    # ── Step 3: vol-target overlay (continuous risk control) ──────────────
+    # When ``ann_vol_target`` is set, position size is scaled so that the
+    # strategy's TRAILING realised volatility matches the target. Scaling
+    # is capped at ``max_leverage`` (default 1.0 = no leverage-up). The
+    # undeployed fraction goes to IEF (the safe asset) to keep equity
+    # capital deployed earning carry rather than sitting in cash.
+    #
+    # Mechanically reduces 2008/2020 drawdowns because realised vol spikes
+    # BEFORE the 12m momentum gate inverts. Causal: vol(t) uses returns
+    # through t-1.
+    ann_vol_target: float | None = None  # e.g. 0.10 for 10% annual vol
+    vol_lookback_days: int = 20
+    max_leverage: float = 1.0  # 1.0 = no leverage-up; >1 allows scaling up
 
 
 # The three universe names. Stable canonical order across the module.
@@ -242,7 +258,73 @@ def gem_target_weights(
     # This is the V3.6 L04 / A1 discipline. Without this we'd be using close[t] info
     # to earn return[t].
     weights = raw_weight.shift(1).fillna(0.0)
+
+    # ── Vol-target overlay (Step 3) -- vectorised ────────────────────────
+    if cfg.ann_vol_target is not None and cfg.ann_vol_target > 0:
+        weights = _apply_vol_target(weights, closes, cfg)
+
     return weights
+
+
+def _apply_vol_target(
+    weights: pd.DataFrame,
+    closes: pd.DataFrame,
+    cfg: GemConfig,
+) -> pd.DataFrame:
+    """Scale weights so trailing realised vol of the strategy hits the target.
+
+    Vectorised: pandas rolling for vol, numpy elementwise for the scale.
+    No Python loop over bars.
+
+    Causality:
+      * Bar-returns are pct_change on closes -> known at end of bar t.
+      * Unscaled strategy returns at t use weights at t (already shifted by 1).
+      * Rolling vol uses returns through bar t.
+      * Scale factor at bar t is derived from vol through t, then SHIFTED BY
+        ONE BAR before multiplying weights -- so the scaling acts on the
+        position FROM the next bar onwards. This preserves the existing
+        shift(1) discipline.
+      * Result: returns[t] = weights[t] * scale[t-1] * bar_returns[t], where
+        scale[t-1] is computable strictly from data <= t-1.
+    """
+    closes_aligned = closes[list(GEM_UNIVERSE)].astype(float).reindex(weights.index)
+    bar_returns = closes_aligned.pct_change().fillna(0.0)
+    # UNSCALED strategy returns (the binary version of the strategy).
+    raw_strat_ret = (weights * bar_returns).sum(axis=1)
+    # Realised vol over a rolling window (annualised). Sufficient samples
+    # only after vol_lookback_days bars; before that, scale = 1.0 (don't
+    # over-correct on a short sample).
+    rolling_std = raw_strat_ret.rolling(
+        cfg.vol_lookback_days, min_periods=cfg.vol_lookback_days
+    ).std(ddof=1)
+    realised_vol = rolling_std * np.sqrt(BARS_PER_YEAR["D"])
+
+    # Scale factor; clip to [0, max_leverage]. Where realised vol is zero or
+    # NaN, fall back to 1.0 (full position).
+    scale = (cfg.ann_vol_target / realised_vol).clip(upper=cfg.max_leverage)
+    scale = scale.fillna(1.0)
+    # Apply the causal shift -- decision uses vol through t-1.
+    scale = scale.shift(1).fillna(1.0)
+
+    # The active position is whichever asset has weight=1 (binary). Multiply
+    # its weight by the scale; route the un-deployed fraction (1 - scale) to
+    # IEF (the safe asset).
+    risk_assets = ["SPY", "EFA"]  # the things vol-target scales
+    scaled = weights.copy()
+    risk_mask = scaled[risk_assets].sum(axis=1) > 0  # rows where active asset is SPY/EFA
+
+    # For rows where we're in a risk asset: scale its weight + add (1-scale) to IEF.
+    if risk_mask.any():
+        # Scale down the active risk-asset weight.
+        for col in risk_assets:
+            scaled.loc[risk_mask, col] = weights.loc[risk_mask, col] * scale.loc[risk_mask]
+        # Cash portion routed to IEF (only when in a risk asset).
+        leftover = (1.0 - scale).clip(lower=0.0, upper=1.0)
+        scaled.loc[risk_mask, "IEF"] = scaled.loc[risk_mask, "IEF"] + leftover.loc[risk_mask]
+
+    # If we're already in IEF (defensive switch), leave as-is -- we're
+    # already in the safe asset. Same for warmup rows where weights sum to 0.
+    return scaled
 
 
 def gem_returns(

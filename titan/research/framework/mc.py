@@ -23,6 +23,7 @@ strategy's MaxDD distribution + Sharpe distribution are reported.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Callable
 
@@ -31,6 +32,10 @@ import pandas as pd
 
 from titan.research.framework.typology import McConfig
 from titan.research.metrics import max_drawdown, sharpe
+
+# Number of worker processes for MC parallelism. Capped at CPU count and at
+# 8 to avoid OS-level oversubscription on shared dev machines.
+DEFAULT_MC_WORKERS = max(1, min(8, (os.cpu_count() or 4)))
 
 
 @dataclass(frozen=True)
@@ -122,6 +127,84 @@ def _rebuild_path(
     return initial_price * np.exp(np.cumsum(resampled))
 
 
+def _run_one_path(
+    primary_log_rets: np.ndarray,
+    primary_index: pd.DatetimeIndex,
+    initial_primary: float,
+    extras_log_rets: dict[str, np.ndarray],
+    extras_initial: dict[str, float],
+    block_size: int,
+    bootstrap_method: str,
+    strategy_fn: Callable[[pd.DataFrame], pd.Series],
+    periods_per_year: int,
+    path_seed: int,
+    *,
+    benchmark_fn: Callable[[pd.DataFrame], pd.Series] | None = None,
+) -> tuple[float, float, float | None, float | None] | None:
+    """Run one MC path and return per-path metrics.
+
+    Worker function for path-level parallelism. Designed to be cheap to
+    pickle (only takes numpy arrays + index + serializable scalars) so it
+    works under both joblib's loky backend and a plain ProcessPoolExecutor.
+
+    Returns ``(sharpe, maxdd, bench_sharpe, bench_maxdd)`` where the
+    bench_* fields are ``None`` when ``benchmark_fn`` is not supplied
+    (used by ``run_relative_block_mc``). Returns ``None`` if the strategy
+    raised on the synthetic path or produced too few bars.
+    """
+    n_bars = len(primary_log_rets)
+    rng = np.random.default_rng(path_seed)
+
+    indices = _resample_indices(n_bars, block_size, rng)
+    synth_primary = _rebuild_path(primary_log_rets, indices, initial_primary)
+    df = pd.DataFrame(
+        {"close": synth_primary},
+        index=primary_index[: len(synth_primary)],
+    )
+    if bootstrap_method == "shared_block":
+        for name, lr in extras_log_rets.items():
+            synth = _rebuild_path(lr, indices[: len(lr)], extras_initial[name])
+            df[name] = pd.Series(synth, index=df.index[: len(synth)])
+    else:  # "block" -- extras independent
+        for name, lr in extras_log_rets.items():
+            ext_indices = _resample_indices(len(lr), block_size, rng)
+            synth = _rebuild_path(lr, ext_indices, extras_initial[name])
+            df[name] = pd.Series(synth, index=df.index[: len(synth)])
+
+    try:
+        strat_ret = strategy_fn(df)
+    except Exception:
+        return None
+    if len(strat_ret) < 20:
+        return None
+
+    sh = float(sharpe(strat_ret, periods_per_year=periods_per_year))
+    mdd = float(max_drawdown(strat_ret))
+
+    if benchmark_fn is None:
+        return (sh, mdd, None, None)
+
+    try:
+        bench_ret = benchmark_fn(df)
+    except Exception:
+        return None
+    if len(bench_ret) < 20:
+        return None
+    bsh = float(sharpe(bench_ret, periods_per_year=periods_per_year))
+    bmdd = float(max_drawdown(bench_ret))
+    return (sh, mdd, bsh, bmdd)
+
+
+def _spawn_path_seeds(seed: int, n_paths: int) -> list[int]:
+    """Produce ``n_paths`` independent integer seeds from a master seed.
+
+    Uses ``np.random.SeedSequence.spawn`` so the per-path streams are
+    statistically independent and reproducible from the master seed.
+    """
+    ss = np.random.SeedSequence(seed)
+    return [int(child.generate_state(1)[0]) for child in ss.spawn(n_paths)]
+
+
 def run_block_mc(
     primary_close: pd.Series,
     cfg: McConfig,
@@ -130,6 +213,7 @@ def run_block_mc(
     periods_per_year: int,
     seed: int = 42,
     extra_series: dict[str, pd.Series] | None = None,
+    n_workers: int = 1,
 ) -> McResult:
     """Block bootstrap of the primary close (and optional extras at SHARED
     indices for cross-asset strategies).
@@ -181,7 +265,6 @@ def run_block_mc(
         )
 
     log_returns_primary = np.log(primary_close).diff().dropna().to_numpy()
-    n_bars = len(log_returns_primary)
     initial_primary = float(primary_close.iloc[0])
 
     extras_log_rets: dict[str, np.ndarray] = {}
@@ -202,47 +285,43 @@ def run_block_mc(
                 common_idx = common_idx.intersection(extra_series[name].index)
             primary_close = primary_close.reindex(common_idx).dropna()
             log_returns_primary = np.log(primary_close).diff().dropna().to_numpy()
-            n_bars = len(log_returns_primary)
 
-    rng = np.random.default_rng(seed)
-    sharpes: list[float] = []
-    maxdds: list[float] = []
+    # Per-path independent seeds (reproducible from master seed).
+    path_seeds = _spawn_path_seeds(seed, cfg.n_paths)
 
-    for _path in range(cfg.n_paths):
-        if cfg.bootstrap_method == "shared_block":
-            indices = _resample_indices(n_bars, cfg.block_size_bars, rng)
-            synth_primary = _rebuild_path(log_returns_primary, indices, initial_primary)
-            df = pd.DataFrame(
-                {"close": synth_primary},
-                index=primary_close.index[: len(synth_primary)],
-            )
-            for name, lr in extras_log_rets.items():
-                synth = _rebuild_path(lr, indices[: len(lr)], extras_initial[name])
-                df[name] = pd.Series(synth, index=df.index[: len(synth)])
-        else:  # plain "block"
-            indices = _resample_indices(n_bars, cfg.block_size_bars, rng)
-            synth_primary = _rebuild_path(log_returns_primary, indices, initial_primary)
-            df = pd.DataFrame(
-                {"close": synth_primary},
-                index=primary_close.index[: len(synth_primary)],
-            )
-            for name, lr in extras_log_rets.items():
-                # Each extra resampled independently (block bootstrap doesn't
-                # preserve cross-asset correlation)
-                ext_indices = _resample_indices(len(lr), cfg.block_size_bars, rng)
-                synth = _rebuild_path(lr, ext_indices, extras_initial[name])
-                df[name] = pd.Series(synth, index=df.index[: len(synth)])
+    primary_index = primary_close.index
 
-        try:
-            strat_ret = strategy_fn(df)
-        except Exception:
-            continue
-        if len(strat_ret) < 20:
-            continue
-        sh = sharpe(strat_ret, periods_per_year=periods_per_year)
-        mdd = max_drawdown(strat_ret)
-        sharpes.append(sh)
-        maxdds.append(mdd)
+    def _do_path(ps: int):
+        return _run_one_path(
+            log_returns_primary,
+            primary_index,
+            initial_primary,
+            extras_log_rets,
+            extras_initial,
+            cfg.block_size_bars,
+            cfg.bootstrap_method,
+            strategy_fn,
+            periods_per_year,
+            ps,
+        )
+
+    results: list[tuple[float, float, float | None, float | None] | None]
+    if n_workers <= 1:
+        # Serial path -- matches the pre-parallel behaviour modulo per-path
+        # seeding (now deterministic per path rather than draws from a single
+        # master RNG; statistically equivalent, more reproducible).
+        results = [_do_path(ps) for ps in path_seeds]
+    else:
+        # Path-level parallelism via joblib (handles closure pickling via
+        # cloudpickle under the loky backend).
+        from joblib import Parallel, delayed
+
+        results = Parallel(n_jobs=n_workers, backend="loky", verbose=0)(
+            delayed(_do_path)(ps) for ps in path_seeds
+        )
+
+    sharpes = [r[0] for r in results if r is not None]
+    maxdds = [r[1] for r in results if r is not None]
 
     if not sharpes:
         return McResult(
@@ -288,6 +367,7 @@ def run_relative_block_mc(
     extra_series: dict[str, pd.Series] | None = None,
     median_ratio_gate: float = 0.80,
     p_strategy_better_gate: float = 0.50,
+    n_workers: int = 1,
 ) -> RelativeMcResult:
     """Relative block-bootstrap MC: strategy vs benchmark on the SAME paths.
 
@@ -350,7 +430,6 @@ def run_relative_block_mc(
         )
 
     log_returns_primary = np.log(primary_close).diff().dropna().to_numpy()
-    n_bars = len(log_returns_primary)
     initial_primary = float(primary_close.iloc[0])
 
     extras_log_rets: dict[str, np.ndarray] = {}
@@ -369,49 +448,38 @@ def run_relative_block_mc(
                 common_idx = common_idx.intersection(extra_series[name].index)
             primary_close = primary_close.reindex(common_idx).dropna()
             log_returns_primary = np.log(primary_close).diff().dropna().to_numpy()
-            n_bars = len(log_returns_primary)
 
-    rng = np.random.default_rng(seed)
-    strat_sharpes: list[float] = []
-    strat_maxdds: list[float] = []
-    bench_sharpes: list[float] = []
-    bench_maxdds: list[float] = []
+    primary_index = primary_close.index
+    path_seeds = _spawn_path_seeds(seed, cfg.n_paths)
 
-    for _path in range(cfg.n_paths):
-        # Build one synthetic DataFrame (same paths for both strat and bench).
-        if cfg.bootstrap_method == "shared_block":
-            indices = _resample_indices(n_bars, cfg.block_size_bars, rng)
-            synth_primary = _rebuild_path(log_returns_primary, indices, initial_primary)
-            df = pd.DataFrame(
-                {"close": synth_primary},
-                index=primary_close.index[: len(synth_primary)],
-            )
-            for name, lr in extras_log_rets.items():
-                synth = _rebuild_path(lr, indices[: len(lr)], extras_initial[name])
-                df[name] = pd.Series(synth, index=df.index[: len(synth)])
-        else:  # plain "block"
-            indices = _resample_indices(n_bars, cfg.block_size_bars, rng)
-            synth_primary = _rebuild_path(log_returns_primary, indices, initial_primary)
-            df = pd.DataFrame(
-                {"close": synth_primary},
-                index=primary_close.index[: len(synth_primary)],
-            )
-            for name, lr in extras_log_rets.items():
-                ext_indices = _resample_indices(len(lr), cfg.block_size_bars, rng)
-                synth = _rebuild_path(lr, ext_indices, extras_initial[name])
-                df[name] = pd.Series(synth, index=df.index[: len(synth)])
+    def _do_path(ps: int):
+        return _run_one_path(
+            log_returns_primary,
+            primary_index,
+            initial_primary,
+            extras_log_rets,
+            extras_initial,
+            cfg.block_size_bars,
+            cfg.bootstrap_method,
+            strategy_fn,
+            periods_per_year,
+            ps,
+            benchmark_fn=benchmark_fn,
+        )
 
-        try:
-            strat_ret = strategy_fn(df)
-            bench_ret = benchmark_fn(df)
-        except Exception:
-            continue
-        if len(strat_ret) < 20 or len(bench_ret) < 20:
-            continue
-        strat_sharpes.append(float(sharpe(strat_ret, periods_per_year=periods_per_year)))
-        strat_maxdds.append(float(max_drawdown(strat_ret)))
-        bench_sharpes.append(float(sharpe(bench_ret, periods_per_year=periods_per_year)))
-        bench_maxdds.append(float(max_drawdown(bench_ret)))
+    if n_workers <= 1:
+        results = [_do_path(ps) for ps in path_seeds]
+    else:
+        from joblib import Parallel, delayed
+
+        results = Parallel(n_jobs=n_workers, backend="loky", verbose=0)(
+            delayed(_do_path)(ps) for ps in path_seeds
+        )
+
+    strat_sharpes = [r[0] for r in results if r is not None]
+    strat_maxdds = [r[1] for r in results if r is not None]
+    bench_sharpes = [r[2] for r in results if r is not None and r[2] is not None]
+    bench_maxdds = [r[3] for r in results if r is not None and r[3] is not None]
 
     if not strat_sharpes:
         return RelativeMcResult(
