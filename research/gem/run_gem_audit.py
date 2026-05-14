@@ -113,6 +113,46 @@ CELLS: dict[str, GemConfig] = {
         ann_vol_target=0.10,
         vol_lookback_days=20,
     ),
+    # Step 4: conditional stress gate -- vol-target ONLY fires when realised
+    # SPY vol > 20%. In calm regime, deploy 100% (no scaling). Recovers
+    # total return relative to C8 which scaled down even in calm markets.
+    "C9_stress_gated": GemConfig(
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        stress_gate_enabled=True,
+        stress_realised_vol_threshold=0.20,
+        max_leverage=1.0,
+    ),
+    # Step 4 + leverage: C9 + 1.5x leverage in calm (MES futures-style).
+    # Same stress defense, but takes more equity exposure when realised vol
+    # is benign. Brings total return closer to / above SPY buy-hold.
+    "C10_stress_gated_lev_1p5": GemConfig(
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        stress_gate_enabled=True,
+        stress_realised_vol_threshold=0.20,
+        max_leverage=1.5,
+    ),
+    # Step 4 + composite stress: C9 with VIX threshold added (more leading-
+    # indicator detection of stress). VIX > 25 OR realised SPY vol > 20% =>
+    # apply vol-target. Lives only in real data (MC does not bootstrap VIX).
+    "C11_composite_stress": GemConfig(
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        stress_gate_enabled=True,
+        stress_realised_vol_threshold=0.20,
+        stress_vix_threshold=25.0,
+        max_leverage=1.5,
+    ),
 }
 
 CANONICAL_CELL = "C8_blend_voltarget10"  # promoted from C6 after Step 3 audit
@@ -124,31 +164,47 @@ CANONICAL_CELL = "C8_blend_voltarget10"  # promoted from C6 after Step 3 audit
 # C1-C7 still RUN so all §3 pre-reg comparisons remain intact.
 
 
-def load_closes() -> pd.DataFrame:
-    """Load the three universe parquets and align to common dates.
+def _load_close(sym: str, required: bool = True) -> pd.Series | None:
+    """Load a single close-price series, return None if optional + missing."""
+    path = DATA_DIR / f"{sym}_D.parquet"
+    if not path.exists():
+        if required:
+            raise FileNotFoundError(f"Missing required data file: {path}.")
+        return None
+    df = pd.read_parquet(path)
+    if "close" in df.columns:
+        s = df["close"]
+    elif "Close" in df.columns:
+        s = df["Close"]
+    else:
+        raise ValueError(f"{path}: no 'close' or 'Close' column.")
+    s.name = sym
+    s.index = pd.to_datetime(s.index).tz_localize(None)
+    return s
 
-    All three are yfinance-sourced adjusted close => total return.
-    """
-    parts = []
-    for sym in GEM_UNIVERSE:
-        path = DATA_DIR / f"{sym}_D.parquet"
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Missing data file: {path}. Run scripts/download_data_yfinance.py first."
-            )
-        df = pd.read_parquet(path)
-        # Standardise column name
-        if "close" in df.columns:
-            s = df["close"]
-        elif "Close" in df.columns:
-            s = df["Close"]
-        else:
-            raise ValueError(f"{path}: no 'close' or 'Close' column. Columns: {list(df.columns)}")
-        s.name = sym
-        parts.append(s)
+
+def load_closes() -> pd.DataFrame:
+    """Load the three universe parquets and align to common dates."""
+    parts = [_load_close(sym, required=True) for sym in GEM_UNIVERSE]
     closes = pd.concat(parts, axis=1).dropna(how="any")
     closes.index = pd.to_datetime(closes.index).tz_localize(None)
     return closes
+
+
+def load_regime_extras() -> dict[str, pd.Series]:
+    """Load VIX + HYG (for credit-spread Z-score). Returns a dict with
+    optional keys: 'vix', 'hyg'. HYG was launched April 2007 so
+    pre-2007 will be NaN; the strategy handles that gracefully by
+    not firing the credit-z component during warmup.
+    """
+    out = {}
+    vix = _load_close("VIX", required=False)
+    if vix is not None:
+        out["vix"] = vix
+    hyg = _load_close("HYG", required=False)
+    if hyg is not None:
+        out["hyg"] = hyg
+    return out
 
 
 @dataclass
@@ -182,16 +238,17 @@ class CellResult:
 def _strategy_fn_for_cell(cell_cfg: GemConfig):
     """Build a strategy_fn closure compatible with run_block_mc.
 
-    The MC primitive passes a DataFrame with column 'close' as the primary
-    series. For multi-instrument strategies we need the extras too: 'SPY',
-    'EFA', 'IEF' if available. We treat the DataFrame as containing all
-    three (passed via extra_series); 'close' is the primary which we'll
-    label as SPY for MC purposes.
+    The MC primitive passes a DataFrame with column 'close' (primary)
+    plus extras (EFA, IEF). For the Step 4 stress gate, the realised-vol
+    component is computed from the synthetic SPY path itself -- works
+    in MC by construction. The VIX/HYG components are NOT bootstrapped
+    in MC (they would require extending extra_series with synthetic VIX/
+    HYG paths -- a known future enhancement). For cells that use those
+    components, the MC under-tests the strategy slightly; flagged in the
+    cell-config comment.
     """
 
     def strategy_fn(df: pd.DataFrame) -> pd.Series:
-        # The MC harness gives us 'close' (primary, == SPY here) plus extras keyed
-        # by their name. Reconstruct the universe DataFrame.
         universe_df = pd.DataFrame(index=df.index)
         universe_df["SPY"] = df["close"]
         for sym in ("EFA", "IEF"):
@@ -199,6 +256,8 @@ def _strategy_fn_for_cell(cell_cfg: GemConfig):
                 universe_df[sym] = df[sym]
         if not all(s in universe_df.columns for s in GEM_UNIVERSE):
             return pd.Series(0.0, index=df.index)
+        # vix/hyg/ief_for_credit are None in MC (extras only cover EFA, IEF).
+        # The strategy's stress gate falls back to realised-vol-only.
         return gem_returns(universe_df, cfg=cell_cfg)
 
     return strategy_fn
@@ -214,6 +273,7 @@ def run_cell(
     bars_per_year: int,
     sweep_sharpes: list[float],
     mc_n_workers: int = 1,
+    regime_extras: dict[str, pd.Series] | None = None,
 ) -> tuple[CellResult, pd.Series, pd.Series, dict]:
     """Run a single cell through the full audit pipeline.
 
@@ -232,9 +292,15 @@ def run_cell(
     # strategy needs continuous history for its 12-month lookback, so we
     # compute returns ONCE on the full visible window and then slice each
     # fold's OOS portion. This is causal: weights at the start of every
-    # OOS window are derived from IS-only data (the lookback never reaches
-    # forward into OOS).
-    visible_strategy_returns = gem_returns(visible, cfg=cfg)
+    # OOS window are derived from IS-only data.
+    rextras = regime_extras or {}
+    visible_strategy_returns = gem_returns(
+        visible,
+        cfg=cfg,
+        vix=rextras.get("vix"),
+        hyg=rextras.get("hyg"),
+        ief_for_credit=visible["IEF"],
+    )
     stitched_parts: list[pd.Series] = []
     fold_diagnostics: list[dict] = []
     for fold in folds:
@@ -304,7 +370,13 @@ def run_cell(
     # Need continuous history for the 12-month lookback. Pass visible+sanctuary
     # to the strategy, then extract just the sanctuary's return slice.
     full_for_sanctuary = pd.concat([visible, sanctuary])
-    full_rets = gem_returns(full_for_sanctuary, cfg=cfg)
+    full_rets = gem_returns(
+        full_for_sanctuary,
+        cfg=cfg,
+        vix=rextras.get("vix"),
+        hyg=rextras.get("hyg"),
+        ief_for_credit=full_for_sanctuary["IEF"],
+    )
     sanc_ret = full_rets.iloc[len(visible) :]
     sanc_sh = float(sharpe(sanc_ret, periods_per_year=bars_per_year))
     div = sanctuary_divergence_test(
@@ -378,10 +450,14 @@ def main():
 
     # ── Load + snapshot data (L11) ────────────────────────────────────────
     closes = load_closes()
+    regime_extras = load_regime_extras()
     print(
         f"\nData loaded: {closes.shape[0]} bars from {closes.index[0].date()} to {closes.index[-1].date()}"
     )
     print(f"Universe: {list(closes.columns)}")
+    if regime_extras:
+        loaded_keys = sorted(regime_extras.keys())
+        print(f"Regime extras: {loaded_keys}")
 
     # ── Causality smoke test (A10) ────────────────────────────────────────
     gem_assert_causal(closes, n_trials=5, seed=42)
@@ -407,8 +483,13 @@ def main():
     cls_defaults = defaults_for(StrategyClass.CROSS_ASSET_MOMENTUM)
     folds = build_folds(visible.index, cls_defaults.wfo, bars_per_year=bars_per_year)
     for cell_name, cfg in CELLS.items():
-        # Compute returns on the FULL visible (so lookback works) then slice OOS.
-        visible_rets = gem_returns(visible, cfg=cfg)
+        visible_rets = gem_returns(
+            visible,
+            cfg=cfg,
+            vix=regime_extras.get("vix"),
+            hyg=regime_extras.get("hyg"),
+            ief_for_credit=visible["IEF"],
+        )
         stitched_parts = [visible_rets.iloc[f.oos_start : f.oos_end_excl] for f in folds]
         stitched = pd.concat(stitched_parts).fillna(0.0)
         sh = float(sharpe(stitched, periods_per_year=bars_per_year))
@@ -442,6 +523,7 @@ def main():
             bars_per_year=bars_per_year,
             sweep_sharpes=sweep_sharpes,
             mc_n_workers=DEFAULT_MC_WORKERS,
+            regime_extras=regime_extras,
         )
         results.append(result)
         cell_oos_returns[cell_name] = stitched_oos
@@ -470,7 +552,16 @@ def main():
     # ── Pass 3: Varma noise-injection robustness gate on the canonical cell.
     print(f"\n[Pass 3/3] Noise-injection robustness gate (Varma) on {CANONICAL_CELL}...")
     canonical_cfg = CELLS[CANONICAL_CELL]
-    full_strategy_fn = lambda df: gem_returns(df, cfg=canonical_cfg)  # noqa: E731
+    # Noise gate uses unperturbed regime extras (VIX/HYG unaffected by
+    # SPY/EFA/IEF noise injection; this is appropriate because the gate
+    # tests price-series robustness, not regime-signal robustness).
+    _v = regime_extras.get("vix")
+    _h = regime_extras.get("hyg")
+
+    def full_strategy_fn(df: pd.DataFrame) -> pd.Series:
+        ief_for_credit = df["IEF"] if "IEF" in df.columns else None
+        return gem_returns(df, cfg=canonical_cfg, vix=_v, hyg=_h, ief_for_credit=ief_for_credit)
+
     noise_result = run_noise_robustness(
         visible,
         full_strategy_fn,
@@ -621,7 +712,13 @@ def main():
 
     # Full strategy returns on the visible window (canonical cell) for the
     # equity panel. Also benchmark buy-and-hold SPY on the same index.
-    full_strategy_visible = gem_returns(visible, cfg=CELLS[CANONICAL_CELL])
+    full_strategy_visible = gem_returns(
+        visible,
+        cfg=CELLS[CANONICAL_CELL],
+        vix=regime_extras.get("vix"),
+        hyg=regime_extras.get("hyg"),
+        ief_for_credit=visible["IEF"],
+    )
     full_benchmark_visible = visible["SPY"].pct_change().fillna(0.0)
 
     # OOS fold intervals (start, end) for band overlays on the equity panel.

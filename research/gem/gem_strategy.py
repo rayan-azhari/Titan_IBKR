@@ -88,6 +88,32 @@ class GemConfig:
     vol_lookback_days: int = 20
     max_leverage: float = 1.0  # 1.0 = no leverage-up; >1 allows scaling up
 
+    # ── Step 4: conditional stress gate (limit exposure ONLY in stress) ──
+    # The Step 3 overlay scales exposure ALL the time -- including calm
+    # markets, which costs total return. The Step 4 enhancement gates the
+    # vol-target on a binary stress signal: only scale down (or stay at
+    # max_leverage) when the regime is stressed.
+    #
+    # When ``stress_gate_enabled`` is False (default), behaviour is
+    # identical to Step 3 (no gate). When True, the overlay reads the
+    # stress signal at each bar:
+    #   * stress[t] = True  -> apply vol-target scaling (with leverage cap)
+    #   * stress[t] = False -> deploy at max_leverage (no scaling down)
+    #
+    # Stress signal sources (any True -> stress):
+    #   * stress_realised_vol_threshold: realised vol of SPY (computed
+    #     INSIDE the strategy from primary close, works in MC paths).
+    #   * stress_vix_threshold: VIX level (requires vix_series passed in,
+    #     OPTIONAL -- live-only).
+    #   * stress_credit_z_threshold: HYG/IEF credit-spread Z-score widening
+    #     (requires hyg_series + ief_series, OPTIONAL -- live-only).
+    stress_gate_enabled: bool = False
+    stress_realised_vol_threshold: float = 0.20  # 20% ann realised vol
+    stress_realised_vol_window: int = 20  # rolling window for the signal
+    stress_vix_threshold: float | None = None  # e.g. 25.0; None disables
+    stress_credit_z_threshold: float | None = None  # e.g. 2.0; None disables
+    stress_credit_z_window: int = 60  # rolling window for HYG/IEF z-score
+
 
 # The three universe names. Stable canonical order across the module.
 GEM_UNIVERSE: tuple[str, ...] = ("SPY", "EFA", "IEF")
@@ -115,9 +141,84 @@ def _month_end_idx(idx: pd.DatetimeIndex) -> np.ndarray:
     return is_end
 
 
+def compute_stress_signal(
+    primary_close: pd.Series,
+    cfg: GemConfig,
+    *,
+    vix: pd.Series | None = None,
+    hyg: pd.Series | None = None,
+    ief_for_credit: pd.Series | None = None,
+) -> pd.Series:
+    """Compute the causal binary stress signal driving the Step 4 gate.
+
+    Returns a Series aligned to ``primary_close.index`` with True where
+    the strategy should "go defensive" (apply vol-target scaling) and
+    False where it should deploy at max_leverage.
+
+    Stress sources (logical OR):
+      * realised_vol(primary, window) > cfg.stress_realised_vol_threshold
+        -- always available, computed from the primary close itself.
+        Works in MC paths (just needs the synthetic close series).
+      * vix > cfg.stress_vix_threshold (if vix series provided and
+        cfg.stress_vix_threshold is not None).
+      * HYG/IEF credit-spread Z-score < -cfg.stress_credit_z_threshold
+        (spread WIDENING -- HYG underperforming IEF -- is credit stress).
+        Requires hyg + ief_for_credit and cfg.stress_credit_z_threshold.
+
+    All inputs are shifted by 1 bar so the signal at t uses data through
+    t-1 (causal). False is the default when stress_gate_enabled is False
+    (i.e. the stress gate is a no-op).
+    """
+    idx = primary_close.index
+    if not cfg.stress_gate_enabled:
+        return pd.Series(False, index=idx, dtype=bool)
+
+    # Realised vol of primary (typically SPY).
+    bar_returns = primary_close.pct_change()
+    rolling_std = (
+        bar_returns.shift(1)
+        .rolling(
+            cfg.stress_realised_vol_window,
+            min_periods=cfg.stress_realised_vol_window,
+        )
+        .std(ddof=1)
+    )
+    realised_vol = rolling_std * np.sqrt(BARS_PER_YEAR["D"])
+    stress = (realised_vol > cfg.stress_realised_vol_threshold).fillna(False)
+
+    # Optional VIX threshold.
+    if vix is not None and cfg.stress_vix_threshold is not None:
+        vix_aligned = vix.reindex(idx).ffill().shift(1)
+        stress = stress | (vix_aligned > cfg.stress_vix_threshold).fillna(False)
+
+    # Optional HYG/IEF credit-spread Z-score (negative -> widening).
+    if hyg is not None and ief_for_credit is not None and cfg.stress_credit_z_threshold is not None:
+        hyg_aligned = hyg.reindex(idx).ffill()
+        ief_aligned = ief_for_credit.reindex(idx).ffill()
+        # log ratio change captures HYG vs IEF relative performance.
+        log_ratio = (np.log(hyg_aligned) - np.log(ief_aligned)).shift(1)
+        roll_mean = log_ratio.rolling(
+            cfg.stress_credit_z_window,
+            min_periods=cfg.stress_credit_z_window,
+        ).mean()
+        roll_std = log_ratio.rolling(
+            cfg.stress_credit_z_window,
+            min_periods=cfg.stress_credit_z_window,
+        ).std(ddof=1)
+        z = (log_ratio - roll_mean) / roll_std
+        # Negative Z = spread widening = HYG falling vs IEF = credit stress.
+        stress = stress | (z < -cfg.stress_credit_z_threshold).fillna(False)
+
+    return stress.astype(bool)
+
+
 def gem_target_weights(
     closes: pd.DataFrame,
     cfg: GemConfig | None = None,
+    *,
+    vix: pd.Series | None = None,
+    hyg: pd.Series | None = None,
+    ief_for_credit: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Compute the CAUSAL GEM weight series.
 
@@ -259,9 +360,19 @@ def gem_target_weights(
     # to earn return[t].
     weights = raw_weight.shift(1).fillna(0.0)
 
-    # ── Vol-target overlay (Step 3) -- vectorised ────────────────────────
+    # ── Vol-target overlay (Step 3) + conditional stress gate (Step 4) ──
+    # The overlay always applies when ann_vol_target is set; the stress
+    # gate (if cfg.stress_gate_enabled) only ACTIVATES scaling during
+    # stress bars. In calm bars the position is deployed at max_leverage.
     if cfg.ann_vol_target is not None and cfg.ann_vol_target > 0:
-        weights = _apply_vol_target(weights, closes, cfg)
+        stress_signal = compute_stress_signal(
+            closes["SPY"], cfg, vix=vix, hyg=hyg, ief_for_credit=ief_for_credit
+        )
+        weights = _apply_vol_target(weights, closes, cfg, stress_signal=stress_signal)
+    elif cfg.max_leverage > 1.0:
+        # Leverage without vol target: scale risk-asset weights by max_leverage
+        # unconditionally (the simple "always-levered" baseline).
+        weights = _apply_static_leverage(weights, cfg)
 
     return weights
 
@@ -270,11 +381,22 @@ def _apply_vol_target(
     weights: pd.DataFrame,
     closes: pd.DataFrame,
     cfg: GemConfig,
+    *,
+    stress_signal: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Scale weights so trailing realised vol of the strategy hits the target.
 
     Vectorised: pandas rolling for vol, numpy elementwise for the scale.
     No Python loop over bars.
+
+    If ``stress_signal`` is provided AND ``cfg.stress_gate_enabled`` is
+    True (Step 4 mode):
+      * On stress bars (stress=True): apply vol-target scaling as below.
+      * On calm bars (stress=False):  deploy at cfg.max_leverage (no
+        scaling down -- preserves total return in calm regimes).
+
+    Otherwise (Step 3 mode, no stress gate): apply vol-target scaling
+    on every bar.
 
     Causality:
       * Bar-returns are pct_change on closes -> known at end of bar t.
@@ -284,8 +406,6 @@ def _apply_vol_target(
         ONE BAR before multiplying weights -- so the scaling acts on the
         position FROM the next bar onwards. This preserves the existing
         shift(1) discipline.
-      * Result: returns[t] = weights[t] * scale[t-1] * bar_returns[t], where
-        scale[t-1] is computable strictly from data <= t-1.
     """
     closes_aligned = closes[list(GEM_UNIVERSE)].astype(float).reindex(weights.index)
     bar_returns = closes_aligned.pct_change().fillna(0.0)
@@ -299,37 +419,71 @@ def _apply_vol_target(
     ).std(ddof=1)
     realised_vol = rolling_std * np.sqrt(BARS_PER_YEAR["D"])
 
-    # Scale factor; clip to [0, max_leverage]. Where realised vol is zero or
-    # NaN, fall back to 1.0 (full position).
-    scale = (cfg.ann_vol_target / realised_vol).clip(upper=cfg.max_leverage)
-    scale = scale.fillna(1.0)
-    # Apply the causal shift -- decision uses vol through t-1.
+    # Vol-target scale -- can be < 1 (scale down) or > 1 (lever up,
+    # bounded by max_leverage). Where realised vol is zero or NaN, fall
+    # back to 1.0 (full position).
+    voltarget_scale = (cfg.ann_vol_target / realised_vol).clip(upper=cfg.max_leverage)
+    voltarget_scale = voltarget_scale.fillna(1.0)
+
+    # Apply stress gate: on calm bars the scale is held at max_leverage
+    # (full deployment / levered as per cfg). On stress bars the vol-target
+    # scale takes over.
+    if stress_signal is not None and cfg.stress_gate_enabled:
+        stress_aligned = stress_signal.reindex(weights.index).fillna(False).astype(bool)
+        calm_scale = pd.Series(cfg.max_leverage, index=weights.index, dtype=float)
+        scale = voltarget_scale.where(stress_aligned, calm_scale)
+    else:
+        scale = voltarget_scale
+
+    # Causal shift -- decision uses data through t-1.
     scale = scale.shift(1).fillna(1.0)
 
-    # The active position is whichever asset has weight=1 (binary). Multiply
-    # its weight by the scale; route the un-deployed fraction (1 - scale) to
-    # IEF (the safe asset).
-    risk_assets = ["SPY", "EFA"]  # the things vol-target scales
+    # Apply the scale to the active risk asset. Three cases per bar:
+    #   * scale < 1.0:  reduce risk-asset weight, route leftover -> IEF.
+    #   * scale == 1.0: no change.
+    #   * scale > 1.0:  increase risk-asset weight beyond 1 (leverage via
+    #                   MES futures in live); IEF unchanged (no shorting).
+    risk_assets = ["SPY", "EFA"]
     scaled = weights.copy()
-    risk_mask = scaled[risk_assets].sum(axis=1) > 0  # rows where active asset is SPY/EFA
+    risk_mask = weights[risk_assets].sum(axis=1) > 0  # rows where active asset is SPY/EFA
 
-    # For rows where we're in a risk asset: scale its weight + add (1-scale) to IEF.
     if risk_mask.any():
-        # Scale down the active risk-asset weight.
         for col in risk_assets:
             scaled.loc[risk_mask, col] = weights.loc[risk_mask, col] * scale.loc[risk_mask]
-        # Cash portion routed to IEF (only when in a risk asset).
-        leftover = (1.0 - scale).clip(lower=0.0, upper=1.0)
+        # When scale < 1: route the un-deployed fraction to IEF.
+        leftover = (1.0 - scale).clip(lower=0.0)  # only positive (i.e. scale < 1)
         scaled.loc[risk_mask, "IEF"] = scaled.loc[risk_mask, "IEF"] + leftover.loc[risk_mask]
 
-    # If we're already in IEF (defensive switch), leave as-is -- we're
-    # already in the safe asset. Same for warmup rows where weights sum to 0.
+    # If we're already in IEF (defensive switch), leave as-is.
+    return scaled
+
+
+def _apply_static_leverage(
+    weights: pd.DataFrame,
+    cfg: GemConfig,
+) -> pd.DataFrame:
+    """Unconditionally scale the active risk-asset weight by max_leverage.
+
+    Used when ``cfg.ann_vol_target is None`` but ``cfg.max_leverage > 1``
+    -- the "always-levered" baseline (no vol-target risk management).
+    The defensive IEF position is NOT levered.
+    """
+    risk_assets = ["SPY", "EFA"]
+    scaled = weights.copy()
+    risk_mask = weights[risk_assets].sum(axis=1) > 0
+    if risk_mask.any():
+        for col in risk_assets:
+            scaled.loc[risk_mask, col] = weights.loc[risk_mask, col] * cfg.max_leverage
     return scaled
 
 
 def gem_returns(
     closes: pd.DataFrame,
     cfg: GemConfig | None = None,
+    *,
+    vix: pd.Series | None = None,
+    hyg: pd.Series | None = None,
+    ief_for_credit: pd.Series | None = None,
 ) -> pd.Series:
     """Compute the per-day GEM strategy returns (geometric, simple-return).
 
@@ -339,12 +493,16 @@ def gem_returns(
 
     where weight is the CAUSAL shifted weight from ``gem_target_weights``.
     Costs are NOT applied here -- caller adds them per the chosen cost model.
+
+    Optional ``vix`` / ``hyg`` / ``ief_for_credit`` series feed the Step 4
+    stress signal (when ``cfg.stress_gate_enabled``). Absent series silently
+    skip their stress component.
     """
-    weights = gem_target_weights(closes, cfg=cfg)
+    weights = gem_target_weights(closes, cfg=cfg, vix=vix, hyg=hyg, ief_for_credit=ief_for_credit)
     closes_aligned = closes[list(GEM_UNIVERSE)].astype(float).reindex(weights.index)
     bar_returns = closes_aligned.pct_change()
-    # Sanity: at any row, weights sum to either 0 (warmup / no decision) or 1.
-    # (We don't enforce this here -- a downstream test asserts it.)
+    # Sanity: at any row, weights sum to either 0 (warmup) or some value
+    # in [0, max_leverage]. Not enforced here.
     strat_ret = (weights * bar_returns).sum(axis=1)
     return strat_ret
 

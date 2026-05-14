@@ -18,6 +18,7 @@ from research.gem.gem_strategy import (
     GEM_UNIVERSE,
     GemConfig,
     _month_end_idx,
+    compute_stress_signal,
     gem_assert_causal,
     gem_returns,
     gem_target_weights,
@@ -301,6 +302,129 @@ def test_vol_target_no_op_under_low_vol():
         check_exact=False,
         atol=1e-6,
     )
+
+
+def test_compute_stress_signal_disabled_by_default():
+    """When stress_gate_enabled is False, signal is always False (no-op)."""
+    closes = _synthetic_closes(n_years=3)
+    cfg = GemConfig()  # stress_gate_enabled = False by default
+    sig = compute_stress_signal(closes["SPY"], cfg)
+    assert isinstance(sig, pd.Series)
+    assert (sig.astype(bool) == False).all()  # noqa: E712
+
+
+def test_compute_stress_signal_fires_on_high_realised_vol():
+    """High realised SPY vol triggers stress = True."""
+    rng = np.random.default_rng(0)
+    n = 252 * 2
+    idx = pd.date_range("2020-01-02", periods=n, freq="B")
+    # 40% ann vol -- well above the 20% threshold.
+    spy = 100 * np.cumprod(1 + rng.normal(0.05 / 252, 0.025, n))
+    cfg = GemConfig(stress_gate_enabled=True, stress_realised_vol_threshold=0.20)
+    sig = compute_stress_signal(pd.Series(spy, index=idx, name="SPY"), cfg)
+    # Most post-warmup bars should be stressed.
+    post_warmup = sig.iloc[40:]
+    assert post_warmup.mean() > 0.8
+
+
+def test_compute_stress_signal_fires_on_vix_threshold():
+    """VIX above the threshold triggers stress even when realised vol is low."""
+    n = 100
+    idx = pd.date_range("2020-01-02", periods=n, freq="B")
+    spy = pd.Series(100.0 * np.linspace(1.0, 1.10, n), index=idx, name="SPY")  # low vol
+    vix = pd.Series(35.0, index=idx, name="VIX")  # well above 25
+    cfg = GemConfig(stress_gate_enabled=True, stress_vix_threshold=25.0)
+    sig = compute_stress_signal(spy, cfg, vix=vix)
+    # All post-warmup bars should be in stress (VIX dominates).
+    assert sig.iloc[40:].mean() > 0.95
+
+
+def test_stress_gate_no_op_in_calm_markets():
+    """When stress signal is False, the conditional overlay should deploy
+    at max_leverage (i.e. = 1.0 by default) -- NOT scale down. Result:
+    weights ~= binary weights, unchanged.
+    """
+    # Construct a long stable bull series so SPY vol stays ~5% << 20% threshold.
+    rng = np.random.default_rng(1)
+    n = 252 * 3
+    idx = pd.date_range("2020-01-02", periods=n, freq="B")
+    spy = 100 * np.cumprod(1 + rng.normal(0.10 / 252, 0.003, n))
+    efa = 100 * np.cumprod(1 + rng.normal(0.05 / 252, 0.003, n))
+    ief = 100 * np.cumprod(1 + rng.normal(0.02 / 252, 0.0005, n))
+    closes = pd.DataFrame({"SPY": spy, "EFA": efa, "IEF": ief}, index=idx)
+
+    w_no_target = gem_target_weights(closes, cfg=GemConfig())
+    w_gated = gem_target_weights(
+        closes,
+        cfg=GemConfig(
+            ann_vol_target=0.10,
+            stress_gate_enabled=True,
+            stress_realised_vol_threshold=0.20,
+            max_leverage=1.0,
+        ),
+    )
+    # Past the warmup, in calm regime: gated == ungated.
+    post = slice(252, None)
+    pd.testing.assert_frame_equal(
+        w_no_target.iloc[post], w_gated.iloc[post], check_exact=False, atol=1e-6
+    )
+
+
+def test_stress_gate_activates_in_high_vol():
+    """When the regime turns stressful, the conditional overlay scales down."""
+    rng = np.random.default_rng(2)
+    n_calm = 252 * 2
+    n_stress = 252
+    idx = pd.date_range("2020-01-02", periods=n_calm + n_stress, freq="B")
+    spy_calm = np.cumprod(1 + rng.normal(0.10 / 252, 0.003, n_calm))
+    # Stress phase: 40% ann vol.
+    spy_stress = spy_calm[-1] * np.cumprod(1 + rng.normal(0.05 / 252, 0.025, n_stress))
+    spy = np.concatenate([spy_calm, spy_stress]) * 100
+    efa = 100 * np.cumprod(1 + rng.normal(0.05 / 252, 0.003, len(spy)))
+    ief = 100 * np.cumprod(1 + rng.normal(0.02 / 252, 0.0005, len(spy)))
+    closes = pd.DataFrame({"SPY": spy, "EFA": efa, "IEF": ief}, index=idx)
+
+    cfg = GemConfig(
+        ann_vol_target=0.10,
+        stress_gate_enabled=True,
+        stress_realised_vol_threshold=0.20,
+        max_leverage=1.0,
+    )
+    w = gem_target_weights(closes, cfg=cfg)
+    # In the stress phase, SPY weight should be materially below 1 (scaled down).
+    stress_slice = slice(n_calm + 40, None)
+    spy_long_mask = w.iloc[stress_slice]["SPY"] > 0
+    if spy_long_mask.any():
+        avg_spy = w.iloc[stress_slice].loc[spy_long_mask, "SPY"].mean()
+        assert avg_spy < 0.6, f"Expected scale-down in stress, got SPY weight {avg_spy:.3f}"
+
+
+def test_leverage_in_calm_increases_position():
+    """When max_leverage > 1, calm-regime weights should exceed 1.0 on the
+    risk asset (modelling MES futures leverage).
+    """
+    rng = np.random.default_rng(3)
+    n = 252 * 3
+    idx = pd.date_range("2020-01-02", periods=n, freq="B")
+    # Very calm market: realised vol ~5%, well below 20% stress threshold.
+    spy = 100 * np.cumprod(1 + rng.normal(0.10 / 252, 0.003, n))
+    efa = 100 * np.cumprod(1 + rng.normal(0.05 / 252, 0.003, n))
+    ief = 100 * np.cumprod(1 + rng.normal(0.02 / 252, 0.0005, n))
+    closes = pd.DataFrame({"SPY": spy, "EFA": efa, "IEF": ief}, index=idx)
+
+    cfg = GemConfig(
+        ann_vol_target=0.10,
+        stress_gate_enabled=True,
+        stress_realised_vol_threshold=0.20,
+        max_leverage=1.5,
+    )
+    w = gem_target_weights(closes, cfg=cfg)
+    # Post-warmup, in calm regime: SPY weight should be ~1.5 (the cap).
+    held = w.iloc[252:]
+    spy_long_mask = held["SPY"] > 0
+    if spy_long_mask.any():
+        avg_spy = held.loc[spy_long_mask, "SPY"].mean()
+        assert avg_spy > 1.4, f"Expected leveraged SPY weight ~1.5, got {avg_spy:.3f}"
 
 
 def test_vol_target_preserves_causality():
