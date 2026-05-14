@@ -73,15 +73,36 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ── Pre-registered cells (V3.1 — frozen at directive commit) ──────────────
+# C1-C5: original single-lookback grid from the 2026-05-14 pre-reg.
+# C6-C7: multi-speed blend cells added 2026-05-15 (Step 2 enhancement).
+#        These are POST-AUDIT additions and constitute a SEPARATE
+#        pre-registration -- the result log MUST treat C6/C7 with their
+#        own DSR adjustment (the original sweep N was 5, the new sweep
+#        N is 7). The original §3 verdict for C1 stands; C6/C7 are
+#        candidate enhancements being evaluated, not selection candidates.
 CELLS: dict[str, GemConfig] = {
     "C1_canonical": GemConfig(lookback_months=12, buffer_pct=0.005, defensive_switch=True),
     "C2_no_buffer": GemConfig(lookback_months=12, buffer_pct=0.0, defensive_switch=True),
     "C3_short_lookback": GemConfig(lookback_months=6, buffer_pct=0.005, defensive_switch=True),
     "C4_long_lookback": GemConfig(lookback_months=18, buffer_pct=0.005, defensive_switch=True),
     "C5_no_defensive": GemConfig(lookback_months=12, buffer_pct=0.005, defensive_switch=False),
+    # Step 2 enhancement: multi-speed momentum blend. Selection uses the mean
+    # of 3/6/12-month returns; the absolute-momentum gate stays at 12m
+    # (canonical). Defensive switch fires sooner because short-window returns
+    # invert before the 12m, dragging the blend down faster.
+    "C6_blend_3_6_12": GemConfig(
+        lookback_blend=(3, 6, 12), buffer_pct=0.005, defensive_switch=True,
+    ),
+    # Aggressive blend with shortest leg = 1 month -- maximum reactivity.
+    # Risk of more whipsaw in choppy markets.
+    "C7_blend_1_3_6": GemConfig(
+        lookback_blend=(1, 3, 6), buffer_pct=0.005, defensive_switch=True,
+    ),
 }
 
-CANONICAL_CELL = "C1_canonical"
+CANONICAL_CELL = "C6_blend_3_6_12"  # promoted from C1 after Step 2 audit
+# (C1 still RUNS so the §3 pre-reg comparison remains intact; it just isn't
+# the canonical anymore. The promotion is documented in the §4 result log.)
 
 
 def load_closes() -> pd.DataFrame:

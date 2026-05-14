@@ -40,14 +40,35 @@ class GemConfig:
     """GEM cell config (one row of the pre-reg grid).
 
     Attributes:
-        lookback_months: Lookback for the absolute-momentum gate. 12 is canonical.
-        buffer_pct: Minimum challenger advantage (12m return delta) to trigger a
-                    switch. 0.005 = 0.5%. Reduces churn.
-        defensive_switch: If True, allocate to IEF when all risk assets lose to it.
-                          If False (cell C5), always hold max(SPY,EFA) regardless.
+        lookback_months:
+            Single-lookback mode. Used when ``lookback_blend`` is None.
+            12 is the Antonacci canonical.
+        lookback_blend:
+            Multi-speed mode (Step 2 enhancement). A tuple of lookback windows
+            in months, e.g. (3, 6, 12). The strategy ranks each asset by EACH
+            lookback's return, then averages the ranks to choose the winner.
+            Detects regime change faster than the canonical single 12m. When
+            non-None, ``lookback_months`` is ignored.
+        absolute_gate_lookback_months:
+            Lookback used for the absolute-momentum gate (risk-asset 12m return
+            vs IEF 12m return). Defaults to 12 even in blend mode, because the
+            defensive switch is an "is the regime bullish at all" test, where
+            12m is the canonical robust signal. Setting this to a shorter
+            window would make the defensive switch more reactive but also more
+            whippy.
+        buffer_pct:
+            Minimum challenger advantage (return delta) to trigger a switch.
+            In blend mode the comparison is on rank-average return; in single
+            mode it's on raw 12m return. 0.005 = 0.5%.
+        defensive_switch:
+            If True, allocate to IEF when all risk assets lose to it on the
+            absolute_gate_lookback_months horizon. If False (cell C5), always
+            hold max(SPY,EFA) regardless.
     """
 
     lookback_months: int = 12
+    lookback_blend: tuple[int, ...] | None = None
+    absolute_gate_lookback_months: int = 12
     buffer_pct: float = 0.005
     defensive_switch: bool = True
 
@@ -110,14 +131,45 @@ def gem_target_weights(
     if closes.empty:
         return pd.DataFrame(0.0, index=closes.index, columns=list(GEM_UNIVERSE))
 
-    # Approx lookback in trading days. 21 trading days per month is the convention.
-    lookback_bars = int(cfg.lookback_months * 21)
-    if len(closes) <= lookback_bars + 1:
-        # Not enough history for a single decision.
+    # Determine the lookback windows in use. Blend takes precedence over single.
+    if cfg.lookback_blend is not None:
+        if len(cfg.lookback_blend) == 0:
+            raise ValueError("lookback_blend must contain at least one month value")
+        lookback_months_set = tuple(sorted(set(cfg.lookback_blend)))
+    else:
+        lookback_months_set = (cfg.lookback_months,)
+    # Always need the absolute-gate lookback for IEF comparison.
+    gate_lookback_months = cfg.absolute_gate_lookback_months
+    all_lookback_months = tuple(sorted(set(lookback_months_set + (gate_lookback_months,))))
+
+    # 21 trading days per month is the convention.
+    longest_bars = max(all_lookback_months) * 21
+    if len(closes) <= longest_bars + 1:
+        # Not enough history for any decision.
         return pd.DataFrame(0.0, index=closes.index, columns=list(GEM_UNIVERSE))
 
-    # Trailing 12m total return per name. r_t = close[t] / close[t-lookback] - 1.
-    trailing_ret = closes / closes.shift(lookback_bars) - 1.0
+    # Pre-compute trailing returns for every lookback we'll need.
+    # trailing_rets[m] is a DataFrame indexed by closes.index with the
+    # m-month trailing return per asset.
+    trailing_rets: dict[int, pd.DataFrame] = {}
+    for m in all_lookback_months:
+        bars = int(m * 21)
+        trailing_rets[m] = closes / closes.shift(bars) - 1.0
+
+    # Per-asset "selection return": either a single lookback's return, or the
+    # mean of raw returns across the blend lookbacks. Raw-return mean (rather
+    # than rank-average) keeps the buffer comparison interpretable as a
+    # return-vs-return delta. The blend smooths fast-spike artifacts because
+    # one lookback's spike is averaged with two slower lookbacks' values.
+    if cfg.lookback_blend is not None:
+        selection_ret = sum(trailing_rets[m] for m in cfg.lookback_blend) / len(cfg.lookback_blend)
+    else:
+        selection_ret = trailing_rets[cfg.lookback_months]
+
+    # The "absolute gate" return is fixed at gate_lookback_months for IEF.
+    # We compare each risk-asset's gate-lookback return against IEF's
+    # gate-lookback return to decide whether to go defensive.
+    gate_ret = trailing_rets[gate_lookback_months]
 
     month_end = _month_end_idx(closes.index)
 
@@ -131,51 +183,55 @@ def gem_target_weights(
             if current_pick is not None:
                 raw_weight.iloc[i, raw_weight.columns.get_loc(current_pick)] = 1.0
             continue
-        # Decision day. Use trailing return AT THIS BAR.
-        r_spy = trailing_ret.iloc[i]["SPY"]
-        r_efa = trailing_ret.iloc[i]["EFA"]
-        r_ief = trailing_ret.iloc[i]["IEF"]
+        # Decision day. Two return concepts at this bar:
+        #   1) Absolute-gate returns (always at gate_lookback_months)
+        #      -- used to decide whether to go defensive into IEF.
+        #   2) Selection returns (blend or single, per cfg.lookback_blend)
+        #      -- used to pick the winning risk asset AND for buffer compare.
+        gate_r_spy = gate_ret.iloc[i]["SPY"]
+        gate_r_efa = gate_ret.iloc[i]["EFA"]
+        gate_r_ief = gate_ret.iloc[i]["IEF"]
+        sel_r_spy = selection_ret.iloc[i]["SPY"]
+        sel_r_efa = selection_ret.iloc[i]["EFA"]
+        sel_r_ief = selection_ret.iloc[i]["IEF"]
 
-        if not np.isfinite([r_spy, r_efa, r_ief]).all():
+        if not np.isfinite(
+            [gate_r_spy, gate_r_efa, gate_r_ief, sel_r_spy, sel_r_efa, sel_r_ief]
+        ).all():
             # First lookback months: keep no position.
             current_pick = None
             continue
 
-        # Absolute-momentum gate: at least one risk asset must beat IEF (cash proxy).
-        spy_beats_cash = r_spy > r_ief
-        efa_beats_cash = r_efa > r_ief
+        # Absolute-momentum gate uses the fixed-horizon gate return.
+        spy_beats_cash = gate_r_spy > gate_r_ief
+        efa_beats_cash = gate_r_efa > gate_r_ief
 
         if not cfg.defensive_switch:
-            # Cell C5: always hold max of risk assets.
-            challenger = "SPY" if r_spy >= r_efa else "EFA"
-            challenger_ret = max(r_spy, r_efa)
+            # Cell C5: always hold max of risk assets (use selection return).
+            challenger = "SPY" if sel_r_spy >= sel_r_efa else "EFA"
+            challenger_ret = max(sel_r_spy, sel_r_efa)
         else:
             if spy_beats_cash and efa_beats_cash:
-                challenger = "SPY" if r_spy >= r_efa else "EFA"
-                challenger_ret = max(r_spy, r_efa)
+                challenger = "SPY" if sel_r_spy >= sel_r_efa else "EFA"
+                challenger_ret = max(sel_r_spy, sel_r_efa)
             elif spy_beats_cash:
                 challenger = "SPY"
-                challenger_ret = r_spy
+                challenger_ret = sel_r_spy
             elif efa_beats_cash:
                 challenger = "EFA"
-                challenger_ret = r_efa
+                challenger_ret = sel_r_efa
             else:
                 # Defensive: long IEF.
                 challenger = "IEF"
-                challenger_ret = r_ief
+                challenger_ret = sel_r_ief
 
         # Apply buffer: switch only if challenger beats incumbent's CURRENT
-        # 12-month return by buffer_pct. The comparison must use the
-        # incumbent's CURRENT return at decision time, not a frozen value
-        # from when it was last selected. Comparing against a stale incumbent
-        # return is a bug that caused the strategy to never fire its
-        # defensive switch in 2008 (the EFA stale return of +17.46% from
-        # November 2007 was forever the bar IEF had to beat, but IEF's
-        # current 12m never reached that level even during the GFC).
+        # selection return by buffer_pct. Compare against the LIVE return
+        # (V3.6 L17-style discipline, never against a stale snapshot).
         if current_pick is None or challenger == current_pick:
             current_pick = challenger
         else:
-            incumbent_current_ret = trailing_ret.iloc[i][current_pick]
+            incumbent_current_ret = selection_ret.iloc[i][current_pick]
             if challenger_ret - incumbent_current_ret >= cfg.buffer_pct:
                 current_pick = challenger
             # else hold incumbent

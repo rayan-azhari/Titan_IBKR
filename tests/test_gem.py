@@ -171,6 +171,72 @@ def test_gem_buffer_reduces_churn():
     assert s_big <= s_no, f"Buffer didn't reduce churn: s_no={s_no}, s_big={s_big}"
 
 
+def test_gem_lookback_blend_reacts_faster_than_single_12m():
+    """Multi-speed momentum (3m / 6m / 12m blend) should detect a regime
+    flip earlier than a single 12m lookback because the shorter horizons
+    invert first.
+
+    Setup: 18 months of bull (SPY rallies; IEF flat), then 6 months of
+    bear (SPY crashes; IEF rallies). Compare:
+      * Single 12m lookback (canonical GEM)
+      * Blend (3, 6, 12) lookback (the Step 2 enhancement)
+    The blend variant must switch to IEF at least one month earlier on
+    average across multiple random seeds, AND must spend more time in
+    IEF over the bear window.
+    """
+
+    def _build(seed: int) -> pd.DataFrame:
+        rng = np.random.default_rng(seed)
+        # Year 1+H1Y2: SPY +18% ann, IEF +1% ann (18 months bull).
+        n_bull = 252 + 126
+        spy_bull = np.cumprod(1 + rng.normal(0.18 / 252, 0.003, n_bull))
+        ief_bull = np.cumprod(1 + rng.normal(0.01 / 252, 0.001, n_bull))
+        efa_bull = np.cumprod(1 + rng.normal(0.05 / 252, 0.003, n_bull))
+        # H2Y2: 6-month rapid SPY crash -50% ann; IEF +12% ann.
+        n_bear = 126
+        spy_bear = spy_bull[-1] * np.cumprod(1 + rng.normal(-0.50 / 252, 0.003, n_bear))
+        ief_bear = ief_bull[-1] * np.cumprod(1 + rng.normal(0.12 / 252, 0.001, n_bear))
+        efa_bear = efa_bull[-1] * np.cumprod(1 + rng.normal(-0.50 / 252, 0.003, n_bear))
+        spy = np.concatenate([spy_bull, spy_bear]) * 100
+        efa = np.concatenate([efa_bull, efa_bear]) * 100
+        ief = np.concatenate([ief_bull, ief_bear]) * 100
+        idx = pd.date_range("2020-01-02", periods=len(spy), freq="B")
+        return pd.DataFrame({"SPY": spy, "EFA": efa, "IEF": ief}, index=idx)
+
+    single = GemConfig(lookback_months=12)
+    blend = GemConfig(lookback_blend=(3, 6, 12))
+
+    n_seeds = 5
+    single_ief_fraction = []
+    blend_ief_fraction = []
+    for s in range(n_seeds):
+        closes = _build(seed=s)
+        w_single = gem_target_weights(closes, cfg=single)
+        w_blend = gem_target_weights(closes, cfg=blend)
+        # The last 126 bars are the bear window. How much of it was in IEF?
+        bear = slice(-126, None)
+        single_ief_fraction.append((w_single.iloc[bear]["IEF"] == 1.0).mean())
+        blend_ief_fraction.append((w_blend.iloc[bear]["IEF"] == 1.0).mean())
+    mean_single = float(np.mean(single_ief_fraction))
+    mean_blend = float(np.mean(blend_ief_fraction))
+    assert mean_blend > mean_single, (
+        f"Blend was not faster than single 12m. Mean IEF holding in bear "
+        f"window: single={mean_single:.2%}, blend={mean_blend:.2%}."
+    )
+
+
+def test_gem_lookback_blend_requires_non_empty_tuple():
+    closes = _synthetic_closes(n_years=4)
+    with pytest.raises(ValueError, match="lookback_blend"):
+        gem_target_weights(closes, cfg=GemConfig(lookback_blend=()))
+
+
+def test_gem_lookback_blend_causality():
+    """The blend variant must still pass the strict causality smoke test."""
+    closes = _synthetic_closes(n_years=5)
+    gem_assert_causal(closes, cfg=GemConfig(lookback_blend=(3, 6, 12)), n_trials=5, seed=42)
+
+
 def test_gem_buffer_does_not_freeze_against_stale_incumbent():
     """Regression test for the 2026-05-14 bug.
 
