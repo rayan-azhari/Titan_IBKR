@@ -1,0 +1,45 @@
+# gem_voltarget_lev2.toml -- GEM Dual Momentum (production cell: C12)
+#
+# Selected from the 15-cell sweep in
+# directives/Pre-Reg GEM Dual Momentum 2026-05-14.md §4.2.
+#
+# Mechanism: monthly cross-asset momentum (SPY / EFA / IEF) with
+# multi-speed blend (3/6/12), continuous vol-target overlay at 10%
+# annualised, defensive switch into IEF when both risk assets
+# underperform IEF over 12m. Max leverage 2.0 (intended via MES futures).
+#
+# Audit headline (with 1.5 bps/turnover costs):
+#   Sharpe    : +0.84
+#   CI95 lo   : +0.45
+#   Strategy MaxDD : -22%
+#   SPY MaxDD : -41%
+#   Rel-MC ratio   : 0.56 (PASS the L17 0.80 gate)
+#   p(strategy_MaxDD <= bench_MaxDD) : 94.5%
+#   Sanctuary Sharpe : +0.91
+#   Verdict   : DEPLOY (passes all 4 axes)
+
+# ── Strategy parameters (mirror GemConfig) ───────────────────────────
+lookback_blend_str = "3,6,12"          # multi-speed momentum blend
+absolute_gate_lookback_months = 12     # canonical 12m for defensive switch
+buffer_pct = 0.005                     # 0.5% buffer to reduce churn
+defensive_switch = true
+
+# Vol-target overlay (Step 3)
+ann_vol_target = 0.10                  # target 10% annualised vol
+vol_lookback_days = 20                 # rolling vol window
+max_leverage = 2.0                     # C12: 2x cap (MES futures provide)
+
+# Stress gate (Step 4) -- OFF in C12; continuous vol-target preferred
+stress_gate_enabled = false
+
+# Drawdown circuit breaker (Step 5) -- OFF in C12; redundant with vol-target
+dd_breaker_enabled = false
+
+# ── Execution + ops ─────────────────────────────────────────────────
+execution_mode = "etf"                  # "etf" or "mes". Start ETF for paper.
+rebalance_threshold_weight = 0.05      # buffer order submission
+
+warmup_bars = 380                       # 18 months for the longest lookback
+initial_equity = 30_000.0
+base_ccy = "USD"
+cost_bps_per_turnover = 1.5            # informational; used in pre-deploy audits
