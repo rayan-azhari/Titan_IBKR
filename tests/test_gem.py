@@ -171,6 +171,63 @@ def test_gem_buffer_reduces_churn():
     assert s_big <= s_no, f"Buffer didn't reduce churn: s_no={s_no}, s_big={s_big}"
 
 
+def test_gem_buffer_does_not_freeze_against_stale_incumbent():
+    """Regression test for the 2026-05-14 bug.
+
+    The bug: the buffer compared challenger's CURRENT 12m return against
+    the incumbent's frozen 12m return from the last time it was the winner.
+    Once the incumbent stopped being challenger (e.g., once SPY went into
+    a bear market and IEF became the regime winner), the incumbent's
+    stale return was never refreshed, and IEF's actual 12m never reached
+    the (irrelevant) bull-market high of SPY -- so the strategy never
+    switched into the defensive IEF leg.
+
+    This test constructs: a first year where SPY rallies (becomes incumbent
+    at a high stale level), then a second + third year where SPY crashes
+    while IEF rallies. With the bug, GEM stays in SPY forever; with the
+    fix, GEM switches to IEF when SPY's CURRENT 12m drops below IEF's.
+    """
+    rng = np.random.default_rng(0)
+
+    # Year 1 (2020): SPY rips +30%, IEF flat. SPY 12m at end of Y1 ~ +30%.
+    n1 = 252
+    spy_y1 = np.cumprod(1 + rng.normal(0.30 / 252, 0.003, n1))
+    ief_y1 = np.cumprod(1 + rng.normal(0.00 / 252, 0.001, n1))
+    efa_y1 = np.cumprod(1 + rng.normal(0.05 / 252, 0.003, n1))
+
+    # Year 2 (2021): SPY crashes -30%; IEF rallies +10%. By end of Y2, SPY
+    # 12m return = -30%, IEF 12m = +10%. The defensive switch MUST fire.
+    n2 = 252
+    spy_y2 = spy_y1[-1] * np.cumprod(1 + rng.normal(-0.30 / 252, 0.003, n2))
+    ief_y2 = ief_y1[-1] * np.cumprod(1 + rng.normal(0.10 / 252, 0.001, n2))
+    efa_y2 = efa_y1[-1] * np.cumprod(1 + rng.normal(-0.30 / 252, 0.003, n2))
+
+    # Year 3 (2022): same conditions persist. With the bug, GEM stays SPY
+    # because the stale incumbent return is too high. With the fix, GEM
+    # is in IEF for the whole year.
+    n3 = 252
+    spy_y3 = spy_y2[-1] * np.cumprod(1 + rng.normal(-0.30 / 252, 0.003, n3))
+    ief_y3 = ief_y2[-1] * np.cumprod(1 + rng.normal(0.10 / 252, 0.001, n3))
+    efa_y3 = efa_y2[-1] * np.cumprod(1 + rng.normal(-0.30 / 252, 0.003, n3))
+
+    spy = np.concatenate([spy_y1, spy_y2, spy_y3]) * 100
+    efa = np.concatenate([efa_y1, efa_y2, efa_y3]) * 100
+    ief = np.concatenate([ief_y1, ief_y2, ief_y3]) * 100
+    idx = pd.date_range("2020-01-02", periods=len(spy), freq="B")
+    closes = pd.DataFrame({"SPY": spy, "EFA": efa, "IEF": ief}, index=idx)
+
+    w = gem_target_weights(closes)
+
+    # In year 3 (last 252 bars) the strategy must be in IEF on >50% of
+    # bars. Pre-fix this was 0% (frozen in SPY).
+    held_y3 = w.iloc[-252:]
+    pct_ief = (held_y3["IEF"] == 1.0).mean()
+    assert pct_ief > 0.5, (
+        f"Regression: buffer froze the defensive switch. "
+        f"Year-3 IEF holding pct = {pct_ief:.2%} (expected > 50%)."
+    )
+
+
 # ── (5) Returns sanity ────────────────────────────────────────────────────
 
 

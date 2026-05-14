@@ -124,7 +124,6 @@ def gem_target_weights(
     # Raw (unshifted) decision per bar -- only updated on month-ends; held in between.
     raw_weight = pd.DataFrame(0.0, index=closes.index, columns=list(GEM_UNIVERSE))
     current_pick: str | None = None
-    current_ret: float = -np.inf
 
     for i in range(len(closes)):
         if not month_end[i]:
@@ -140,7 +139,6 @@ def gem_target_weights(
         if not np.isfinite([r_spy, r_efa, r_ief]).all():
             # First lookback months: keep no position.
             current_pick = None
-            current_ret = -np.inf
             continue
 
         # Absolute-momentum gate: at least one risk asset must beat IEF (cash proxy).
@@ -166,15 +164,21 @@ def gem_target_weights(
                 challenger = "IEF"
                 challenger_ret = r_ief
 
-        # Apply buffer: switch only if challenger beats incumbent by buffer_pct.
+        # Apply buffer: switch only if challenger beats incumbent's CURRENT
+        # 12-month return by buffer_pct. The comparison must use the
+        # incumbent's CURRENT return at decision time, not a frozen value
+        # from when it was last selected. Comparing against a stale incumbent
+        # return is a bug that caused the strategy to never fire its
+        # defensive switch in 2008 (the EFA stale return of +17.46% from
+        # November 2007 was forever the bar IEF had to beat, but IEF's
+        # current 12m never reached that level even during the GFC).
         if current_pick is None or challenger == current_pick:
             current_pick = challenger
-            current_ret = challenger_ret
         else:
-            if challenger_ret - current_ret >= cfg.buffer_pct:
+            incumbent_current_ret = trailing_ret.iloc[i][current_pick]
+            if challenger_ret - incumbent_current_ret >= cfg.buffer_pct:
                 current_pick = challenger
-                current_ret = challenger_ret
-            # else hold incumbent (don't update current_ret -- next month re-evaluates)
+            # else hold incumbent
 
         raw_weight.iloc[i, raw_weight.columns.get_loc(current_pick)] = 1.0
 
