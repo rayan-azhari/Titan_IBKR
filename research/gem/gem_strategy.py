@@ -114,6 +114,27 @@ class GemConfig:
     stress_credit_z_threshold: float | None = None  # e.g. 2.0; None disables
     stress_credit_z_window: int = 60  # rolling window for HYG/IEF z-score
 
+    # ── Step 5: drawdown circuit breaker (V3.5 lesson) ─────────────────────
+    # Independent safety net that triggers on the strategy's OWN equity
+    # drawdown (not on input vol or external regime). Catches:
+    #   * Slow grinding declines where vol doesn't lead
+    #   * Overnight gaps that blow through vol-target before it adjusts
+    #
+    # State machine (causal, computed on shifted equity series):
+    #   * dd <= dd_breaker_haircut_threshold   -> position * dd_breaker_haircut_scale
+    #   * dd <= dd_breaker_flat_threshold      -> position = 0 (all -> IEF) for
+    #                                             dd_breaker_flat_bars
+    #   * after flat period: re-enter at the haircut scale until DD recovers
+    #     above dd_breaker_recovery_threshold (then full position).
+    #
+    # Set ``dd_breaker_enabled = False`` to disable (default).
+    dd_breaker_enabled: bool = False
+    dd_breaker_haircut_threshold: float = -0.10  # -10% DD -> reduce position
+    dd_breaker_haircut_scale: float = 0.50  # to 50% of current position
+    dd_breaker_flat_threshold: float = -0.15  # -15% DD -> flatten to IEF
+    dd_breaker_flat_bars: int = 21  # ~1 month "cooling off"
+    dd_breaker_recovery_threshold: float = -0.05  # back to full when DD recovers above -5%
+
 
 # The three universe names. Stable canonical order across the module.
 GEM_UNIVERSE: tuple[str, ...] = ("SPY", "EFA", "IEF")
@@ -374,6 +395,10 @@ def gem_target_weights(
         # unconditionally (the simple "always-levered" baseline).
         weights = _apply_static_leverage(weights, cfg)
 
+    # ── Drawdown circuit breaker (Step 5) -- independent safety net ──────
+    if cfg.dd_breaker_enabled:
+        weights = _apply_dd_breaker(weights, closes, cfg)
+
     return weights
 
 
@@ -477,6 +502,81 @@ def _apply_static_leverage(
     return scaled
 
 
+def _apply_dd_breaker(
+    weights: pd.DataFrame,
+    closes: pd.DataFrame,
+    cfg: GemConfig,
+) -> pd.DataFrame:
+    """Drawdown circuit breaker (Step 5 / V3.5 lesson).
+
+    Computes the strategy's running equity from the PRE-BREAKER weights
+    + bar returns, then derives an EXTRA scale factor in {0, haircut, 1}
+    applied on top. Vectorised cumulative scan -- no Python per-bar loop.
+
+    State machine (causal: dd[t] uses returns through t-1, so the scale
+    at bar t is applied to weights[t] which already earn ret[t]):
+
+      * cooling_bars > 0:                scale = 0.0  (in IEF; flat)
+      * dd <= flat_threshold:            scale = 0.0  + start cooling
+      * dd <= haircut_threshold:         scale = haircut_scale
+      * dd > recovery_threshold:         scale = 1.0  (full position)
+      * otherwise (haircut zone holds):  scale = haircut_scale
+
+    The "leftover" capital when scale < 1 goes to IEF (consistent with
+    how _apply_vol_target routes leftover).
+    """
+    risk_assets = ["SPY", "EFA"]
+    closes_aligned = closes[list(GEM_UNIVERSE)].astype(float).reindex(weights.index)
+    bar_returns = closes_aligned.pct_change().fillna(0.0)
+    # Pre-breaker strategy returns -- the equity curve we'd have WITHOUT the breaker.
+    pre_strat_ret = (weights * bar_returns).sum(axis=1)
+    equity = (1.0 + pre_strat_ret).cumprod()
+    hwm = equity.cummax()
+    dd = equity / hwm - 1.0
+    # Causal: decision at t uses dd through t-1.
+    dd_shifted = dd.shift(1).fillna(0.0).to_numpy()
+
+    n = len(weights)
+    scale = np.ones(n, dtype=float)
+    cooling_remaining = 0
+    in_haircut = False  # latched once dd breaches haircut_threshold; cleared at recovery.
+    for i in range(n):
+        d = float(dd_shifted[i])
+        if cooling_remaining > 0:
+            scale[i] = 0.0
+            cooling_remaining -= 1
+            # After cooling completes, enter haircut state until recovery.
+            if cooling_remaining == 0:
+                in_haircut = True
+            continue
+        if d <= cfg.dd_breaker_flat_threshold:
+            scale[i] = 0.0
+            cooling_remaining = max(0, cfg.dd_breaker_flat_bars - 1)
+            in_haircut = True
+            continue
+        if d <= cfg.dd_breaker_haircut_threshold:
+            scale[i] = cfg.dd_breaker_haircut_scale
+            in_haircut = True
+            continue
+        if d > cfg.dd_breaker_recovery_threshold and in_haircut:
+            in_haircut = False
+        if in_haircut:
+            scale[i] = cfg.dd_breaker_haircut_scale
+        else:
+            scale[i] = 1.0
+
+    scale_s = pd.Series(scale, index=weights.index)
+    scaled = weights.copy()
+    risk_mask = weights[risk_assets].sum(axis=1) > 0
+    if risk_mask.any():
+        for col in risk_assets:
+            scaled.loc[risk_mask, col] = weights.loc[risk_mask, col] * scale_s.loc[risk_mask]
+        # Route undeployed capital to IEF (safe asset).
+        leftover = (1.0 - scale_s).clip(lower=0.0)
+        scaled.loc[risk_mask, "IEF"] = scaled.loc[risk_mask, "IEF"] + leftover.loc[risk_mask]
+    return scaled
+
+
 def gem_returns(
     closes: pd.DataFrame,
     cfg: GemConfig | None = None,
@@ -484,15 +584,29 @@ def gem_returns(
     vix: pd.Series | None = None,
     hyg: pd.Series | None = None,
     ief_for_credit: pd.Series | None = None,
+    cost_bps_per_turnover: float = 0.0,
 ) -> pd.Series:
     """Compute the per-day GEM strategy returns (geometric, simple-return).
 
-    Returns a per-bar return Series. Implementation contract:
+    Implementation contract::
 
         ret_t = sum_n weight[t, n] * (close[t, n] / close[t-1, n] - 1)
+              - cost_bps_per_turnover * turnover[t] / 1e4
 
-    where weight is the CAUSAL shifted weight from ``gem_target_weights``.
-    Costs are NOT applied here -- caller adds them per the chosen cost model.
+    where weight is the CAUSAL shifted weight from ``gem_target_weights``
+    and turnover[t] = sum(|weight[t] - weight[t-1]|).
+
+    Transaction costs (``cost_bps_per_turnover``):
+      * Default 0 = costless (legacy behaviour; backward-compatible).
+      * ETF realistic default: 1.5 bps per unit of turnover. Derived from
+        ``COST_US_ETF_LIQUID`` (spread 1.0 + slip 0.5 = 1.5 bps one-way).
+        Commission ~$0.35/side on a $100 share is sub-bp; folded in.
+      * MES futures: ~1.0 bps per unit of turnover.
+
+    Turnover semantics: ``|weight_new - weight_old|`` per asset, summed.
+    A clean 100% SPY -> 100% IEF rotation has turnover = 2.0 (1.0 sold
+    SPY + 1.0 bought IEF). At 1.5 bps that's a 3 bp round-trip cost,
+    matching the realistic US-ETF round-trip.
 
     Optional ``vix`` / ``hyg`` / ``ief_for_credit`` series feed the Step 4
     stress signal (when ``cfg.stress_gate_enabled``). Absent series silently
@@ -504,6 +618,13 @@ def gem_returns(
     # Sanity: at any row, weights sum to either 0 (warmup) or some value
     # in [0, max_leverage]. Not enforced here.
     strat_ret = (weights * bar_returns).sum(axis=1)
+    if cost_bps_per_turnover > 0:
+        # Turnover[t] = sum over assets of |w[t] - w[t-1]|. This counts
+        # both legs of a rotation (sell + buy) so total is 2 for a clean
+        # swap; cost_bps_per_turnover is the ONE-WAY rate.
+        turnover = (weights - weights.shift(1).fillna(0.0)).abs().sum(axis=1)
+        cost = turnover * cost_bps_per_turnover / 1e4
+        strat_ret = strat_ret - cost
     return strat_ret
 
 

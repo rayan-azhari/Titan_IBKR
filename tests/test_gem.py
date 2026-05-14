@@ -427,6 +427,98 @@ def test_leverage_in_calm_increases_position():
         assert avg_spy > 1.4, f"Expected leveraged SPY weight ~1.5, got {avg_spy:.3f}"
 
 
+def test_cost_overlay_reduces_returns():
+    """Cost overlay (cost_bps_per_turnover > 0) must reduce per-bar
+    returns by the right amount on turnover bars and leave hold bars
+    unchanged.
+    """
+    closes = _synthetic_closes(n_years=4, seed=2)
+    ret_gross = gem_returns(closes, cost_bps_per_turnover=0.0)
+    ret_net = gem_returns(closes, cost_bps_per_turnover=1.5)
+    # Net is always <= gross (costs only ever subtract).
+    diff = ret_gross - ret_net
+    assert (diff >= -1e-12).all(), "Cost overlay should never increase returns"
+    # At least SOME bars must have non-zero cost (months see turnover).
+    assert (diff > 1e-9).sum() >= 4
+    # Cost is bounded: total turnover per bar <= 2 (swap), so per-bar cost
+    # <= 2 * 1.5bps = 3 bps = 3e-4.
+    assert diff.max() < 3.1e-4
+
+
+def test_dd_breaker_disabled_by_default_is_no_op():
+    """When dd_breaker_enabled is False (default), weights should be
+    identical with or without the breaker config fields.
+    """
+    closes = _synthetic_closes(n_years=4, seed=1)
+    w_off = gem_target_weights(closes, cfg=GemConfig(dd_breaker_enabled=False))
+    w_default = gem_target_weights(closes, cfg=GemConfig())  # no dd_breaker_enabled
+    pd.testing.assert_frame_equal(w_off, w_default)
+
+
+def test_dd_breaker_haircut_fires_on_modest_drawdown():
+    """Construct a series with a ~25% drawdown after a rally. With
+    haircut threshold = -10% the breaker should engage well before the
+    bottom and scale SPY weight to ~0.5 (or 0 if -15% breached).
+    """
+    rng = np.random.default_rng(3)
+    n_up = 252
+    n_down = 200
+    # Rally first to build a HWM.
+    spy_up = np.cumprod(1 + rng.normal(0.30 / 252, 0.003, n_up))
+    # Then a sustained decline to ~25-30% peak-to-trough.
+    spy_down = spy_up[-1] * np.cumprod(1 + rng.normal(-0.40 / 252, 0.003, n_down))
+    spy = np.concatenate([spy_up, spy_down]) * 100
+    efa = 100 * np.cumprod(1 + rng.normal(0.02 / 252, 0.003, len(spy)))
+    ief = 100 * np.cumprod(1 + rng.normal(0.02 / 252, 0.0005, len(spy)))
+    idx = pd.date_range("2020-01-02", periods=len(spy), freq="B")
+    closes = pd.DataFrame({"SPY": spy, "EFA": efa, "IEF": ief}, index=idx)
+
+    cfg = GemConfig(
+        dd_breaker_enabled=True,
+        dd_breaker_haircut_threshold=-0.10,
+        dd_breaker_flat_threshold=-0.15,
+        dd_breaker_recovery_threshold=-0.05,
+    )
+    w_off = gem_target_weights(closes, cfg=GemConfig(dd_breaker_enabled=False))
+    w_on = gem_target_weights(closes, cfg=cfg)
+
+    # In the late-decline window (last 100 bars) when DD is well below
+    # -10%, the breaker version must hold less SPY than the off version.
+    late = slice(-100, None)
+    spy_off_avg = w_off.iloc[late]["SPY"].mean()
+    spy_on_avg = w_on.iloc[late]["SPY"].mean()
+    assert spy_on_avg < spy_off_avg, (
+        f"DD breaker did not reduce SPY exposure in late decline. "
+        f"off={spy_off_avg:.3f} on={spy_on_avg:.3f}"
+    )
+    # IEF should have picked up the missing capital.
+    assert w_on.iloc[late]["IEF"].mean() > w_off.iloc[late]["IEF"].mean()
+
+
+def test_dd_breaker_preserves_causality():
+    """Future shocks must not change past DD-breaker weights."""
+    closes = _synthetic_closes(n_years=5)
+    gem_assert_causal(closes, cfg=GemConfig(dd_breaker_enabled=True), n_trials=5, seed=42)
+
+
+def test_cost_overlay_zero_when_no_trading():
+    """When the strategy holds the same position (no turnover), cost = 0."""
+    # Construct a series where SPY dominates throughout (no switches).
+    rng = np.random.default_rng(99)
+    n = 252 * 3
+    idx = pd.date_range("2020-01-02", periods=n, freq="B")
+    spy = 100 * np.cumprod(1 + rng.normal(0.20 / 252, 0.002, n))
+    efa = 100 * np.cumprod(1 + rng.normal(0.02 / 252, 0.002, n))
+    ief = 100 * np.cumprod(1 + rng.normal(0.02 / 252, 0.0005, n))
+    closes = pd.DataFrame({"SPY": spy, "EFA": efa, "IEF": ief}, index=idx)
+    ret_gross = gem_returns(closes, cost_bps_per_turnover=0.0)
+    ret_net = gem_returns(closes, cost_bps_per_turnover=1.5)
+    # Within hold periods (which dominate this series), cost should be 0.
+    diff = ret_gross - ret_net
+    # Most bars should be cost-free; a handful at the first switch may have cost.
+    assert (diff < 1e-9).mean() > 0.95
+
+
 def test_vol_target_preserves_causality():
     """Vol-target adds rolling-vol on the strategy returns. Verify the
     shift discipline still holds: future shocks must not alter past

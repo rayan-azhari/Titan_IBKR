@@ -71,6 +71,12 @@ DATA_DIR = PROJECT_ROOT / "data"
 REPORTS_DIR = PROJECT_ROOT / ".tmp" / "reports" / "gem"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Transaction-cost rate applied to every gem_returns call in the audit.
+# 1.5 bps per unit of turnover ≈ COST_US_ETF_LIQUID (spread 1.0 + slip 0.5).
+# Step 6 introduced this. Setting to 0.0 reverts to the legacy costless
+# audit for A/B comparison.
+COST_BPS_PER_TURNOVER = 1.5
+
 
 # ── Pre-registered cells (V3.1 — frozen at directive commit) ──────────────
 # C1-C5: original single-lookback grid from the 2026-05-14 pre-reg.
@@ -153,6 +159,66 @@ CELLS: dict[str, GemConfig] = {
         stress_vix_threshold=25.0,
         max_leverage=1.5,
     ),
+    # "Lever the high-Sharpe strategy" hypothesis (user, 2026-05-15):
+    # C8 has Sharpe ~0.85 at ~7% realised vol. Levering 2x targets ~14%
+    # vol (still below SPY's 20%) and should ~double CAGR while keeping
+    # Sharpe constant. MES futures provide this leverage at low cost.
+    #
+    # C12 = C8 with max_leverage raised from 1.0 to 2.0; no stress gate
+    # (continuous vol-target still in effect). The vol-target overlay
+    # naturally caps exposure in high-vol regimes, so adding leverage
+    # mostly activates during CALM windows where target/realised > 1.
+    "C12_voltarget_lev2": GemConfig(
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        max_leverage=2.0,
+    ),
+    # C13 = aggressive lever-the-strategy: target vol RAISED to 0.20
+    # (~SPY's natural vol) AND max_leverage=2.0. Aims for benchmark-
+    # matching total return with the strategy's risk-adjusted edge.
+    "C13_target20_lev2": GemConfig(
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
+        ann_vol_target=0.20,
+        vol_lookback_days=20,
+        max_leverage=2.0,
+    ),
+    # Step 5: drawdown circuit breaker on top of the C8 baseline. Independent
+    # safety net -- triggers on the strategy's OWN equity drawdown, not on
+    # input vol. Catches slow grinding declines / overnight gap-downs that
+    # vol-target alone is slow to react to.
+    "C14_voltarget_dd_breaker": GemConfig(
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        dd_breaker_enabled=True,
+        dd_breaker_haircut_threshold=-0.10,
+        dd_breaker_flat_threshold=-0.15,
+        dd_breaker_flat_bars=21,
+        dd_breaker_recovery_threshold=-0.05,
+    ),
+    # C15: production candidate -- C12 (vol-target + 2x lev) + DD breaker.
+    # The breaker provides a hard floor on drawdown that the vol-target
+    # can't deliver on its own.
+    "C15_voltarget_lev2_dd_breaker": GemConfig(
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        max_leverage=2.0,
+        dd_breaker_enabled=True,
+        dd_breaker_haircut_threshold=-0.10,
+        dd_breaker_flat_threshold=-0.15,
+        dd_breaker_flat_bars=21,
+        dd_breaker_recovery_threshold=-0.05,
+    ),
 }
 
 CANONICAL_CELL = "C8_blend_voltarget10"  # promoted from C6 after Step 3 audit
@@ -165,7 +231,13 @@ CANONICAL_CELL = "C8_blend_voltarget10"  # promoted from C6 after Step 3 audit
 
 
 def _load_close(sym: str, required: bool = True) -> pd.Series | None:
-    """Load a single close-price series, return None if optional + missing."""
+    """Load a single close-price series, return None if optional + missing.
+
+    Indexes are normalized to date-only (00:00 time component) so that
+    series from different vendors with slightly different bar-stamping
+    conventions can be aligned cleanly (e.g. SPY parquet had 04:00 EDT
+    stamps while VIX had 05:00 EDT -- breaking reindex without normalize).
+    """
     path = DATA_DIR / f"{sym}_D.parquet"
     if not path.exists():
         if required:
@@ -179,7 +251,7 @@ def _load_close(sym: str, required: bool = True) -> pd.Series | None:
     else:
         raise ValueError(f"{path}: no 'close' or 'Close' column.")
     s.name = sym
-    s.index = pd.to_datetime(s.index).tz_localize(None)
+    s.index = pd.to_datetime(s.index).tz_localize(None).normalize()
     return s
 
 
@@ -258,7 +330,7 @@ def _strategy_fn_for_cell(cell_cfg: GemConfig):
             return pd.Series(0.0, index=df.index)
         # vix/hyg/ief_for_credit are None in MC (extras only cover EFA, IEF).
         # The strategy's stress gate falls back to realised-vol-only.
-        return gem_returns(universe_df, cfg=cell_cfg)
+        return gem_returns(universe_df, cfg=cell_cfg, cost_bps_per_turnover=COST_BPS_PER_TURNOVER)
 
     return strategy_fn
 
@@ -300,6 +372,7 @@ def run_cell(
         vix=rextras.get("vix"),
         hyg=rextras.get("hyg"),
         ief_for_credit=visible["IEF"],
+        cost_bps_per_turnover=COST_BPS_PER_TURNOVER,
     )
     stitched_parts: list[pd.Series] = []
     fold_diagnostics: list[dict] = []
@@ -376,6 +449,7 @@ def run_cell(
         vix=rextras.get("vix"),
         hyg=rextras.get("hyg"),
         ief_for_credit=full_for_sanctuary["IEF"],
+        cost_bps_per_turnover=COST_BPS_PER_TURNOVER,
     )
     sanc_ret = full_rets.iloc[len(visible) :]
     sanc_sh = float(sharpe(sanc_ret, periods_per_year=bars_per_year))
@@ -489,6 +563,7 @@ def main():
             vix=regime_extras.get("vix"),
             hyg=regime_extras.get("hyg"),
             ief_for_credit=visible["IEF"],
+            cost_bps_per_turnover=COST_BPS_PER_TURNOVER,
         )
         stitched_parts = [visible_rets.iloc[f.oos_start : f.oos_end_excl] for f in folds]
         stitched = pd.concat(stitched_parts).fillna(0.0)
@@ -560,7 +635,14 @@ def main():
 
     def full_strategy_fn(df: pd.DataFrame) -> pd.Series:
         ief_for_credit = df["IEF"] if "IEF" in df.columns else None
-        return gem_returns(df, cfg=canonical_cfg, vix=_v, hyg=_h, ief_for_credit=ief_for_credit)
+        return gem_returns(
+            df,
+            cfg=canonical_cfg,
+            vix=_v,
+            hyg=_h,
+            ief_for_credit=ief_for_credit,
+            cost_bps_per_turnover=COST_BPS_PER_TURNOVER,
+        )
 
     noise_result = run_noise_robustness(
         visible,
@@ -718,6 +800,7 @@ def main():
         vix=regime_extras.get("vix"),
         hyg=regime_extras.get("hyg"),
         ief_for_credit=visible["IEF"],
+        cost_bps_per_turnover=COST_BPS_PER_TURNOVER,
     )
     full_benchmark_visible = visible["SPY"].pct_change().fillna(0.0)
 
