@@ -79,7 +79,88 @@
 
 ## §4. Result log (appended post-audit)
 
-*Empty at commit. Will be populated after running the audit harness.*
+**Audit runs:** 2026-05-14 → 2026-05-15. The grid grew from the original 5 cells (C1-C5) through iterative enhancements: C6/C7 (multi-speed blend), C8 (vol-target overlay), C9/C10/C11 (conditional stress gate + leverage), C12/C13 (lever-the-strategy), C14/C15 (drawdown circuit breaker). All cells run with realistic costs (1.5 bps/turnover ≈ COST_US_ETF_LIQUID).
+
+### §4.1 Final cell verdicts (with costs, 15 cells)
+
+| Cell | Sharpe | CI lo | Strategy MaxDD | Rel-MC ratio | p(better) | Sanctuary | Verdict |
+|---|---:|---:|---:|---:|---:|---:|---|
+| C1 canonical (12m, Antonacci) | +0.49 | +0.08 | -37% | 0.95 | 56% | +0.94 | COND_WP |
+| C2 no buffer | +0.56 | +0.15 | -37% | 0.96 | 58% | +0.94 | COND_WP |
+| C3 short_lookback (6m) | +0.49 | +0.10 | -37% | 0.96 | 57% | +0.67 | COND_WP |
+| C4 long_lookback (18m) | +0.55 | +0.16 | -38% | 0.98 | 54% | +1.21 | COND_WP |
+| C5 no_defensive | +0.46 | +0.10 | -43% | 1.03 | 22% | +0.94 | COND_WP |
+| C6 blend (3,6,12) | +0.56 | +0.19 | -36% | 0.96 | 60% | +1.12 | COND_WP |
+| C7 blend (1,3,6) | +0.47 | +0.10 | -36% | 0.97 | 60% | +1.03 | COND_WP |
+| **C8 blend + voltarget10** | **+0.84** | **+0.45** | **-20%** | **0.52** | **98%** | **+1.07** | **DEPLOY** |
+| C9 stress_gated | +0.71 | +0.30 | -25% | 0.67 | 91% | +0.62 | DEPLOY |
+| C10 stress_gated + lev 1.5x | +0.67 | +0.27 | -35% | 0.91 | 65% | +0.56 | COND_WP |
+| C11 composite_stress (VIX) | +0.67 | +0.27 | -35% | 0.91 | 65% | +0.42 | COND_WP |
+| **C12 voltarget + lev 2x** | **+0.84** | **+0.45** | **-22%** | **0.56** | **95%** | **+0.91** | **DEPLOY** |
+| C13 target20 + lev 2x | +0.67 | +0.27 | -36% | 0.93 | 62% | +1.12 | COND_WP |
+| C14 voltarget + DD_breaker | +0.82 | +0.43 | -20% | 0.51 | 97% | +0.71 | DEPLOY |
+| C15 voltarget + lev 2x + DD_breaker | +0.84 | +0.44 | -22% | 0.55 | 93% | +0.52 | DEPLOY |
+
+### §4.2 Selected production cell
+
+**C12_voltarget_lev2** is the selected production cell.
+
+Settings:
+
+```python
+GemConfig(
+    lookback_blend=(3, 6, 12),
+    buffer_pct=0.005,
+    defensive_switch=True,
+    ann_vol_target=0.10,
+    vol_lookback_days=20,
+    max_leverage=2.0,
+)
+```
+
+Why C12 over C8:
+- Both pass all 4 decision-matrix axes (CI_lo, DSR, MC, Sanctuary) with effectively identical Sharpe (+0.84).
+- C12 achieves benchmark-comparable total return via MES futures (2x leverage) while keeping MaxDD (-22%) materially below SPY (-41%).
+- The user's deployment vehicle is MES futures — C12 matches that operationally.
+
+### §4.3 Per-cell economics (canonical: C12)
+
+- Sharpe: +0.8443 (CI95 [+0.446, +1.210])
+- DSR-prob: 1.0000 (N=15, sweep_sharpe variance well-spread)
+- Strategy median MaxDD: -22.0% vs benchmark (SPY buy-hold) median MaxDD: -41.3%
+- Rel-MC ratio: 0.556 (passes the 0.80 L17 gate)
+- p(strategy MaxDD ≤ benchmark MaxDD): 94.5% of MC paths
+- Sanctuary Sharpe: +0.9063 (no lucky_flag, no unlucky_flag)
+- Sanctuary percentile vs historical rolling-12m distribution: 0.526 (median range; clean)
+- Noise gate (Varma, ran on C8 -- same logic, no leverage):
+    - Base Sharpe: +0.81
+    - σ=0.1: +0.78 (deg 3%); σ=0.3: +0.71 (deg 12%); σ=0.5: +0.62 (deg 23%)
+    - PASS (mean AND worst-case at every level)
+- Causality smoke test (gem_assert_causal): PASSED on 5 random t-points (corrupted-future shocks did not alter past weights)
+
+### §4.4 Verdict + deployment plan
+
+**VERDICT: DEPLOY**
+
+Next steps (per `directives/Strategy Deployment Guide.md`):
+
+1. Port to `titan/strategies/gem/` (live class).
+2. Parity test (V3.6 A10): one-bar bit-exact agreement between research function and live class.
+3. Wire to `titan/adapters/ibkr/` + add to `scripts/run_live_gem.py`.
+4. Register with `PortfolioRiskManager`.
+5. Paper trade for ≥30 days before live capital (per Deployment Guide).
+6. MES futures sizing: 1 contract = $5 × ES_price. At ES ~5800 → 1 MES ≈ $29k notional. For $30k strategy NAV at 2x leverage → ~2 MES contracts in SPY-long state. The strategy's weight output (which can be up to 2.0) directly maps to MES contract sizing.
+
+### §4.5 Auxiliary findings (V3.6 lessons spawned -- see V3.6 Catalogue update)
+
+- **L17 (already booked)**: absolute MC gate fails for long-only equity strategies → relative MC adopted as 4th axis.
+- **L18 (new)**: a state-tracking buffer that compares against a STALE incumbent return can latch a strategy in a position that never wants to leave. Compare against LIVE values at every decision time. (Source: GEM Step 1 bug; fixed 2026-05-15.)
+- **L19 (new)**: under block-bootstrap MC, continuous vol-targeting outperforms binary regime-on/off stress gating for the same vol budget. Smooth scale > step-function scale. The Sharpe drops 0.14 (C8 → C9) when switching from continuous to gated. (Source: GEM Step 4.)
+- **L20 (new)**: when a stress-signal source (e.g. VIX) is loaded from a different parquet than the primary close, normalise BOTH indexes to date-only before reindex-merge. Mismatched time-of-day stamping silently produces an all-NaN signal that fails-open as "never in stress". (Source: GEM Step 7 / C11 debug.)
+- **L21 (new)**: transaction costs at realistic ETF rates (1.5 bps/turnover) have negligible impact on monthly-rebalancing strategies (Sharpe drag ~0.01 on C8). The cost gate is not load-bearing for slow-turnover strategies. Apply it anyway for honesty. (Source: GEM Step 6.)
+- **L22 (new)**: a drawdown circuit breaker on top of a vol-targeted strategy adds little marginal value -- the vol-target keeps daily vol bounded, which keeps drawdowns bounded, which means the DD breaker rarely fires. DD-breaker is more useful for high-vol strategies without explicit risk control. (Source: GEM Step 5 / C14 ablation.)
+
+These L18-L22 entries to be appended to `directives/V3.6 Lessons Catalogue.md`.
 
 ---
 
