@@ -18,6 +18,11 @@ should NOT be mass-refactored; instead they are RE-RUN under the
 framework as part of Phase 2 of the methodology directive.
 """
 
+from titan.research.framework.dashboard import (
+    AuditResult,
+    CellSummary,
+    render_dashboard,
+)
 from titan.research.framework.decision import (
     DecisionInputs,
     DecisionResult,
@@ -26,7 +31,18 @@ from titan.research.framework.decision import (
     decide,
 )
 from titan.research.framework.dsr import DsrResult, deflated_sharpe, sr_var_from_sweep
-from titan.research.framework.mc import McResult, run_block_mc
+from titan.research.framework.mc import (
+    McResult,
+    RelativeMcResult,
+    run_block_mc,
+    run_relative_block_mc,
+)
+from titan.research.framework.robustness import (
+    NoiseConfig,
+    NoiseLevelResult,
+    NoiseRobustnessResult,
+    run_noise_robustness,
+)
 from titan.research.framework.sanctuary import (
     DivergenceTest,
     SanctuarySlice,
@@ -79,6 +95,8 @@ __all__ = [
     # MC
     "McResult",
     "run_block_mc",
+    "RelativeMcResult",
+    "run_relative_block_mc",
     # DSR
     "DsrResult",
     "deflated_sharpe",
@@ -89,4 +107,13 @@ __all__ = [
     "DecisionResult",
     "GateThresholds",
     "decide",
+    # Robustness (noise-injection gate -- Varma)
+    "NoiseConfig",
+    "NoiseLevelResult",
+    "NoiseRobustnessResult",
+    "run_noise_robustness",
+    # Dashboard
+    "AuditResult",
+    "CellSummary",
+    "render_dashboard",
 ]

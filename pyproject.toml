@@ -60,6 +60,7 @@ ignore = [
 "resources/**/*" = ["E501", "E702", "E741", "F841", "D", "E402"] # External reference code: relaxed rules
 "titan/strategies/**/*" = ["D"]       # Strategy files: skip docstring rules
 "titan/adapters/ibkr/execution.py" = ["E402"] # Allow late imports if needed
+"titan/research/framework/dashboard.py" = ["E501"]  # HTML template strings inline
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
