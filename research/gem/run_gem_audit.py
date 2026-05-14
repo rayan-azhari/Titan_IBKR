@@ -566,6 +566,21 @@ def main():
         for r in results
     ]
 
+    # Full strategy returns on the visible window (canonical cell) for the
+    # equity panel. Also benchmark buy-and-hold SPY on the same index.
+    full_strategy_visible = gem_returns(visible, cfg=CELLS[CANONICAL_CELL])
+    full_benchmark_visible = visible["SPY"].pct_change().fillna(0.0)
+
+    # OOS fold intervals (start, end) for band overlays on the equity panel.
+    oos_fold_intervals: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    for f in canonical_extras.get("fold_diagnostics") or []:
+        try:
+            s = pd.Timestamp(f["oos_start"])
+            e = pd.Timestamp(f["oos_end"])
+            oos_fold_intervals.append((s, e))
+        except Exception:
+            continue
+
     audit = AuditResult(
         strategy_name="GEM Dual Momentum",
         strategy_class=StrategyClass.CROSS_ASSET_MOMENTUM.value,
@@ -582,6 +597,9 @@ def main():
         cell_sanctuary_returns=cell_sanc_returns,
         benchmark_oos_returns=bench_oos,
         benchmark_sanctuary_returns=bench_sanc,
+        full_strategy_returns=full_strategy_visible,
+        full_benchmark_returns=full_benchmark_visible,
+        oos_fold_intervals=oos_fold_intervals,
         fold_diagnostics=canonical_extras.get("fold_diagnostics"),
         mc_strategy_maxdds=canonical_extras.get("rel_mc_strategy_maxdds"),
         mc_benchmark_maxdds=canonical_extras.get("rel_mc_benchmark_maxdds"),

@@ -119,6 +119,16 @@ class AuditResult:
     benchmark_oos_returns: pd.Series | None = None
     benchmark_sanctuary_returns: pd.Series | None = None
 
+    # Full strategy returns on the FULL visible window (not just the
+    # stitched OOS). Used by the equity panel for a continuous historical
+    # view -- the stitched OOS often covers only a fraction of the available
+    # history under conservative WFO defaults. The headline metrics still
+    # come from the stitched OOS; this is for visual sense-checking only.
+    full_strategy_returns: pd.Series | None = None
+    full_benchmark_returns: pd.Series | None = None
+    # Index marks (start,end) of each OOS fold for the band overlay.
+    oos_fold_intervals: list[tuple[pd.Timestamp, pd.Timestamp]] | None = None
+
     # WFO fold info (per canonical cell). List of dicts with keys
     # 'fold_id', 'oos_start', 'oos_end', 'sharpe'.
     fold_diagnostics: list[dict] | None = None
@@ -220,6 +230,10 @@ def _figure_equity_and_drawdown(
     benchmark_oos: pd.Series | None,
     benchmark_sanc: pd.Series | None,
     sanctuary_start: pd.Timestamp,
+    *,
+    full_strategy: pd.Series | None = None,
+    full_benchmark: pd.Series | None = None,
+    oos_fold_intervals: list[tuple[pd.Timestamp, pd.Timestamp]] | None = None,
 ) -> go.Figure:
     fig = make_subplots(
         rows=2,
@@ -230,13 +244,20 @@ def _figure_equity_and_drawdown(
         vertical_spacing=0.08,
     )
 
-    # Concatenate OOS + sanctuary for one continuous line.
+    # Prefer the full historical strategy returns (covers the entire visible
+    # window) over the stitched OOS, which under conservative WFO defaults
+    # may only span a few years. If full_strategy is provided we plot that
+    # plus the sanctuary; the OOS regions are highlighted by fold-band
+    # overlays so the reader can see which periods are framework-validated.
     def _concat(oos, sanc):
         if sanc is None or sanc.empty:
             return oos
         return pd.concat([oos, sanc])
 
-    strat_full = _concat(strategy_oos, strategy_sanc)
+    if full_strategy is not None and not full_strategy.empty:
+        strat_full = _concat(full_strategy, strategy_sanc)
+    else:
+        strat_full = _concat(strategy_oos, strategy_sanc)
     strat_eq = _cumulative_equity(strat_full)
     strat_dd = _drawdown_series(strat_full)
 
@@ -264,10 +285,13 @@ def _figure_equity_and_drawdown(
         col=1,
     )
 
-    if benchmark_oos is not None:
-        bench_full = _concat(benchmark_oos, benchmark_sanc)
-        bench_eq = _cumulative_equity(bench_full)
-        bench_dd = _drawdown_series(bench_full)
+    if benchmark_oos is not None or full_benchmark is not None:
+        if full_benchmark is not None and not full_benchmark.empty:
+            bench_series = _concat(full_benchmark, benchmark_sanc)
+        else:
+            bench_series = _concat(benchmark_oos, benchmark_sanc)
+        bench_eq = _cumulative_equity(bench_series)
+        bench_dd = _drawdown_series(bench_series)
         fig.add_trace(
             go.Scatter(
                 x=bench_eq.index,
@@ -289,6 +313,20 @@ def _figure_equity_and_drawdown(
             row=2,
             col=1,
         )
+
+    # OOS fold bands -- shade the regions the framework actually validated
+    # against. Helps the reader distinguish "this is the WFO OOS coverage"
+    # from "this is the full historical strategy run".
+    if oos_fold_intervals:
+        for (s, e) in oos_fold_intervals:
+            fig.add_shape(
+                type="rect",
+                x0=s, x1=e,
+                y0=0, y1=1, yref="y domain",
+                fillcolor="rgba(31,119,180,0.06)",
+                line=dict(width=0),
+                row=1, col=1,
+            )
 
     # Sanctuary boundary line. Use add_shape + add_annotation rather than
     # add_vline because plotly's add_vline annotation positioning is
@@ -835,10 +873,21 @@ def render_dashboard(result: AuditResult, output_dir: Path) -> Path:
         result.benchmark_oos_returns,
         result.benchmark_sanctuary_returns,
         result.sanctuary_start,
+        full_strategy=result.full_strategy_returns,
+        full_benchmark=result.full_benchmark_returns,
+        oos_fold_intervals=result.oos_fold_intervals,
     )
-    fig_roll_sh = _figure_rolling_sharpe(canonical_oos, result.bars_per_year)
-    fig_monthly = _figure_monthly_heatmap(canonical_oos)
-    fig_distr = _figure_distribution(canonical_oos)
+    # Prefer the full strategy series for rolling Sharpe / heatmap / distribution
+    # so the visualization spans the entire historical run, not just the
+    # WFO-stitched OOS slice. Headline KPIs still come from the OOS slice.
+    series_for_visuals = (
+        result.full_strategy_returns
+        if result.full_strategy_returns is not None and not result.full_strategy_returns.empty
+        else canonical_oos
+    )
+    fig_roll_sh = _figure_rolling_sharpe(series_for_visuals, result.bars_per_year)
+    fig_monthly = _figure_monthly_heatmap(series_for_visuals)
+    fig_distr = _figure_distribution(series_for_visuals)
     fig_folds = _figure_fold_diagnostics(result.fold_diagnostics)
     fig_sanc = _figure_sanctuary_divergence(
         result.sanctuary_historical_window_sharpes,

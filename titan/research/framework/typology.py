@@ -71,13 +71,30 @@ COST_IG_DFB_INDEX = CostModel(spread_bps=2.5, slip_bps=1.0, commission_usd_per_s
 
 @dataclass(frozen=True)
 class WfoConfig:
-    """Walk-forward design per strategy class (directive §2.3)."""
+    """Walk-forward design per strategy class (directive §2.3).
+
+    Attributes:
+        is_min_years: minimum in-sample window length.
+        oos_years: out-of-sample window length per fold.
+        fold_count: explicit fold count. If ``auto_fold_count`` is True
+                    this value is treated as the FLOOR -- the framework
+                    will use ``max(fold_count, auto-derived)``.
+        is_mode: "expanding" or "rolling".
+        stride_overlap_allowed: rolling-mode stride halving.
+        auto_fold_count: if True, ``build_folds`` derives the fold count
+                         from the visible window length to ensure OOS
+                         spans (close to) the full available history.
+                         Capped at ``auto_fold_count_max``.
+        auto_fold_count_max: ceiling on auto-derived fold count.
+    """
 
     is_min_years: float
     oos_years: float
     fold_count: int
     is_mode: Literal["expanding", "rolling"]
     stride_overlap_allowed: bool
+    auto_fold_count: bool = True
+    auto_fold_count_max: int = 60
     sanctuary_months: int = 12
 
 

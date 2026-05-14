@@ -81,11 +81,30 @@ def build_folds(
     if n < is_min_bars + oos_bars:
         return []
 
+    # Auto-scale fold count to span the available history (the
+    # ``auto_fold_count`` lesson — explicit class defaults can be too
+    # conservative for long-history data, yielding OOS coverage that's a
+    # small fraction of the visible window).
+    effective_fold_count = cfg.fold_count
+    if cfg.auto_fold_count:
+        if cfg.is_mode == "expanding":
+            # k-th fold: IS_end = is_min + k * oos. Last fold: IS_end + oos <= n
+            # => k <= (n - is_min - oos) / oos = (n - is_min)/oos - 1.
+            max_folds = max(1, (n - is_min_bars) // oos_bars)
+        else:
+            # rolling: stride = oos (no-overlap) or oos//2 (overlap).
+            stride = oos_bars if not cfg.stride_overlap_allowed else max(1, oos_bars // 2)
+            # k-th fold: IS_start = stride*k, OOS_end = IS_start + is_min + oos <= n
+            max_folds = max(1, (n - is_min_bars - oos_bars) // stride + 1)
+        # Use the larger of the configured floor + the auto-derived count,
+        # capped at the configured ceiling.
+        effective_fold_count = min(cfg.auto_fold_count_max, max(cfg.fold_count, int(max_folds)))
+
     folds: list[Fold] = []
     if cfg.is_mode == "expanding":
         # Anchored at index 0; IS expands; non-overlapping OOS.
         # For fold k: IS = [0, is_min_bars + k * oos_bars), OOS = next oos_bars.
-        for k in range(cfg.fold_count):
+        for k in range(effective_fold_count):
             is_end = is_min_bars + k * oos_bars
             oos_end = is_end + oos_bars
             if oos_end > n:
@@ -108,7 +127,7 @@ def build_folds(
         # of OOS windows is allowed if cfg.stride_overlap_allowed.
         # For fold k: IS = [stride * k, stride * k + is_min_bars), OOS = next oos_bars.
         stride = oos_bars if not cfg.stride_overlap_allowed else max(1, oos_bars // 2)
-        for k in range(cfg.fold_count):
+        for k in range(effective_fold_count):
             is_start = stride * k
             is_end = is_start + is_min_bars
             oos_end = is_end + oos_bars
