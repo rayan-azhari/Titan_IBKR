@@ -1,0 +1,37 @@
+# Confluence test -- range-expansion gated by RSI < 50.
+#
+# Parent directive: directives/IC Confluence Range-Reversion 2026-05-14.md
+
+[meta]
+version = 1
+created = "2026-05-14"
+phase = "C-confluence"
+sanctuary_months = 12
+fold_count = 5
+dsr_t_floor_phase_a = 4.5
+dsr_t_floor_combined = 5.0
+bh_alpha = 0.05
+plateau_neighbour_t_floor = 3.0
+plateau_ic_range_max = 0.30
+mtf_quorum = 2          # H1-only scan; MTF agreement N/A
+fold_sign_quorum = 4
+
+[timeframes]
+H1 = { horizons = [1, 8, 40] }
+
+[phase_a.instruments]
+MES = ["H1"]
+MNQ = ["H1"]
+ES  = ["H1"]
+NQ  = ["H1"]
+
+[phase_a.leveraged_etfs]
+
+[signals.confluence]
+[signals.confluence.range_atr_when_oversold]
+applies_to_tfs = ["H1"]
+cells = [
+    { period_atr = 7,  period_rsi = 14 },
+    { period_atr = 14, period_rsi = 14 },
+    { period_atr = 28, period_rsi = 14 },
+]

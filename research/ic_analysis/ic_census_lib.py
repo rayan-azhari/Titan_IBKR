@@ -402,6 +402,31 @@ def _intraday_range_atr(close: pd.Series, period: int, high: pd.Series, low: pd.
     return today_range / atr.replace(0, np.nan) - 1.0
 
 
+def _range_atr_when_oversold(
+    close: pd.Series,
+    period_atr: int,
+    period_rsi: int,
+    high: pd.Series,
+    low: pd.Series,
+) -> pd.Series:
+    """Range-expansion magnitude, gated to zero unless RSI is below 50.
+
+    Pre-registered in directives/IC Confluence Range-Reversion 2026-05-14.md.
+    Tests whether the Phase C TIER_B range_atr edge concentrates in
+    oversold regimes (mean-reversion + range-expansion agreement quadrant).
+
+    The signal at bar t is non-zero only when RSI(close, period_rsi) at t
+    is below 50. Both legs are causal (RSI uses close-through-t, ATR uses
+    close-through-t-1 via shift(1) inside _intraday_range_atr's TR
+    components). The .where(..., 0.0) replaces non-oversold values with
+    zero rather than NaN so the regime-gated bars contribute a clearly
+    null observation rather than dropping out of the Spearman pair.
+    """
+    iat = _intraday_range_atr(close, period_atr, high, low)
+    rsi_dev = _wilder_rsi(close, period_rsi) - 50.0
+    return iat.where(rsi_dev < 0, 0.0)
+
+
 # ── Cross-asset factories ──────────────────────────────────────────────────
 # Each takes the target's close plus one or more EXTERNAL closes already
 # anchored to the target's index by the orchestrator. The orchestrator MUST
@@ -608,6 +633,10 @@ def signal_factories() -> dict[str, dict[str, Any]]:
         "overnight_gap_z":   {"fn": _overnight_gap_z,   "needs": ["close"]},
         "intraday_range_atr": {"fn": _intraday_range_atr,
                                "needs": ["close", "high", "low"]},
+        # Confluence factory (directives/IC Confluence Range-Reversion 2026-05-14.md):
+        # range-expansion gated to zero when RSI is overbought.
+        "range_atr_when_oversold": {"fn": _range_atr_when_oversold,
+                                    "needs": ["close", "high", "low"]},
         # ── Cross-asset signals (Anchored MTF Rule applied by runner) ─
         "hyg_ief_z":         {"fn": _hyg_ief_z,
                               "needs": ["close"],
