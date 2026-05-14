@@ -1,0 +1,171 @@
+# Phase C pre-registration -- as-built per directive §1.6.
+#
+# Parent universes:
+#   config/ic_census_universe.toml         (Phase A)
+#   config/ic_census_universe_phase_b.toml (Phase B)
+# This pre-reg: directives/IC Signal Census Phase C 2026-05-13.md
+#
+# Phase C SCOPE (after the discovery audit in directive §1.5):
+#   * 4 new equity-futures targets: MES, MNQ, ES, NQ at D + H1
+#   * Re-run of every existing single-instrument signal class on these
+#     new targets, AT D and H1
+#   * NO new factories yet -- the VIX-intraday + EU-futures + VIX-futures
+#     pieces from directive §1.1 are deferred (IBKR/Databento blockers)
+#
+# What this means: Phase C is currently a SAMPLE-SIZE upgrade for the
+# US-equity-futures sleeve, NOT a new-mechanism upgrade. The expected
+# outcome is that the existing strongest mechanisms (1-bar
+# microstructure, VRP, US short-term reversal) get re-scored on intraday
+# bars with N around 40k-90k instead of 2-6k, which should push the
+# strongest into |t_NW| > 4.5 -- IF the mechanism survives intraday.
+
+[meta]
+version = 1
+created = "2026-05-13"
+phase = "C"
+sanctuary_months = 12
+fold_count = 5
+dsr_t_floor_phase_a = 4.5
+dsr_t_floor_combined = 5.0     # engages above 25k combined cells
+bh_alpha = 0.05
+plateau_neighbour_t_floor = 3.0
+plateau_ic_range_max = 0.30
+mtf_quorum = 2                 # D + H1 (no H4 for futures)
+fold_sign_quorum = 4
+
+[timeframes]
+D = { horizons = [1, 5, 21] }
+H1 = { horizons = [1, 8, 40] }
+
+# Phase C as-built target set
+[phase_a.instruments]
+MES = ["D", "H1"]
+MNQ = ["D", "H1"]
+ES  = ["D", "H1"]
+NQ  = ["D", "H1"]
+
+[phase_a.leveraged_etfs]
+# Equity futures have native leverage via margin but it's not a
+# compounding-leveraged ETF problem. No special flag here.
+
+# Single-instrument signals (re-used from Phase A registry).
+[signals.trend]
+[signals.trend.momentum]
+cells = [
+    { lookback = 252, skip = 21 },
+    { lookback = 126, skip = 21 },
+    { lookback =  63, skip = 5 },
+]
+[signals.trend.ewmac]
+cells = [
+    { fast = 8,  slow = 32 },
+    { fast = 16, slow = 64 },
+    { fast = 32, slow = 128 },
+]
+[signals.trend.ma_distance]
+cells = [
+    { window = 20 },
+    { window = 50 },
+    { window = 200 },
+]
+
+[signals.mean_reversion]
+[signals.mean_reversion.rsi_dev]
+cells = [
+    { period = 7 },
+    { period = 14 },
+    { period = 28 },
+]
+[signals.mean_reversion.vwap_overshoot]
+cells = [
+    { anchor = 6 },
+    { anchor = 24 },
+    { anchor = 96 },
+]
+[signals.mean_reversion.bb_pctb]
+cells = [
+    { window = 10 },
+    { window = 20 },
+    { window = 50 },
+]
+
+[signals.volatility]
+[signals.volatility.realized_vol_z]
+cells = [
+    { window = 20 },
+    { window = 60 },
+    { window = 120 },
+]
+
+[signals.microstructure]
+[signals.microstructure.overnight_gap_z]
+applies_to_tfs = ["H1"]
+cells = [
+    { lookback_bars = 20 },
+    { lookback_bars = 60 },
+    { lookback_bars = 120 },
+]
+[signals.microstructure.intraday_range_atr]
+applies_to_tfs = ["H1"]
+cells = [
+    { period = 7 },
+    { period = 14 },
+    { period = 28 },
+]
+
+# Cross-asset reuse: dxy_z applies to all equity targets.
+[signals.cross_asset]
+[signals.cross_asset.dxy_z]
+external = ["EUR_USD"]
+cells = [
+    { lookback = 21 },
+    { lookback = 60 },
+    { lookback = 120 },
+]
+
+# Phase B macro/credit signals re-applied to equity futures at D
+# (HYG/IEF spread predicting MES, etc.). At H1 the credit ETFs don't have
+# intraday data so hyg_ief_z is D-only here.
+[signals.cross_asset.hyg_ief_z]
+external = ["HYG", "IEF"]
+applies_to_tfs = ["D"]
+cells = [
+    { lookback = 21 },
+    { lookback = 60 },
+    { lookback = 120 },
+]
+
+# Phase B VRP signal at D + H1 (intraday VIX unblocked 2026-05-13 after
+# docker-compose port mapping was added -- the IBKR Gateway downloader
+# in scripts/download_data_phase_c_ibkr.py wrote VIX_H1, VIX9D_H1,
+# VIX3M_H1 parquets, restoring the directive's §2.1/§2.2 originally-
+# pre-registered intraday scope).
+[signals.volatility_phase_b]
+[signals.volatility_phase_b.vrp_z]
+external = ["VIX"]
+applies_to_tfs = ["D", "H1"]
+cells = [
+    { rv_window = 20 },
+    { rv_window = 60 },
+    { rv_window = 120 },
+]
+
+# Phase C intraday VIX term-structure signals (directive §2.2 originally
+# pre-registered, restored after IBKR Gateway unblock).
+[signals.term_structure_h1]
+[signals.term_structure_h1.vix9d_over_vix]
+external = ["VIX9D", "VIX"]
+applies_to_tfs = ["D", "H1"]
+cells = [
+    { smoothing = 1 },
+    { smoothing = 5 },
+    { smoothing = 21 },
+]
+[signals.term_structure_h1.vix_over_vix3m]
+external = ["VIX", "VIX3M"]
+applies_to_tfs = ["D", "H1"]
+cells = [
+    { smoothing = 1 },
+    { smoothing = 5 },
+    { smoothing = 21 },
+]

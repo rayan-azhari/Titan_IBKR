@@ -1,0 +1,43 @@
+# MTF Lift -- focused probe of `intraday_range_atr` at D + H1.
+#
+# Parent directive: directives/IC MTF Lift Range-Expansion 2026-05-14.md
+# Tests whether the Phase C TIER_B candidate is promotable to TIER_A
+# via cross-timeframe sign agreement.
+
+[meta]
+version = 1
+created = "2026-05-14"
+phase = "C-mtf-lift"
+sanctuary_months = 12
+fold_count = 5
+dsr_t_floor_phase_a = 4.5
+dsr_t_floor_combined = 5.0
+bh_alpha = 0.05
+plateau_neighbour_t_floor = 3.0
+plateau_ic_range_max = 0.30
+mtf_quorum = 2          # D + H1 (2 of 2 expected)
+fold_sign_quorum = 4
+
+[timeframes]
+D = { horizons = [1, 5, 21] }
+H1 = { horizons = [1, 8, 40] }
+
+[phase_a.instruments]
+MES = ["D", "H1"]
+MNQ = ["D", "H1"]
+ES  = ["D", "H1"]
+NQ  = ["D", "H1"]
+
+[phase_a.leveraged_etfs]
+
+# Single signal only: intraday_range_atr at BOTH D and H1.
+# The signal factory uses HLC (the OHLC parquets have all four). Same
+# parameter grid as Phase A / Phase C.
+[signals.microstructure]
+[signals.microstructure.intraday_range_atr]
+applies_to_tfs = ["D", "H1"]
+cells = [
+    { period = 7 },
+    { period = 14 },
+    { period = 28 },
+]

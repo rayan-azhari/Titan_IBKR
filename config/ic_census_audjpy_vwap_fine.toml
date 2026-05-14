@@ -1,0 +1,41 @@
+# Follow-up pre-registration: AUD/JPY × H1 × vwap_overshoot, fine grid.
+#
+# Parent directive: directives/IC Signal Census 2026-05-13.md
+# This pre-registration: directives/IC AUDJPY Vwap Fine-Grid 2026-05-13.md
+#
+# All gates inherited from the parent universe. Only the parameter grid
+# and the universe scope (one instrument × one TF × one signal) change.
+
+[meta]
+version = 1
+created = "2026-05-13"
+sanctuary_months = 12
+fold_count = 5
+dsr_t_floor_phase_a = 4.5
+dsr_t_floor_combined = 5.0
+bh_alpha = 0.05
+plateau_neighbour_t_floor = 3.0
+plateau_ic_range_max = 0.30
+mtf_quorum = 2                # not applicable (H1 only) — kept for orchestrator compatibility
+fold_sign_quorum = 4
+
+[timeframes]
+H1 = { horizons = [1, 8, 40] }
+
+[phase_a.instruments]
+AUD_JPY = ["H1"]
+
+[phase_a.leveraged_etfs]
+# (none)
+
+[signals.mean_reversion.vwap_overshoot_fine]
+cells = [
+    { anchor = 3 },
+    { anchor = 4 },
+    { anchor = 6 },
+    { anchor = 8 },
+    { anchor = 12 },
+]
+
+[phase_b.instruments]
+# (none — single-instrument follow-up)
