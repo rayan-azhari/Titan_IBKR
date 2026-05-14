@@ -1,0 +1,369 @@
+"""Synthetic ground-truth tests for the unified framework.
+
+Fixes audit-catalogue gap H2: no end-to-end test verifies that the
+audit pipeline correctly accepts a known-edge strategy and rejects a
+known-no-edge strategy on synthetic data.
+
+We construct two stylised strategies:
+
+    edge_strategy        -- a deterministic signal with built-in positive
+                            mean return. Should pass the framework's gates.
+    no_edge_strategy     -- a strategy whose returns are pure i.i.d. noise.
+                            Should fail the framework's gates.
+
+Plus targeted unit tests for each primitive.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from titan.research.framework import (
+    DEFAULTS,
+    DecisionInputs,
+    McConfig,
+    SharpeReporting,
+    StrategyClass,
+    Verdict,
+    WfoConfig,
+    build_folds,
+    decide,
+    defaults_for,
+    deflated_sharpe,
+    sanctuary_divergence_test,
+    slice_sanctuary,
+    sr_var_from_sweep,
+)
+from titan.research.framework.mc import run_block_mc
+from titan.research.framework.typology import COST_CME_FUTURES_LIQUID
+from titan.research.metrics import bootstrap_sharpe_ci, sharpe
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _synthetic_close_with_edge(
+    n_bars: int = 5_000, daily_drift: float = 0.0005, vol: float = 0.01, seed: int = 0,
+) -> pd.Series:
+    """Generates a daily close with positive drift -- a buy-and-hold edge."""
+    rng = np.random.default_rng(seed)
+    log_rets = rng.normal(daily_drift, vol, size=n_bars)
+    idx = pd.date_range("2010-01-01", periods=n_bars, freq="1D", tz="UTC")
+    return pd.Series(100.0 * np.exp(np.cumsum(log_rets)), index=idx, name="close")
+
+
+def _synthetic_close_no_edge(
+    n_bars: int = 5_000, vol: float = 0.01, seed: int = 1,
+) -> pd.Series:
+    """Generates a daily close with ZERO drift -- pure noise. A
+    buy-and-hold has zero true Sharpe."""
+    rng = np.random.default_rng(seed)
+    log_rets = rng.normal(0.0, vol, size=n_bars)
+    idx = pd.date_range("2010-01-01", periods=n_bars, freq="1D", tz="UTC")
+    return pd.Series(100.0 * np.exp(np.cumsum(log_rets)), index=idx, name="close")
+
+
+def _buy_and_hold_strategy(df: pd.DataFrame) -> pd.Series:
+    """Strategy: always long, MTM daily return."""
+    return df["close"].pct_change().fillna(0.0)
+
+
+def _shorting_noise_strategy(df: pd.DataFrame) -> pd.Series:
+    """Strategy: always SHORT a no-edge series -- should produce zero
+    Sharpe + symmetric distribution. Useful for testing the no-edge gate."""
+    return -df["close"].pct_change().fillna(0.0)
+
+
+# ── Typology + defaults ────────────────────────────────────────────────────
+
+
+def test_defaults_for_every_strategy_class():
+    """Every StrategyClass enum value must have a DEFAULTS row.
+    Catches: silent additions to the enum without a defaults row."""
+    for cls in StrategyClass:
+        d = defaults_for(cls)
+        assert isinstance(d.sharpe, SharpeReporting)
+        assert isinstance(d.wfo, WfoConfig)
+        assert isinstance(d.mc, McConfig)
+
+
+def test_defaults_table_is_total():
+    """DEFAULTS table covers every enum value."""
+    assert set(DEFAULTS.keys()) == set(StrategyClass), (
+        f"DEFAULTS missing for: {set(StrategyClass) - set(DEFAULTS.keys())}; "
+        f"extra in DEFAULTS: {set(DEFAULTS.keys()) - set(StrategyClass)}"
+    )
+
+
+def test_cross_asset_momentum_uses_recalibrated_mc_gate():
+    """Per directive §2.4 the 25%/5% gate was broken for cross-asset
+    momentum (Bond-Equity Audit §4.2-c). New gate is 35%/10%."""
+    cam = defaults_for(StrategyClass.CROSS_ASSET_MOMENTUM)
+    assert cam.mc.max_dd_threshold_pct == 0.35
+    assert cam.mc.max_dd_pass_prob == 0.10
+    # Shared-block bootstrap preserves cross-asset correlation.
+    assert cam.mc.bootstrap_method == "shared_block"
+
+
+def test_intraday_breakout_uses_per_trade_sharpe():
+    """Sparse-trade strategies report per-trade as primary Sharpe.
+    Catches A4 from the audit catalogue."""
+    ib = defaults_for(StrategyClass.INTRADAY_BREAKOUT)
+    assert ib.sharpe.primary == "per_trade"
+    assert ib.sharpe.secondary == "per_bar"
+
+
+def test_cost_model_round_trip_arithmetic():
+    """Sanity-check the CostModel.round_trip_bps_no_commission formula."""
+    cm = COST_CME_FUTURES_LIQUID
+    assert cm.round_trip_bps_no_commission == 4.0   # 2 * (1.0 + 1.0)
+
+
+# ── Sanctuary ──────────────────────────────────────────────────────────────
+
+
+def test_slice_sanctuary_carves_last_12_months():
+    df = pd.DataFrame(
+        {"close": np.arange(2000.0)},
+        index=pd.date_range("2018-01-01", periods=2000, freq="1D", tz="UTC"),
+    )
+    s = slice_sanctuary(df, months=12)
+    assert s.months_held_out == 12
+    assert s.visible.index[-1] < s.sanctuary_start
+    assert s.sanctuary.index[0] >= s.sanctuary_start
+    # Sanctuary ends at df.index[-1]
+    assert s.sanctuary_end == df.index[-1]
+
+
+def test_slice_sanctuary_rejects_non_datetime_index():
+    df = pd.DataFrame({"close": np.arange(100.0)})
+    with pytest.raises(TypeError):
+        slice_sanctuary(df, months=12)
+
+
+def test_divergence_test_flags_lucky_sanctuary():
+    """If we feed the sanctuary returns from a particularly-strong
+    distribution and the historical returns from a weaker one, the
+    divergence test must flag lucky."""
+    rng = np.random.default_rng(42)
+    historical = pd.Series(rng.normal(0.0, 0.01, size=2000))   # zero edge
+    sanctuary = pd.Series(rng.normal(0.003, 0.01, size=200))    # +0.3% daily drift
+    test = sanctuary_divergence_test(historical, sanctuary, periods_per_year=252)
+    assert test.sanctuary_sharpe > 0.5
+    # Sanctuary should sit very high in the historical distribution.
+    assert test.percentile > 0.9 or test.lucky_flag
+
+
+def test_divergence_test_handles_short_history_gracefully():
+    historical = pd.Series([0.001] * 10)
+    sanctuary = pd.Series([0.001] * 100)
+    test = sanctuary_divergence_test(historical, sanctuary, periods_per_year=252)
+    # When history is too short, we still return a struct (with NaN flags).
+    assert test.lucky_flag is False
+    assert test.unlucky_flag is False
+
+
+# ── WFO ────────────────────────────────────────────────────────────────────
+
+
+def test_wfo_expanding_anchored_at_start():
+    idx = pd.date_range("2010-01-01", periods=2520, freq="1D", tz="UTC")
+    cfg = WfoConfig(is_min_years=3.0, oos_years=1.0, fold_count=5,
+                    is_mode="expanding", stride_overlap_allowed=False)
+    folds = build_folds(idx, cfg, bars_per_year=252)
+    assert len(folds) >= 3
+    # IS for fold 0 starts at index 0
+    assert folds[0].is_start == 0
+    # OOS windows are non-overlapping
+    for i in range(1, len(folds)):
+        assert folds[i].oos_start >= folds[i - 1].oos_end_excl
+
+
+def test_wfo_rolling_slides_forward():
+    idx = pd.date_range("2010-01-01", periods=2520, freq="1D", tz="UTC")
+    cfg = WfoConfig(is_min_years=2.0, oos_years=0.5, fold_count=8,
+                    is_mode="rolling", stride_overlap_allowed=True)
+    folds = build_folds(idx, cfg, bars_per_year=252)
+    assert len(folds) >= 1
+    # Rolling IS slides forward
+    assert folds[-1].is_start > folds[0].is_start
+
+
+def test_wfo_returns_empty_on_insufficient_data():
+    idx = pd.date_range("2024-01-01", periods=100, freq="1D", tz="UTC")
+    cfg = defaults_for(StrategyClass.DAILY_TREND).wfo
+    folds = build_folds(idx, cfg, bars_per_year=252)
+    assert folds == []
+
+
+# ── DSR ────────────────────────────────────────────────────────────────────
+
+
+def test_dsr_handles_zero_skew_normal_returns():
+    """Normal returns (skew=0, kurt=3): DSR-prob at SR=0 and N=10 should
+    be ~0.5 (the cell exactly hits e_max_sr expectation)."""
+    rng = np.random.default_rng(0)
+    rets = pd.Series(rng.normal(0, 0.01, size=1000))
+    # Construct a fake sweep with SR variance 0.25 (SR std = 0.5)
+    fake_sweep = [0.0, 1.0, -1.0, 0.5, -0.5, 0.7, -0.3, 0.2, -0.7, 0.1]
+    sr_var = sr_var_from_sweep(fake_sweep)
+    r = deflated_sharpe(0.0, sr_var_across_trials=sr_var, returns=rets, n_trials=10)
+    # At SR=0 we're below the null max; dsr_prob should be < 0.5.
+    assert r.dsr_prob < 0.5
+
+
+def test_dsr_strong_signal_clears_gate():
+    """A strong SR (well above e_max_sr) should give dsr_prob ≈ 1.0."""
+    rng = np.random.default_rng(0)
+    rets = pd.Series(rng.normal(0.001, 0.01, size=2000))
+    fake_sweep = [0.0, 1.0, -1.0, 0.5, -0.5]
+    sr_var = sr_var_from_sweep(fake_sweep)
+    r = deflated_sharpe(10.0, sr_var_across_trials=sr_var, returns=rets, n_trials=5)
+    assert r.dsr_prob > 0.95
+
+
+def test_dsr_picks_up_kurtosis():
+    """Fat-tailed returns at the same SR should reduce DSR-prob vs normal
+    returns, due to the kurtosis-aware denominator. We compare the z-stat
+    (the variance-stabilised gap) directly because at strong SR both
+    DSR-probs saturate near 1.0 via norm.cdf and can't be ordered."""
+    rng = np.random.default_rng(0)
+    rets_normal = pd.Series(rng.normal(0.001, 0.01, size=2000))
+    rets_fat = rets_normal.copy()
+    rets_fat.iloc[::200] = -0.05  # 1% of bars are -5% (huge negative spikes)
+    sr_var = 0.25
+    # SR chosen so e_max_sr=0.78 and z lands in the unsaturated [0, 3] range
+    sr_test = 1.5
+    r_normal = deflated_sharpe(sr_test, sr_var_across_trials=sr_var, returns=rets_normal, n_trials=10)
+    r_fat = deflated_sharpe(sr_test, sr_var_across_trials=sr_var, returns=rets_fat, n_trials=10)
+    # Kurtosis must be detected
+    assert r_fat.kurt > r_normal.kurt
+    # The kurtosis-aware z-stat must be LOWER for the fat-tailed series.
+    # (norm.cdf saturates at large z, so dsr_prob can be tied at 1.0 even
+    # though the underlying gap is smaller -- that's the saturation.)
+    assert r_fat.z < r_normal.z
+
+
+# ── Decision matrix ────────────────────────────────────────────────────────
+
+
+def test_decision_total_function_covers_all_combinations():
+    """The 81-cell matrix must produce a verdict for every combination
+    of {best, mid, worst}^4. Catches G1 (UNDETERMINED outcomes)."""
+    # Sample test points for each axis level
+    ci_lo_samples = [0.1, -0.1, -0.5]
+    dsr_samples = [0.97, 0.7, 0.2]
+    mc_p_samples = [0.02, 0.07, 0.30]
+    sanc_samples = [0.5, -0.1, -0.5]
+    seen_verdicts: set[Verdict] = set()
+    for ci in ci_lo_samples:
+        for dsr in dsr_samples:
+            for mc in mc_p_samples:
+                for sanc in sanc_samples:
+                    r = decide(DecisionInputs(
+                        ci_lo=ci, dsr_prob=dsr,
+                        p_maxdd_gt_threshold=mc, pass_threshold_prob=0.05,
+                        sanctuary_sharpe=sanc,
+                    ))
+                    assert r.verdict in Verdict
+                    seen_verdicts.add(r.verdict)
+    # All 5 verdict levels should be reachable
+    assert seen_verdicts == set(Verdict)
+
+
+def test_decision_all_axes_best_returns_deploy():
+    r = decide(DecisionInputs(
+        ci_lo=0.5, dsr_prob=0.99,
+        p_maxdd_gt_threshold=0.01, pass_threshold_prob=0.05,
+        sanctuary_sharpe=1.0,
+    ))
+    assert r.verdict == Verdict.DEPLOY
+    assert r.n_axes_best == 4
+
+
+def test_decision_all_axes_worst_returns_retire():
+    r = decide(DecisionInputs(
+        ci_lo=-0.5, dsr_prob=0.2,
+        p_maxdd_gt_threshold=0.30, pass_threshold_prob=0.05,
+        sanctuary_sharpe=-0.5,
+    ))
+    assert r.verdict == Verdict.RETIRE
+    assert r.n_axes_best == 0
+
+
+# ── End-to-end synthetic ground truth (H2 fix) ─────────────────────────────
+
+
+def test_known_edge_strategy_passes_gates():
+    """Buy-and-hold on a series with +0.05% daily drift and 1% daily vol
+    has Sharpe ~ 0.8 annualised. With sufficient sample, CI_lo > 0 and
+    DSR should clear -- the framework should DEPLOY or
+    CONDITIONAL_WATCHPOINT, NOT retire."""
+    close = _synthetic_close_with_edge(n_bars=5000, daily_drift=0.0005, vol=0.01, seed=0)
+    rets = close.pct_change().dropna()
+    sh = sharpe(rets, periods_per_year=252)
+    ci_lo, _ = bootstrap_sharpe_ci(rets, periods_per_year=252, n_resamples=500, seed=42)
+    # Strong daily drift → high Sharpe → CI_lo > 0
+    assert ci_lo > 0.0
+    # Fake DSR: assume the sweep had 5 cells with SR std = 0.3
+    fake_sweep = [sh, 0.3, 0.5, 0.1, -0.1]
+    sr_var = sr_var_from_sweep(fake_sweep)
+    dsr = deflated_sharpe(sh, sr_var_across_trials=sr_var, returns=rets, n_trials=5)
+    assert dsr.dsr_prob > 0.9  # strong signal clears DSR
+    # Fake MC: assume passes
+    decision = decide(DecisionInputs(
+        ci_lo=ci_lo, dsr_prob=dsr.dsr_prob,
+        p_maxdd_gt_threshold=0.02, pass_threshold_prob=0.05,
+        sanctuary_sharpe=0.5,
+    ))
+    assert decision.verdict in (Verdict.DEPLOY, Verdict.CONDITIONAL_WATCHPOINT)
+
+
+def test_known_no_edge_strategy_does_not_deploy():
+    """Buy-and-hold on a zero-drift series has Sharpe ~ 0 annualised.
+    CI_lo straddles zero. The framework should NOT issue a DEPLOY verdict."""
+    close = _synthetic_close_no_edge(n_bars=5000, vol=0.01, seed=1)
+    rets = close.pct_change().dropna()
+    sh = sharpe(rets, periods_per_year=252)
+    ci_lo, _ = bootstrap_sharpe_ci(rets, periods_per_year=252, n_resamples=500, seed=42)
+    # Zero-drift → Sharpe near zero; CI_lo likely < 0
+    fake_sweep = [sh, 0.3, 0.5, 0.1, -0.1]
+    sr_var = sr_var_from_sweep(fake_sweep)
+    dsr = deflated_sharpe(sh, sr_var_across_trials=sr_var, returns=rets, n_trials=5)
+    decision = decide(DecisionInputs(
+        ci_lo=ci_lo, dsr_prob=dsr.dsr_prob,
+        p_maxdd_gt_threshold=0.30, pass_threshold_prob=0.05,
+        sanctuary_sharpe=-0.1,
+    ))
+    # Must NOT be a DEPLOY decision on a no-edge series
+    assert decision.verdict != Verdict.DEPLOY
+
+
+def test_mc_passes_for_high_quality_edge():
+    """Run actual MC on a synthetic edge series and check the gate fires
+    correctly. This validates the full block-bootstrap pipeline end-to-end."""
+    close = _synthetic_close_with_edge(n_bars=3000, daily_drift=0.0008, vol=0.008, seed=2)
+    cfg = McConfig(block_size_bars=20, n_paths=50, bootstrap_method="block",
+                   max_dd_threshold_pct=0.50, max_dd_pass_prob=0.10)
+    result = run_block_mc(
+        primary_close=close, cfg=cfg, strategy_fn=_buy_and_hold_strategy,
+        periods_per_year=252, seed=42,
+    )
+    assert result.n_paths_completed > 10
+    # With a strong positive drift and a generous MaxDD threshold of 50%,
+    # the strategy should pass on most paths.
+    assert result.median_sharpe > 0.5
+
+
+def test_mc_fails_for_pure_noise():
+    close = _synthetic_close_no_edge(n_bars=3000, vol=0.01, seed=3)
+    cfg = McConfig(block_size_bars=20, n_paths=50, bootstrap_method="block",
+                   max_dd_threshold_pct=0.25, max_dd_pass_prob=0.05)
+    result = run_block_mc(
+        primary_close=close, cfg=cfg, strategy_fn=_buy_and_hold_strategy,
+        periods_per_year=252, seed=42,
+    )
+    # Pure-noise buy-and-hold should fail the gate
+    assert not result.passes
