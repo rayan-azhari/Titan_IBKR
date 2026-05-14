@@ -26,7 +26,8 @@ T = TypeVar("T", pd.DataFrame, pd.Series)
 @dataclass(frozen=True)
 class SanctuarySlice:
     """Result of `slice_sanctuary`. Holds the visible portion + the
-    held-out sanctuary, plus the exact boundary timestamp for audit logs."""
+    held-out sanctuary, plus the exact boundary timestamp for audit logs.
+    """
 
     visible: pd.DataFrame
     sanctuary: pd.DataFrame

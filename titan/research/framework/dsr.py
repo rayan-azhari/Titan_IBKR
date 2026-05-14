@@ -37,13 +37,13 @@ class DsrResult:
     sharpe: float
     n_trials: int
     sr_var_across_trials: float
-    e_max_sr: float        # expected null max SR over N trials
+    e_max_sr: float  # expected null max SR over N trials
     skew: float
-    kurt: float            # Pearson kurt (3 = normal)
+    kurt: float  # Pearson kurt (3 = normal)
     n_obs: int
-    z: float               # variance-stabilised gap
-    dsr_prob: float        # probability the true Sharpe > 0 after deflation
-    survivors_only: bool   # True if sr_var was computed from survivors (optimistic)
+    z: float  # variance-stabilised gap
+    dsr_prob: float  # probability the true Sharpe > 0 after deflation
+    survivors_only: bool  # True if sr_var was computed from survivors (optimistic)
 
 
 def _safe_skew_kurt(returns: pd.Series | np.ndarray) -> tuple[float, float]:
@@ -81,21 +81,29 @@ def deflated_sharpe(
         Variance of Sharpes across the FULL sweep. If only survivors are
         available, pass `survivors_only=True` -- the result is flagged
         as OPTIMISTIC (true variance is larger, true DSR is worse).
-    returns:
+
+    Returns:
         This trial's per-bar (or per-day) return series. Skew + kurt are
         estimated from this.
     n_trials:
         Total cells in the sweep (NOT survivors).
 
-    Returns
+    Returns:
     -------
     DsrResult with the full diagnostic breakdown.
     """
     if n_trials < 2 or sr_var_across_trials <= 0:
         return DsrResult(
-            sharpe=sr_hat, n_trials=n_trials, sr_var_across_trials=sr_var_across_trials,
-            e_max_sr=0.0, skew=0.0, kurt=3.0, n_obs=len(pd.Series(returns).dropna()),
-            z=0.0, dsr_prob=0.0, survivors_only=survivors_only,
+            sharpe=sr_hat,
+            n_trials=n_trials,
+            sr_var_across_trials=sr_var_across_trials,
+            e_max_sr=0.0,
+            skew=0.0,
+            kurt=3.0,
+            n_obs=len(pd.Series(returns).dropna()),
+            z=0.0,
+            dsr_prob=0.0,
+            survivors_only=survivors_only,
         )
 
     sr_std = float(math.sqrt(sr_var_across_trials))
@@ -111,9 +119,16 @@ def deflated_sharpe(
     denom_inside = 1.0 - skew * sr_hat + (kurt - 1.0) / 4.0 * sr_hat**2
     if denom_inside <= 0 or T < 2:
         return DsrResult(
-            sharpe=sr_hat, n_trials=n_trials, sr_var_across_trials=sr_var_across_trials,
-            e_max_sr=float(e_max_sr), skew=skew, kurt=kurt, n_obs=n_obs,
-            z=0.0, dsr_prob=0.0, survivors_only=survivors_only,
+            sharpe=sr_hat,
+            n_trials=n_trials,
+            sr_var_across_trials=sr_var_across_trials,
+            e_max_sr=float(e_max_sr),
+            skew=skew,
+            kurt=kurt,
+            n_obs=n_obs,
+            z=0.0,
+            dsr_prob=0.0,
+            survivors_only=survivors_only,
         )
     denom = denom_inside / (T - 1)
     z = float((sr_hat - e_max_sr) / math.sqrt(denom))
@@ -136,7 +151,8 @@ def sr_var_from_sweep(sweep_sharpes: list[float] | np.ndarray) -> float:
     """Sample variance of Sharpes across an entire sweep. The standard
     way to estimate `sr_var_across_trials`. Pass the FULL sweep, not
     just survivors (or pass survivors and set `survivors_only=True` in
-    deflated_sharpe to flag the result as optimistic)."""
+    deflated_sharpe to flag the result as optimistic).
+    """
     arr = np.asarray(sweep_sharpes, dtype=float)
     arr = arr[np.isfinite(arr)]
     if len(arr) < 2:

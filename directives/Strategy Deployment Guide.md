@@ -20,10 +20,12 @@ research/ (WFO validated)
 
 ### Quality gates before deployment
 
-- [ ] WFO Sharpe > 0.5 with >= 50% positive folds
-- [ ] IS/OOS parity >= 0.5 on at least one parameter set
+- [ ] Classified under `titan.research.framework.StrategyClass`
+- [ ] Pre-registered directive committed BEFORE any data examined (V3.6 L01-L09)
+- [ ] Framework verdict from `decide(DecisionInputs(...))` is `DEPLOY` or `CONDITIONAL_WATCHPOINT`
+- [ ] `CI_lo > 0`, `dsr_prob >= 0.95`, `P(MaxDD>threshold)` within class gate
+- [ ] Sanctuary divergence test does NOT flag lucky_flag/unlucky_flag
 - [ ] Minimum 50 OOS trades (or 10 for slow daily strategies)
-- [ ] Documented in `directives/System Status and Roadmap.md`
 - [ ] `uv run ruff check . --fix && uv run ruff format . && uv run pytest tests/ -v`
 
 ---
@@ -152,5 +154,6 @@ For each new strategy:
 - [ ] `uv run ruff check . --fix && uv run ruff format .`
 - [ ] `uv run pytest tests/ -v` passes
 - [ ] Added to Paper Trading Guide
-- [ ] Added to System Status and Roadmap
+- [ ] Result log + verdict appended to the pre-reg directive (§4)
+- [ ] Any new lesson appended to `directives/V3.6 Lessons Catalogue.md`
 - [ ] Paper traded for minimum 30 days before live

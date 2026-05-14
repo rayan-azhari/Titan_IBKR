@@ -164,9 +164,11 @@ logging "market data not subscribed" with no other clue.
 
 - **No code changes** to `titan/strategies/`.
 - **No config changes** to `config/*.toml`.
-- **No backtest re-runs.** Same instruments → same historical returns.
-  The OOS Sharpe figures in `directives/System Status and Roadmap.md`
-  remain the validated numbers.
+- **No backtest re-runs as part of this account setup.** Same instruments →
+  same historical returns. Note however that under the V2.0 cleanse all V1-era
+  Sharpe figures were declared untrustworthy — each strategy still needs a
+  framework-audited pre-reg + result log before its Sharpe/CI claims are
+  deployable. See `directives/README V2.0.md`.
 - **No data downloads.** The existing `data/CSPX_D.parquet` and
   `data/IHYU_D.parquet` warmup files are still authoritative; live
   bars stream in over the IBKR socket.

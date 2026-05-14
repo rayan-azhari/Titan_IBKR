@@ -20,7 +20,6 @@ from research.ic_analysis.ic_census_lib import (
     slice_sanctuary,
 )
 
-
 # ── (1) Causality smoke test ───────────────────────────────────────────────
 
 
@@ -41,10 +40,12 @@ def test_assert_causal_passes_for_causal_aggregator():
 def test_assert_causal_catches_leaky_aggregator():
     src = _hourly_series(n=300)
     dst_index = pd.date_range(src.index[0], src.index[-1], freq="1D", tz="UTC")
+
     # Leaky: bin includes [T, T+1d] AND no .shift(1). Output at D-bar T
     # depends on H1 bars from the SAME day T (which is forbidden).
     def leaky_agg(s, di):
         return s.resample("1D", label="left", closed="right").last().reindex(di)
+
     with pytest.raises(AssertionError):
         assert_causal(leaky_agg, src, dst_index, n_trials=5)
 
@@ -223,8 +224,9 @@ def test_fold_ic_signs_strict_quorum_rejects_split_vote():
 
 
 def _cells(ics_ts: list[tuple[float, float]]) -> list[CellResult]:
-    return [CellResult(params={"i": i}, ic=ic, t_stat=t, n_obs=500)
-            for i, (ic, t) in enumerate(ics_ts)]
+    return [
+        CellResult(params={"i": i}, ic=ic, t_stat=t, n_obs=500) for i, (ic, t) in enumerate(ics_ts)
+    ]
 
 
 def test_plateau_passes_with_smooth_neighbours():
@@ -280,7 +282,7 @@ def test_plateau_rejects_high_ic_range():
 
 def test_mtf_agreement_passes_with_quorum():
     per_tf = {
-        "D":  CellResult(params={}, ic=0.05, t_stat=5.0, n_obs=500),
+        "D": CellResult(params={}, ic=0.05, t_stat=5.0, n_obs=500),
         "H4": CellResult(params={}, ic=0.04, t_stat=4.6, n_obs=500),
         "H1": CellResult(params={}, ic=-0.02, t_stat=-2.0, n_obs=500),  # fails floor
     }
@@ -291,7 +293,7 @@ def test_mtf_agreement_passes_with_quorum():
 
 def test_mtf_agreement_fails_single_tf():
     per_tf = {
-        "D":  CellResult(params={}, ic=0.05, t_stat=5.0, n_obs=500),
+        "D": CellResult(params={}, ic=0.05, t_stat=5.0, n_obs=500),
         "H4": None,
         "H1": None,
     }
@@ -301,7 +303,7 @@ def test_mtf_agreement_fails_single_tf():
 
 def test_mtf_agreement_fails_on_sign_disagreement():
     per_tf = {
-        "D":  CellResult(params={}, ic=0.05, t_stat=5.0, n_obs=500),
+        "D": CellResult(params={}, ic=0.05, t_stat=5.0, n_obs=500),
         "H4": CellResult(params={}, ic=-0.05, t_stat=-5.0, n_obs=500),
         "H1": CellResult(params={}, ic=0.03, t_stat=3.0, n_obs=500),  # fails floor
     }
@@ -389,9 +391,7 @@ def test_vix9d_over_vix_produces_finite_z_score():
     vix9d = pd.Series(vix.values + rng.normal(0, 1.5, 500), index=idx)
     vix_aligned = anchored_aggregate(vix, idx, higher_tf=False)
     vix9d_aligned = anchored_aggregate(vix9d, idx, higher_tf=False)
-    sig = reg["vix9d_over_vix"]["fn"](
-        close, vix9d=vix9d_aligned, vix=vix_aligned, smoothing=5
-    )
+    sig = reg["vix9d_over_vix"]["fn"](close, vix9d=vix9d_aligned, vix=vix_aligned, smoothing=5)
     # First ~65 bars NaN (5-bar smoothing + 60-bar z-score window + 1-bar shift).
     finite = sig.dropna()
     assert len(finite) > 400
@@ -409,11 +409,13 @@ def test_vrp_z_responds_to_implied_vs_realised():
     # And a VIX series fixed high (implied >> realised).
     vix_high = pd.Series(25.0, index=idx)
     vix_high_aligned = anchored_aggregate(vix_high, idx, higher_tf=False)
-    sig_high = reg["vrp_z"]["fn"](close, vix=vix_high_aligned, rv_window=20)
+    _ = reg["vrp_z"]["fn"](close, vix=vix_high_aligned, rv_window=20)
     # The level itself is high VRP; the *z-score* over its own series is
     # near zero (constant). So we test the underlying VRP is positive
     # by checking that vrp series mean (before z) is positive.
-    vrp_calm = (vix_high_aligned / 100.0) - np.log(close).diff().rolling(20).std(ddof=1) * np.sqrt(252)
+    vrp_calm = (vix_high_aligned / 100.0) - np.log(close).diff().rolling(20).std(ddof=1) * np.sqrt(
+        252
+    )
     assert vrp_calm.dropna().mean() > 0.0
 
 

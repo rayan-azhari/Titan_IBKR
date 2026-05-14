@@ -7,7 +7,7 @@
 
 A live algorithmic-trading system at this scale faces two distinct risk pools:
 
-- **Statistical risk** — what the price path can do to the strategy. The Samir-Stack risk-of-ruin analysis ([run_risk_of_ruin.py](../research/samir_stack/run_risk_of_ruin.py)) shows this is essentially zero (P(MaxDD > 25%) over 20 years ≈ 0% in 5,000 bootstrap paths).
+- **Statistical risk** — what the price path can do to the strategy. Tail-risk Monte Carlo is now done class-specifically via `titan.research.framework.run_block_mc` with gates defined per `StrategyClass` in `framework.typology.DEFAULTS`. (The prior `run_risk_of_ruin.py` and its P(MaxDD>25%)≈0% claim were removed in the V2.0 cleanse — that gate was the broken uniform 25%/5% calibration, replaced by class-specific thresholds.)
 - **Operational risk** — what bugs, deployments, and infrastructure failures can do to the strategy. The May 11 incident demonstrated this is the *dominant* risk: a single Cython enum-repr change quietly inflated positions to ~8× target on the live paper account before being caught.
 
 The goal of this framework is to **systematically push bug detection earlier in the lifecycle**, where it's orders of magnitude cheaper to fix.

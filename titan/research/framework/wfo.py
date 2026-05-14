@@ -17,7 +17,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator
 
-import numpy as np
 import pandas as pd
 
 from titan.research.framework.typology import WfoConfig
@@ -29,9 +28,9 @@ class Fold:
 
     fold_id: int
     is_start: int
-    is_end_excl: int       # exclusive
-    oos_start: int         # == is_end_excl
-    oos_end_excl: int      # exclusive
+    is_end_excl: int  # exclusive
+    oos_start: int  # == is_end_excl
+    oos_end_excl: int  # exclusive
     # Wall-clock boundaries for audit logs.
     is_start_ts: pd.Timestamp
     is_end_ts: pd.Timestamp
@@ -66,7 +65,7 @@ def build_folds(
         counts. For D-frequency strategies use 252; for H1 use 252*24;
         etc.
 
-    Returns
+    Returns:
     -------
     folds : list[Fold]
         Possibly empty if the visible window is too short for the
@@ -91,17 +90,19 @@ def build_folds(
             oos_end = is_end + oos_bars
             if oos_end > n:
                 break
-            folds.append(Fold(
-                fold_id=k,
-                is_start=0,
-                is_end_excl=is_end,
-                oos_start=is_end,
-                oos_end_excl=oos_end,
-                is_start_ts=visible_index[0],
-                is_end_ts=visible_index[is_end - 1],
-                oos_start_ts=visible_index[is_end],
-                oos_end_ts=visible_index[oos_end - 1],
-            ))
+            folds.append(
+                Fold(
+                    fold_id=k,
+                    is_start=0,
+                    is_end_excl=is_end,
+                    oos_start=is_end,
+                    oos_end_excl=oos_end,
+                    is_start_ts=visible_index[0],
+                    is_end_ts=visible_index[is_end - 1],
+                    oos_start_ts=visible_index[is_end],
+                    oos_end_ts=visible_index[oos_end - 1],
+                )
+            )
     elif cfg.is_mode == "rolling":
         # Fixed-length IS that slides forward. Stride = oos_bars; overlap
         # of OOS windows is allowed if cfg.stride_overlap_allowed.
@@ -113,26 +114,35 @@ def build_folds(
             oos_end = is_end + oos_bars
             if oos_end > n:
                 break
-            folds.append(Fold(
-                fold_id=k,
-                is_start=is_start,
-                is_end_excl=is_end,
-                oos_start=is_end,
-                oos_end_excl=oos_end,
-                is_start_ts=visible_index[is_start],
-                is_end_ts=visible_index[is_end - 1],
-                oos_start_ts=visible_index[is_end],
-                oos_end_ts=visible_index[oos_end - 1],
-            ))
+            folds.append(
+                Fold(
+                    fold_id=k,
+                    is_start=is_start,
+                    is_end_excl=is_end,
+                    oos_start=is_end,
+                    oos_end_excl=oos_end,
+                    is_start_ts=visible_index[is_start],
+                    is_end_ts=visible_index[is_end - 1],
+                    oos_start_ts=visible_index[is_end],
+                    oos_end_ts=visible_index[oos_end - 1],
+                )
+            )
     else:
         raise ValueError(f"Unknown WFO mode: {cfg.is_mode!r}")
     return folds
 
 
 def iter_folds(
-    visible: pd.DataFrame, cfg: WfoConfig, *, bars_per_year: float,
+    visible: pd.DataFrame,
+    cfg: WfoConfig,
+    *,
+    bars_per_year: float,
 ) -> Iterator[tuple[Fold, pd.DataFrame, pd.DataFrame]]:
     """Convenience generator: yields ``(fold, is_df, oos_df)`` tuples."""
     folds = build_folds(visible.index, cfg, bars_per_year=bars_per_year)
     for f in folds:
-        yield f, visible.iloc[f.is_start:f.is_end_excl], visible.iloc[f.oos_start:f.oos_end_excl]
+        yield (
+            f,
+            visible.iloc[f.is_start : f.is_end_excl],
+            visible.iloc[f.oos_start : f.oos_end_excl],
+        )

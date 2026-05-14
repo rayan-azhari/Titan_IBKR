@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from titan.research.metrics import BARS_PER_YEAR
 
 # ── (1) Causality smoke test (audit A10) ───────────────────────────────────
 
@@ -252,9 +253,13 @@ def plateau_stable(
     left = cells[headline_idx - 1]
     right = cells[headline_idx + 1]
     if min(abs(left.t_stat), abs(right.t_stat)) < neighbour_t_floor:
-        return False, headline, (
-            f"neighbour |t| min={min(abs(left.t_stat), abs(right.t_stat)):.2f} "
-            f"< {neighbour_t_floor}"
+        return (
+            False,
+            headline,
+            (
+                f"neighbour |t| min={min(abs(left.t_stat), abs(right.t_stat)):.2f} "
+                f"< {neighbour_t_floor}"
+            ),
         )
     signs = {np.sign(c.ic) for c in (left, headline, right) if not np.isnan(c.ic)}
     if len(signs) > 1:
@@ -388,7 +393,9 @@ def _overnight_gap_z(close: pd.Series, lookback_bars: int) -> pd.Series:
     return (r - mu) / sd.replace(0, np.nan)
 
 
-def _intraday_range_atr(close: pd.Series, period: int, high: pd.Series, low: pd.Series) -> pd.Series:
+def _intraday_range_atr(
+    close: pd.Series, period: int, high: pd.Series, low: pd.Series
+) -> pd.Series:
     tr_components = pd.concat(
         [
             high - low,
@@ -503,9 +510,7 @@ def _vix9d_over_vix(
     implied vol — typical right at a vol spike, AFTER which equities
     tend to recover. Expected IC sign on equity targets: POSITIVE for
     high z-score (post-spike rebound)."""
-    return _vix_term_ratio_z(
-        close, numerator=vix9d, denominator=vix, smoothing=smoothing
-    )
+    return _vix_term_ratio_z(close, numerator=vix9d, denominator=vix, smoothing=smoothing)
 
 
 def _vix_over_vix3m(
@@ -521,9 +526,7 @@ def _vix_over_vix3m(
     futures are pricing near-term fear above medium-term fear.
     Historically a precursor to equity weakness. Expected IC sign on
     equity targets: NEGATIVE for high z-score."""
-    return _vix_term_ratio_z(
-        close, numerator=vix, denominator=vix3m, smoothing=smoothing
-    )
+    return _vix_term_ratio_z(close, numerator=vix, denominator=vix3m, smoothing=smoothing)
 
 
 def _vrp_z(
@@ -545,7 +548,9 @@ def _vrp_z(
     """
     vix = vix.reindex(close.index)
     log_rets = np.log(close).diff()
-    rv = log_rets.rolling(rv_window, min_periods=rv_window).std(ddof=1) * math.sqrt(252)
+    rv = log_rets.rolling(rv_window, min_periods=rv_window).std(ddof=1) * np.sqrt(
+        BARS_PER_YEAR["D"]
+    )
     vrp = (vix / 100.0) - rv
     mu = vrp.rolling(norm_window, min_periods=norm_window).mean()
     sd = vrp.rolling(norm_window, min_periods=norm_window).std(ddof=1)
@@ -617,51 +622,46 @@ def signal_factories() -> dict[str, dict[str, Any]]:
     """
     return {
         # ── Single-instrument signals ─────────────────────────────────
-        "momentum":          {"fn": _momentum,          "needs": ["close"]},
-        "ewmac":             {"fn": _ewmac,             "needs": ["close"]},
-        "ma_distance":       {"fn": _ma_distance,       "needs": ["close"]},
-        "rsi_dev":           {"fn": lambda c, period: _wilder_rsi(c, period) - 50.0,
-                              "needs": ["close"]},
-        "vwap_overshoot":    {"fn": _vwap_overshoot,    "needs": ["close"]},
+        "momentum": {"fn": _momentum, "needs": ["close"]},
+        "ewmac": {"fn": _ewmac, "needs": ["close"]},
+        "ma_distance": {"fn": _ma_distance, "needs": ["close"]},
+        "rsi_dev": {"fn": lambda c, period: _wilder_rsi(c, period) - 50.0, "needs": ["close"]},
+        "vwap_overshoot": {"fn": _vwap_overshoot, "needs": ["close"]},
         # Alias for the AUD/JPY fine-grid follow-up directive
         # (directives/IC AUDJPY Vwap Fine-Grid 2026-05-13.md). Same formula;
         # separate name keeps the two pre-registrations clearly distinct.
-        "vwap_overshoot_fine": {"fn": _vwap_overshoot,  "needs": ["close"]},
-        "bb_pctb":           {"fn": lambda c, window: _bb_pctb(c, window) - 0.5,
-                              "needs": ["close"]},
-        "realized_vol_z":    {"fn": _realized_vol_z,    "needs": ["close"]},
-        "overnight_gap_z":   {"fn": _overnight_gap_z,   "needs": ["close"]},
-        "intraday_range_atr": {"fn": _intraday_range_atr,
-                               "needs": ["close", "high", "low"]},
+        "vwap_overshoot_fine": {"fn": _vwap_overshoot, "needs": ["close"]},
+        "bb_pctb": {"fn": lambda c, window: _bb_pctb(c, window) - 0.5, "needs": ["close"]},
+        "realized_vol_z": {"fn": _realized_vol_z, "needs": ["close"]},
+        "overnight_gap_z": {"fn": _overnight_gap_z, "needs": ["close"]},
+        "intraday_range_atr": {"fn": _intraday_range_atr, "needs": ["close", "high", "low"]},
         # Confluence factory (directives/IC Confluence Range-Reversion 2026-05-14.md):
         # range-expansion gated to zero when RSI is overbought.
-        "range_atr_when_oversold": {"fn": _range_atr_when_oversold,
-                                    "needs": ["close", "high", "low"]},
+        "range_atr_when_oversold": {
+            "fn": _range_atr_when_oversold,
+            "needs": ["close", "high", "low"],
+        },
         # ── Cross-asset signals (Anchored MTF Rule applied by runner) ─
-        "hyg_ief_z":         {"fn": _hyg_ief_z,
-                              "needs": ["close"],
-                              "externals": ["HYG", "IEF"]},
-        "dxy_z":             {"fn": _dxy_z,
-                              "needs": ["close"],
-                              "externals": ["EUR_USD"]},
+        "hyg_ief_z": {"fn": _hyg_ief_z, "needs": ["close"], "externals": ["HYG", "IEF"]},
+        "dxy_z": {"fn": _dxy_z, "needs": ["close"], "externals": ["EUR_USD"]},
         # ── Phase B cross-asset signals ──────────────────────────────
         # Term structure: VIX9D / VIX and VIX / VIX3M ratios as predictors
         # of forward equity returns. Sweep parameter is the ratio-smoothing
         # window before z-score normalisation (which uses a fixed 60-bar
         # window per Phase B directive §2.1).
-        "vix9d_over_vix":    {"fn": _vix9d_over_vix,
-                              "needs": ["close"],
-                              "externals": ["VIX9D", "VIX"]},
-        "vix_over_vix3m":    {"fn": _vix_over_vix3m,
-                              "needs": ["close"],
-                              "externals": ["VIX", "VIX3M"]},
+        "vix9d_over_vix": {
+            "fn": _vix9d_over_vix,
+            "needs": ["close"],
+            "externals": ["VIX9D", "VIX"],
+        },
+        "vix_over_vix3m": {
+            "fn": _vix_over_vix3m,
+            "needs": ["close"],
+            "externals": ["VIX", "VIX3M"],
+        },
         # Vol-risk-premium: VIX minus rolling realised vol, z-scored.
-        "vrp_z":             {"fn": _vrp_z,
-                              "needs": ["close"],
-                              "externals": ["VIX"]},
+        "vrp_z": {"fn": _vrp_z, "needs": ["close"], "externals": ["VIX"]},
         # Cross-region lead-lag: yesterday's SPY return predicting today's
         # EU index return.
-        "us_lead_eu":        {"fn": _us_lead_eu,
-                              "needs": ["close"],
-                              "externals": ["SPY"]},
+        "us_lead_eu": {"fn": _us_lead_eu, "needs": ["close"], "externals": ["SPY"]},
     }

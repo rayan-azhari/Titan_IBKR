@@ -25,8 +25,9 @@ The operator can move toward L=3 if more aggressive sizing is desired.
 ## v2.0 history note
 
 This guide was completely rewritten on 2026-05-13 to describe the
-deployable strategy from Phase 5 of the [2026-05-12 audit
-remediation](Samir-Stack%20Remediation%20Plan%202026-05-12.md). The
+deployable strategy from Phase 5 of the 2026-05-12 audit remediation
+(remediation plan deleted in the V2.0 cleanse — lessons live in
+`V3.6 Lessons Catalogue.md` A1-A11 + V3.1-V3.6). The
 **v1.0 guide described a 40/60 + capitulation variant** that produced
 9.13% CAGR honestly. The **previously-deployed live config** was a
 10/90 + 8% vol-target variant that the external audit found
@@ -49,6 +50,13 @@ Samir-Stack v2.0 is a **regime-gated leveraged-equity-plus-bond stack** designed
 - Sanctuary Sharpe: 1.02
 - 2022 cumulative return: -22.1%
 - Underlying-resampled MC P(MaxDD > 50%): **< 1%** ✓ (RoR-acceptable)
+
+> [!NOTE]
+> **V2.0 status (2026-05-14):** The numbers above were the Phase 5 sweep result
+> at the time of writing. Post-cleanse, this strategy still needs a fresh
+> framework-audited pre-reg + result log under `titan.research.framework`
+> (classify as `CROSS_ASSET_MOMENTUM` + overlay) before its CI / DSR / MC verdict
+> can be re-trusted as deployment evidence. Current verdict: `tier=unconfirmed`.
 
 **Live deployment (this guide, capitulation deferred to Phase 6b):**
 - Expected stitched Sharpe: ~0.88 (vs 0.94 with capitulation)
@@ -560,11 +568,13 @@ uv run pytest tests/test_samir_stack_engines.py -v
 ## 14. References
 
 **Within this project:**
-- [Samir-Stack Remediation Plan 2026-05-12.md](Samir-Stack%20Remediation%20Plan%202026-05-12.md) — full 7-phase plan with all gates, decisions, and audit-finding closures.
+- `directives/V3.6 Lessons Catalogue.md` — distilled lessons from the May 2026 Samir-Stack audit + V3 re-derivation (A1-A11, V3.1-V3.6) live here now. The original `Samir-Stack Remediation Plan 2026-05-12.md` was removed in the V2.0 cleanse — its lessons survive in this catalogue.
+- `directives/Samir V3 — VIX-HMM Strategy Design 2026-05-13.md` — V3 design directive (kept).
+- `directives/Methodology Audit & Unified Framework 2026-05-14.md` — the unified framework that supersedes the per-audit remediation plans.
 - `directives/IC Signal Analysis.md` — IC validation methodology.
 - `references/portfolio-risk-architecture.md` — PRM contract.
 - `references/research-math-guardrails.md` — research math discipline.
-- `directives/Emergency Operations.md` — kill switch + halt procedures.
+- `directives/Deployment & Operations.md` — kill switch + halt procedures.
 
 **External:**
 - Samir Varma — risk-classification framework (binary regime model).

@@ -103,4 +103,4 @@ Either obtain professional client status (volume/experience requirements) or red
 - `directives/IBKR & NautilusTrader API Reference.md` — current adapter approach
 - `directives/Docker Paper Trading Guide.md` — current 2-container Docker setup (would simplify to 1 container)
 - `directives/Samir-Stack Strategy Guide.md` — strategy that depends on LSE UCITS ETFs (IG only)
-- `directives/System Status and Roadmap.md` — full portfolio status
+- `directives/README V2.0.md` — current cleansed-state portfolio status

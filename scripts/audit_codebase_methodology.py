@@ -40,7 +40,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Files / dirs to exclude (auto-generated, tests, third-party, the audit
 # script itself, the framework's own implementation).
 EXCLUDE_DIRS = {
-    ".venv", ".git", "__pycache__", ".tmp", "node_modules", "data", "models",
+    ".venv",
+    ".git",
+    "__pycache__",
+    ".tmp",
+    "node_modules",
+    "data",
+    "models",
     "resources",
 }
 EXCLUDE_FILES = {
@@ -48,11 +54,16 @@ EXCLUDE_FILES = {
     # Framework modules deliberately use the patterns they're standardising
     # (e.g. sharpe call sites with periods_per_year). Excluding the
     # framework itself keeps the audit signal-to-noise high.
-    "framework/typology.py", "framework/wfo.py", "framework/sanctuary.py",
-    "framework/mc.py", "framework/dsr.py", "framework/decision.py",
+    "framework/typology.py",
+    "framework/wfo.py",
+    "framework/sanctuary.py",
+    "framework/mc.py",
+    "framework/dsr.py",
+    "framework/decision.py",
     "framework/__init__.py",
     # Tests + their helpers
-    "test_framework_synthetic.py", "test_ic_census_lib.py",
+    "test_framework_synthetic.py",
+    "test_ic_census_lib.py",
     # The shared metrics module DEFINES the corrected Sharpe -- it's
     # allowed to mention sqrt(periods_per_year) etc.
     "metrics.py",
@@ -61,7 +72,7 @@ EXCLUDE_FILES = {
 
 @dataclass
 class Finding:
-    severity: str        # "major" | "minor"
+    severity: str  # "major" | "minor"
     pattern_id: str
     file: str
     line: int
@@ -74,46 +85,71 @@ class Finding:
 
 PATTERNS: list[tuple[str, str, list[str], str]] = [
     # (pattern_id, severity, [regexes], note)
-    ("A1_hardcoded_sqrt_252",
-     "minor",
-     [r"\bsqrt\s*\(\s*252\s*\)", r"np\.sqrt\s*\(\s*252\s*\)", r"math\.sqrt\s*\(\s*252\s*\)"],
-     "Hard-coded sqrt(252) outside shared metrics. Use titan.research.metrics.sharpe with explicit periods_per_year."),
-    ("A2_filter_then_annualise",
-     "minor",
-     [r"\[[a-zA-Z_]+\s*!=\s*0(?:\.0)?\s*\]\s*\.",
-      r"rets\s*\[\s*rets\s*!=\s*0",
-      r"returns\s*\[\s*returns\s*!=\s*0"],
-     "Filter-then-annualise (rets[rets!=0]) overstates Sharpe by sqrt(1/active_ratio)."),
-    ("B1_pos_times_ret_no_shift",
-     "major",
-     [r"(?<!\.shift\(1\)\s)\bpositions?\s*\*\s*(?:bar_)?returns?\b",
-      r"(?<!\.shift\(1\)\.fillna\(0\.0\)\s)\bpos\s*\*\s*(?:bar_)?ret(?:s|urns)?\b"],
-     "position * bar_return without .shift(1). Same-bar look-ahead if position uses close[t] and return is t-1 -> t."),
-    ("B4_expanding_close",
-     "minor",
-     [r"\.expanding\([^)]*\)\.std\(\)",
-      r"\.expanding\([^)]*\)\.mean\(\)",
-      r"close\.expanding\("],
-     "expanding() over close introduces look-ahead variance. Use is_frozen_zscore or rolling_zscore."),
-    ("B5_ffill_after_reindex",
-     "major",
-     [r"\.reindex\([^)]*\)\.ffill\(",
-      r"\.ffill\(\)\.reindex\("],
-     "ffill of higher-TF onto lower-TF without prior .shift(1) is the EUR/USD MTF +1.94 Sharpe bug pattern."),
-    ("A3_periods_per_year_default",
-     "major",
-     [r"sharpe\s*\([^)]*\)\s*(?!\*)"],
-     "Sharpe call without periods_per_year kwarg. Every call must pass explicit periods_per_year."),
-    ("G1_local_sharpe_no_kwarg",
-     "minor",
-     [r"def\s+(_?\w*sharpe)\s*\(\s*[^,)]+\s*\):",
-      r"def\s+(_?\w*sharpe)\s*\(\s*[^,)]+\s*\)\s*->"],
-     "Local Sharpe definition without periods_per_year argument. Reimplements rather than imports the shared metric."),
-    ("C4_global_zscore",
-     "minor",
-     [r"\([^)]*\.mean\(\)\s*\)\s*/\s*[^)]*\.std\(\)",
-      r"\(\s*\w+\s*-\s*\w+\.mean\(\)\)\s*/\s*\w+\.std\(\)"],
-     "Global (full-series) z-score is look-ahead. Use rolling_zscore or is_frozen_zscore."),
+    (
+        "A1_hardcoded_sqrt_252",
+        "minor",
+        [r"\bsqrt\s*\(\s*252\s*\)", r"np\.sqrt\s*\(\s*252\s*\)", r"math\.sqrt\s*\(\s*252\s*\)"],
+        "Hard-coded sqrt(252) outside shared metrics. Use titan.research.metrics.sharpe with explicit periods_per_year.",
+    ),
+    (
+        "A2_filter_then_annualise",
+        "minor",
+        [
+            r"\[[a-zA-Z_]+\s*!=\s*0(?:\.0)?\s*\]\s*\.",
+            r"rets\s*\[\s*rets\s*!=\s*0",
+            r"returns\s*\[\s*returns\s*!=\s*0",
+        ],
+        "Filter-then-annualise (rets[rets!=0]) overstates Sharpe by sqrt(1/active_ratio).",
+    ),
+    (
+        "B1_pos_times_ret_no_shift",
+        "major",
+        [
+            r"(?<!\.shift\(1\)\s)\bpositions?\s*\*\s*(?:bar_)?returns?\b",
+            r"(?<!\.shift\(1\)\.fillna\(0\.0\)\s)\bpos\s*\*\s*(?:bar_)?ret(?:s|urns)?\b",
+        ],
+        "position * bar_return without .shift(1). Same-bar look-ahead if position uses close[t] and return is t-1 -> t.",
+    ),
+    (
+        "B4_expanding_close",
+        "minor",
+        [
+            r"\.expanding\([^)]*\)\.std\(\)",
+            r"\.expanding\([^)]*\)\.mean\(\)",
+            r"close\.expanding\(",
+        ],
+        "expanding() over close introduces look-ahead variance. Use is_frozen_zscore or rolling_zscore.",
+    ),
+    (
+        "B5_ffill_after_reindex",
+        "major",
+        [r"\.reindex\([^)]*\)\.ffill\(", r"\.ffill\(\)\.reindex\("],
+        "ffill of higher-TF onto lower-TF without prior .shift(1) is the EUR/USD MTF +1.94 Sharpe bug pattern.",
+    ),
+    (
+        "A3_periods_per_year_default",
+        "major",
+        [r"sharpe\s*\([^)]*\)\s*(?!\*)"],
+        "Sharpe call without periods_per_year kwarg. Every call must pass explicit periods_per_year.",
+    ),
+    (
+        "G1_local_sharpe_no_kwarg",
+        "minor",
+        [
+            r"def\s+(_?\w*sharpe)\s*\(\s*[^,)]+\s*\):",
+            r"def\s+(_?\w*sharpe)\s*\(\s*[^,)]+\s*\)\s*->",
+        ],
+        "Local Sharpe definition without periods_per_year argument. Reimplements rather than imports the shared metric.",
+    ),
+    (
+        "C4_global_zscore",
+        "minor",
+        [
+            r"\([^)]*\.mean\(\)\s*\)\s*/\s*[^)]*\.std\(\)",
+            r"\(\s*\w+\s*-\s*\w+\.mean\(\)\)\s*/\s*\w+\.std\(\)",
+        ],
+        "Global (full-series) z-score is look-ahead. Use rolling_zscore or is_frozen_zscore.",
+    ),
 ]
 
 
@@ -147,32 +183,52 @@ def scan_file(path: Path) -> list[Finding]:
                     # Avoid false positives from function definitions / comments
                     if re.search(r"def\s+\w*sharpe", line) or "from " in line or "import" in line:
                         continue
-                    findings.append(Finding(
-                        severity=severity, pattern_id=pattern_id,
-                        file=str(path.relative_to(PROJECT_ROOT)),
-                        line=i, excerpt=stripped[:200], note=note,
-                    ))
+                    findings.append(
+                        Finding(
+                            severity=severity,
+                            pattern_id=pattern_id,
+                            file=str(path.relative_to(PROJECT_ROOT)),
+                            line=i,
+                            excerpt=stripped[:200],
+                            note=note,
+                        )
+                    )
                 continue
             for rx in regexes:
                 if re.search(rx, line):
-                    findings.append(Finding(
-                        severity=severity, pattern_id=pattern_id,
-                        file=str(path.relative_to(PROJECT_ROOT)),
-                        line=i, excerpt=stripped[:200], note=note,
-                    ))
+                    findings.append(
+                        Finding(
+                            severity=severity,
+                            pattern_id=pattern_id,
+                            file=str(path.relative_to(PROJECT_ROOT)),
+                            line=i,
+                            excerpt=stripped[:200],
+                            note=note,
+                        )
+                    )
                     break
     return findings
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Codebase methodology audit")
-    parser.add_argument("--paths", nargs="*", default=["research", "titan", "scripts"],
-                        help="Roots to scan (relative to project root).")
-    parser.add_argument("--write-parquet", action="store_true",
-                        help="Write findings to .tmp/reports/methodology_audit/findings_{stamp}.parquet")
-    parser.add_argument("--severity", default=None,
-                        choices=["major", "minor"],
-                        help="Filter findings to one severity.")
+    parser.add_argument(
+        "--paths",
+        nargs="*",
+        default=["research", "titan", "scripts"],
+        help="Roots to scan (relative to project root).",
+    )
+    parser.add_argument(
+        "--write-parquet",
+        action="store_true",
+        help="Write findings to .tmp/reports/methodology_audit/findings_{stamp}.parquet",
+    )
+    parser.add_argument(
+        "--severity",
+        default=None,
+        choices=["major", "minor"],
+        help="Filter findings to one severity.",
+    )
     args = parser.parse_args()
 
     all_findings: list[Finding] = []

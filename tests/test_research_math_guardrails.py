@@ -52,30 +52,17 @@ _ALLOWLIST_SQRT_252: dict[str, str] = {
     # module. Regex would false-positive on those comments.
     "titan/risk/portfolio_risk_manager.py": "only in docstrings",
     "titan/risk/portfolio_allocator.py": "only in docstrings",
-    # Archived research — kept for historical audit trail only; never
-    # imported from the live code path.
-    "research/_archive/portfolio/run_portfolio_research.py": "archived",
-    "research/_archive/portfolio/run_ftse_dax_expansion.py": "archived",
-    "research/_archive/portfolio/loaders/oos_returns.py": "archived",
-    # phase_portfolio.py has the docstring mention but no bare sqrt(252)
-    # call; it's already routed through the metrics module.
-    "research/auto/phase_portfolio.py": "docstring mention only",
-    # Samir-Stack research scripts — daily-bar backtests; migration to
-    # titan.research.metrics pending. Live runtime is in
-    # titan/strategies/samir_stack/ which is already routed through the
-    # metrics module (BARS_PER_YEAR["D"]).
+    # Samir-Stack research library files — daily-bar backtests; migration to
+    # titan.research.metrics pending. Live runtime in titan/strategies/samir_stack/
+    # is already routed through the metrics module (BARS_PER_YEAR["D"]).
     "research/samir_stack/indicators.py": "research script, daily bars",
     "research/samir_stack/wfo.py": "research script, daily bars",
     "research/samir_stack/wfo_stacked.py": "research script, daily bars",
     "research/samir_stack/stacked_strategy.py": "research script, daily bars",
     "research/samir_stack/strategy.py": "research script, daily bars",
     "research/samir_stack/benchmarks.py": "research script, daily bars",
-    "research/samir_stack/run_margin_variant.py": "research script, daily bars",
-    "research/samir_stack/run_samir_gem_hybrid.py": "research script, daily bars",
-    "research/samir_stack/run_samir_improvements.py": "research script, daily bars",
-    "research/samir_stack/run_improved_with_margin.py": "research script, daily bars",
-    "research/samir_stack/run_allocation_sweep.py": "research script, daily bars",
-    "research/samir_stack/run_wfo_allocation_comparison.py": "research script, daily bars",
+    # V2.0 cleanse: research/_archive/, research/auto/, and samir_stack
+    # run_*.py orchestrators were removed. Their allowlist entries are gone.
 }
 
 _ALLOWLIST_FILTER_THEN_STD: dict[str, str] = {

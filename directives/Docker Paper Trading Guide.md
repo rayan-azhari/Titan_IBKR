@@ -777,8 +777,10 @@ Before flipping to live:
    notification.
 3. Re-read `directives/Deployment & Operations.md` Section 1 (pre-flight
    checklist).
-4. Re-validate the strategies' OOS Sharpe ≥ 50% of IS Sharpe in
-   `directives/System Status and Roadmap.md`.
+4. Re-validate each strategy under the V2.0 framework — pre-reg directive
+   + WFO + DSR + decision-matrix verdict — before relying on its Sharpe
+   claim. See `directives/README V2.0.md` and `directives/Methodology Audit
+   & Unified Framework 2026-05-14.md`.
 
 `TWOFA_TIMEOUT_ACTION=restart` (already set in `docker-compose.yml`)
 makes the gateway re-prompt rather than silently stall when the push

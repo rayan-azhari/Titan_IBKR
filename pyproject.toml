@@ -53,9 +53,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["E402", "D"]           # Tests: allow late imports, skip docstring rules
+"tests/*" = ["E402", "E501", "D"]   # Tests: allow late imports + long lines, skip docstring rules
 "execution/*.py" = ["E402"]         # Scripts need sys.path/dotenv before imports
-"scripts/*" = ["E402", "D"]         # Standalone scripts: allow sys.path, skip docstrings
+"scripts/*" = ["E402", "E501", "D"] # Standalone scripts: allow sys.path + long lines, skip docstrings
 "research/**/*" = ["E501", "E702", "E741", "D", "E402"] # Research: relaxed (line len, semicolons, var names)
 "resources/**/*" = ["E501", "E702", "E741", "F841", "D", "E402"] # External reference code: relaxed rules
 "titan/strategies/**/*" = ["D"]       # Strategy files: skip docstring rules

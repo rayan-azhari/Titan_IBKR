@@ -37,8 +37,8 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-
 from research.samir_stack.engines import FuturesEngine
+
 from research.samir_stack.synthetic_3x import funding_series
 from titan.research.metrics import BARS_PER_YEAR, annualize_vol, sharpe
 

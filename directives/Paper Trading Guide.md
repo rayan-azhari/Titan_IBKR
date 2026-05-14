@@ -183,8 +183,9 @@ uv run python scripts/run_live_fx_carry.py
 # Terminal 8: Gap Fade (EUR/USD M5, London session only)
 uv run python scripts/run_live_gap_fade.py
 
-# Terminal 9: ML Classifier (needs trained model in models/)
-uv run python scripts/run_live_ml.py
+# Terminal 9: ML Classifier — DEFERRED in V2.0 (models/ removed; needs
+# same-bar causality audit + framework re-classification before re-enable)
+# uv run python scripts/run_live_ml.py
 ```
 
 ### Client ID Assignment
@@ -507,5 +508,5 @@ config/
 
 .tmp/logs/                 Strategy logs (timestamped)
 data/                      Historical Parquet files (warmup data)
-models/                    Trained ML models (.joblib)
+# models/                  REMOVED in V2.0 — ML deferred until same-bar causality audit
 ```

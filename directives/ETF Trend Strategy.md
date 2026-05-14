@@ -3,7 +3,12 @@
 **Instrument:** QQQ (NASDAQ-100 ETF, traded on ARCA)
 **Style:** Systematic long-only trend-following with volatility-targeted leverage
 **Data frequency:** Daily (EOD close)
-**Status:** Validated — all 6 robustness gates passed (March 2026)
+**Status (pre-V2.0):** Validated — all 6 robustness gates passed (March 2026)
+**Status (V2.0, 2026-05-14):** `tier = unconfirmed` — the March 2026 gates used
+methodology since invalidated. Strategy class = `DAILY_TREND`; needs a
+framework-audited pre-reg + result log before its Sharpe / MaxDD claims below
+are deployable. The mechanism (slow MA regime + deceleration + MOC + vol target)
+remains the strategy's intent.
 
 ---
 

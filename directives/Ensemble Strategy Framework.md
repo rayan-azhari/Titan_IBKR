@@ -63,17 +63,22 @@ vol-target and regime-scale overlays, are active across all strategies regardles
 integration pattern.
 
 > [!IMPORTANT]
-> See `directives/System Status and Roadmap.md` section 4 for full portfolio-risk details
-> and `C:/Users/rayan/.claude/skills/titan-orchestrator/references/portfolio-risk-architecture.md`
-> for the definitive architecture reference.
+> Full portfolio-risk details: `directives/README V2.0.md` (current state) plus the
+> orchestrator-skill reference `references/portfolio-risk-architecture.md` (April 21
+> rewrite, still authoritative).
 
 ---
 
 ## Inputs
 
-- Trained `.joblib` models in `models/` (for ML strategies only)
 - Strategy configs in `config/` (one per strategy)
 - Ensemble registry in `config/ensemble.toml`
+
+> [!NOTE]
+> **V2.0 status:** `models/` directory is intentionally absent in V2.0 — V1 ML
+> artifacts depended on suspect feature-pipeline causality. ML strategies are
+> deferred until they pass the framework's same-bar causality audit and a fresh
+> classification under `StrategyClass.ML_CLASSIFIER`.
 
 ## Architecture
 
@@ -101,8 +106,10 @@ integration pattern.
 
 ### 1. Strategy Discovery
 
-For each strategy type, complete the Alpha Research Loop and pass all robustness gates.
-Save each trained model (if ML) with a descriptive name in `models/`.
+For each strategy type, classify under `StrategyClass`, pre-register a directive,
+run the framework's audit recipe (`slice_sanctuary` → `build_folds` → `deflated_sharpe`
+→ `run_block_mc` → `decide`), and require verdict `DEPLOY` or
+`CONDITIONAL_WATCHPOINT`. See `references/framework-primer.md` for the canonical recipe.
 
 ### 2. Register Strategies
 
@@ -138,8 +145,10 @@ Strategies that underperform are downweighted; strong performers are upweighted.
 > [!IMPORTANT]
 > - Minimum 2 active strategies required to trade
 > - No single strategy may hold > 60% of capital allocation
-> - All strategies must independently pass OOS validation (Sharpe ≥ 1.5)
-> - ML strategies additionally require OOS Sharpe ≥ 1.5 and model freshness < 1 month
+> - Each strategy must hold a verdict `DEPLOY` or `CONDITIONAL_WATCHPOINT` from
+>   `titan.research.framework.decide(...)` — gate thresholds are class-specific
+>   (see `references/framework-primer.md` typology table), NOT a uniform Sharpe ≥ 1.5
+> - ML strategies additionally require the same-bar causality audit (V3.6 lesson L04)
 
 ---
 

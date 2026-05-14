@@ -39,6 +39,7 @@ except ImportError:
     sys.exit(1)
 
 from research.ic_analysis.phase1_sweep import _load_ohlcv  # noqa: E402
+
 from research.turtle.turtle_backtest import (  # noqa: E402
     BARS_PER_YEAR,
     INIT_CASH,

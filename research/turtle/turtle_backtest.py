@@ -45,6 +45,7 @@ except ImportError:
     sys.exit(1)
 
 from research.ic_analysis.phase1_sweep import _load_ohlcv  # noqa: E402
+
 from titan.strategies.ml.features import atr  # noqa: E402
 
 # ---------------------------------------------------------------------------

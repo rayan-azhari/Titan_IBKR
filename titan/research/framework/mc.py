@@ -51,7 +51,9 @@ class McResult:
 
 
 def _resample_indices(
-    n_bars: int, block_size: int, rng: np.random.Generator,
+    n_bars: int,
+    block_size: int,
+    rng: np.random.Generator,
 ) -> np.ndarray:
     """Return an array of n_bars resampled indices, drawn as overlapping
     blocks of `block_size`. Each block start is uniformly random in
@@ -66,9 +68,11 @@ def _resample_indices(
 
 
 def _rebuild_path(
-    log_returns: np.ndarray, indices: np.ndarray, initial_price: float,
+    log_returns: np.ndarray,
+    indices: np.ndarray,
+    initial_price: float,
 ) -> np.ndarray:
-    """cumprod of resampled log returns → synthetic price series."""
+    """Cumprod of resampled log returns → synthetic price series."""
     resampled = log_returns[indices]
     return initial_price * np.exp(np.cumsum(resampled))
 
@@ -105,7 +109,7 @@ def run_block_mc(
         timestamps. For "shared_block" method these are resampled at
         the SAME indices as the primary to preserve correlation.
 
-    Returns
+    Returns:
     -------
     McResult
     """
@@ -119,12 +123,16 @@ def run_block_mc(
     if len(primary_close) < cfg.block_size_bars * 2:
         return McResult(
             n_paths_completed=0,
-            median_sharpe=0.0, p5_sharpe=0.0, p95_sharpe=0.0,
-            median_maxdd=0.0, p_maxdd_gt_threshold=1.0,
+            median_sharpe=0.0,
+            p5_sharpe=0.0,
+            p95_sharpe=0.0,
+            median_maxdd=0.0,
+            p_maxdd_gt_threshold=1.0,
             threshold_pct=cfg.max_dd_threshold_pct,
             pass_threshold_prob=cfg.max_dd_pass_prob,
             passes=False,
-            method=cfg.bootstrap_method, block_size=cfg.block_size_bars,
+            method=cfg.bootstrap_method,
+            block_size=cfg.block_size_bars,
         )
 
     log_returns_primary = np.log(primary_close).diff().dropna().to_numpy()
@@ -159,14 +167,20 @@ def run_block_mc(
         if cfg.bootstrap_method == "shared_block":
             indices = _resample_indices(n_bars, cfg.block_size_bars, rng)
             synth_primary = _rebuild_path(log_returns_primary, indices, initial_primary)
-            df = pd.DataFrame({"close": synth_primary}, index=primary_close.index[: len(synth_primary)])
+            df = pd.DataFrame(
+                {"close": synth_primary},
+                index=primary_close.index[: len(synth_primary)],
+            )
             for name, lr in extras_log_rets.items():
                 synth = _rebuild_path(lr, indices[: len(lr)], extras_initial[name])
                 df[name] = pd.Series(synth, index=df.index[: len(synth)])
         else:  # plain "block"
             indices = _resample_indices(n_bars, cfg.block_size_bars, rng)
             synth_primary = _rebuild_path(log_returns_primary, indices, initial_primary)
-            df = pd.DataFrame({"close": synth_primary}, index=primary_close.index[: len(synth_primary)])
+            df = pd.DataFrame(
+                {"close": synth_primary},
+                index=primary_close.index[: len(synth_primary)],
+            )
             for name, lr in extras_log_rets.items():
                 # Each extra resampled independently (block bootstrap doesn't
                 # preserve cross-asset correlation)
@@ -188,12 +202,16 @@ def run_block_mc(
     if not sharpes:
         return McResult(
             n_paths_completed=0,
-            median_sharpe=0.0, p5_sharpe=0.0, p95_sharpe=0.0,
-            median_maxdd=0.0, p_maxdd_gt_threshold=1.0,
+            median_sharpe=0.0,
+            p5_sharpe=0.0,
+            p95_sharpe=0.0,
+            median_maxdd=0.0,
+            p_maxdd_gt_threshold=1.0,
             threshold_pct=cfg.max_dd_threshold_pct,
             pass_threshold_prob=cfg.max_dd_pass_prob,
             passes=False,
-            method=cfg.bootstrap_method, block_size=cfg.block_size_bars,
+            method=cfg.bootstrap_method,
+            block_size=cfg.block_size_bars,
         )
 
     sh_arr = np.asarray(sharpes)

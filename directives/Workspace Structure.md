@@ -101,11 +101,12 @@ scripts/
 
 | Category | Files |
 |----------|-------|
-| Master reference | System Status and Roadmap.md |
+| Master reference | README V2.0.md |
+| Framework | Methodology Audit & Unified Framework 2026-05-14.md, V3.6 Lessons Catalogue.md |
 | Process | Backtesting & Validation.md, IC Signal Analysis.md, Strategy Deployment Protocol.md |
 | Strategy specs | ETF Trend Strategy.md, Multi-Timeframe Confluence.md, ORB Trading Strategy.md |
 | Operations | MTF Strategy User Guide.md, ORB Strategy User Guide.md, Deployment & Operations.md |
 | Infrastructure | IBKR & NautilusTrader API Reference.md, Titan-IBKR Adapter Guide.md, Titan Library Reference.md |
-| Research | ML Strategy Discovery.md, Turtle Trading Strategy Analysis.md, Time Series & Correlation Analysis.md |
+| Research | Machine Learning Strategy Discovery.md, Turtle Trading Strategy Analysis.md, Time Series & Correlation Analysis.md |
 
-See `directives/System Status and Roadmap.md` for the full system status and implementation roadmap.
+See `directives/README V2.0.md` for the current cleansed-state status and what's open.

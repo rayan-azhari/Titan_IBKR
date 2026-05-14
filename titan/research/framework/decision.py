@@ -24,6 +24,8 @@ from typing import Literal
 
 
 class Verdict(Enum):
+    """Five-valued verdict returned by ``decide(DecisionInputs)``."""
+
     DEPLOY = "DEPLOY"
     CONDITIONAL_WATCHPOINT = "CONDITIONAL_WATCHPOINT"
     TIER_UNCONFIRMED = "TIER_UNCONFIRMED"
@@ -37,12 +39,13 @@ AxisLevel = Literal["best", "mid", "worst"]
 @dataclass(frozen=True)
 class GateThresholds:
     """Per-axis thresholds. Defaults are the framework's recommended values
-    but each strategy class can override via a pre-registration directive."""
+    but each strategy class can override via a pre-registration directive.
+    """
 
     # CI_lo axis: thresholds on the 95% bootstrap CI lower bound on
     # stitched OOS Sharpe.
-    ci_lo_best: float = 0.0      # best: CI_lo > 0
-    ci_lo_worst: float = -0.2    # worst: CI_lo < -0.2
+    ci_lo_best: float = 0.0  # best: CI_lo > 0
+    ci_lo_worst: float = -0.2  # worst: CI_lo < -0.2
 
     # DSR axis: deflated_sharpe.dsr_prob thresholds.
     dsr_best: float = 0.95
@@ -86,7 +89,9 @@ def classify_axis_mc(
     return "worst"
 
 
-def classify_axis_sanctuary(sanctuary_sharpe: float, thr: GateThresholds = GateThresholds()) -> AxisLevel:
+def classify_axis_sanctuary(
+    sanctuary_sharpe: float, thr: GateThresholds = GateThresholds()
+) -> AxisLevel:
     if sanctuary_sharpe > thr.sanctuary_best:
         return "best"
     if sanctuary_sharpe > thr.sanctuary_worst:
@@ -142,7 +147,12 @@ def decide(
     axis_names = [
         ("CI_lo", ci, f"{inputs.ci_lo:.3f}"),
         ("DSR", dsr, f"{inputs.dsr_prob:.3f}"),
-        ("MC", mc, f"P(MaxDD>X)={inputs.p_maxdd_gt_threshold:.3f}, threshold={inputs.pass_threshold_prob:.3f}"),
+        (
+            "MC",
+            mc,
+            f"P(MaxDD>X)={inputs.p_maxdd_gt_threshold:.3f}, "
+            f"threshold={inputs.pass_threshold_prob:.3f}",
+        ),
         ("Sanctuary", sanc, f"{inputs.sanctuary_sharpe:.3f}"),
     ]
     best_axes = [n for n, lvl, _ in axis_names if lvl == "best"]
@@ -158,6 +168,10 @@ def decide(
     rationale = f"{verdict.value} | {rationale_best} | {rationale_worst}"
     return DecisionResult(
         verdict=verdict,
-        ci_lo_axis=ci, dsr_axis=dsr, mc_axis=mc, sanctuary_axis=sanc,
-        n_axes_best=n_best, rationale=rationale,
+        ci_lo_axis=ci,
+        dsr_axis=dsr,
+        mc_axis=mc,
+        sanctuary_axis=sanc,
+        n_axes_best=n_best,
+        rationale=rationale,
     )

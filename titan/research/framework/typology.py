@@ -13,10 +13,9 @@ per-bar or per-day MTM.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
-
 
 SharpeConvention = Literal["per_bar", "per_trade", "per_day_mtm"]
 
@@ -29,15 +28,15 @@ class StrategyClass(Enum):
     defaults table below. No silent additions.
     """
 
-    INTRADAY_MICROSTRUCTURE = "intraday_microstructure"   # H1+, sparse trades, mean-rev/range-exp
-    INTRADAY_BREAKOUT = "intraday_breakout"               # M5/M15, ORB-style, very sparse
-    DAILY_TREND = "daily_trend"                           # D, persistent long-only
-    DAILY_MEAN_REVERSION = "daily_mean_reversion"         # D, oscillator-based
-    CROSS_ASSET_MOMENTUM = "cross_asset_momentum"         # D, always-on long
-    PAIRS = "pairs"                                       # D, market-neutral
-    ML_CLASSIFIER = "ml_classifier"                       # any TF, predicts label, holds until flip
-    META_LABELING = "meta_labeling"                       # primary + ML filter
-    CARRY = "carry"                                       # FX, slow-moving
+    INTRADAY_MICROSTRUCTURE = "intraday_microstructure"  # H1+, sparse trades, mean-rev/range-exp
+    INTRADAY_BREAKOUT = "intraday_breakout"  # M5/M15, ORB-style, very sparse
+    DAILY_TREND = "daily_trend"  # D, persistent long-only
+    DAILY_MEAN_REVERSION = "daily_mean_reversion"  # D, oscillator-based
+    CROSS_ASSET_MOMENTUM = "cross_asset_momentum"  # D, always-on long
+    PAIRS = "pairs"  # D, market-neutral
+    ML_CLASSIFIER = "ml_classifier"  # any TF, predicts label, holds until flip
+    META_LABELING = "meta_labeling"  # primary + ML filter
+    CARRY = "carry"  # FX, slow-moving
 
 
 @dataclass(frozen=True)
@@ -89,14 +88,15 @@ class McConfig:
     block_size_bars: int
     n_paths: int
     bootstrap_method: Literal["block", "shared_block", "stationary"]
-    max_dd_threshold_pct: float       # e.g. 0.25 = 25%
-    max_dd_pass_prob: float            # threshold for P(MaxDD > X)
+    max_dd_threshold_pct: float  # e.g. 0.25 = 25%
+    max_dd_pass_prob: float  # threshold for P(MaxDD > X)
 
 
 @dataclass(frozen=True)
 class SharpeReporting:
     """Which Sharpe to use as primary gate vs secondary diagnostic
-    (directive §2.2)."""
+    (directive §2.2).
+    """
 
     primary: SharpeConvention
     secondary: SharpeConvention
@@ -120,74 +120,169 @@ class StrategyClassDefaults:
 DEFAULTS: dict[StrategyClass, StrategyClassDefaults] = {
     StrategyClass.INTRADAY_MICROSTRUCTURE: StrategyClassDefaults(
         sharpe=SharpeReporting(primary="per_bar", secondary="per_trade"),
-        wfo=WfoConfig(is_min_years=1.0, oos_years=1.0, fold_count=5,
-                      is_mode="expanding", stride_overlap_allowed=False),
-        mc=McConfig(block_size_bars=50, n_paths=200, bootstrap_method="block",
-                    max_dd_threshold_pct=0.25, max_dd_pass_prob=0.05),
+        wfo=WfoConfig(
+            is_min_years=1.0,
+            oos_years=1.0,
+            fold_count=5,
+            is_mode="expanding",
+            stride_overlap_allowed=False,
+        ),
+        mc=McConfig(
+            block_size_bars=50,
+            n_paths=200,
+            bootstrap_method="block",
+            max_dd_threshold_pct=0.25,
+            max_dd_pass_prob=0.05,
+        ),
     ),
     StrategyClass.INTRADAY_BREAKOUT: StrategyClassDefaults(
         sharpe=SharpeReporting(primary="per_trade", secondary="per_bar"),
-        wfo=WfoConfig(is_min_years=1.0, oos_years=1.0, fold_count=5,
-                      is_mode="expanding", stride_overlap_allowed=False),
-        mc=McConfig(block_size_bars=20, n_paths=200, bootstrap_method="block",
-                    max_dd_threshold_pct=0.15, max_dd_pass_prob=0.10),
+        wfo=WfoConfig(
+            is_min_years=1.0,
+            oos_years=1.0,
+            fold_count=5,
+            is_mode="expanding",
+            stride_overlap_allowed=False,
+        ),
+        mc=McConfig(
+            block_size_bars=20,
+            n_paths=200,
+            bootstrap_method="block",
+            max_dd_threshold_pct=0.15,
+            max_dd_pass_prob=0.10,
+        ),
     ),
     StrategyClass.DAILY_TREND: StrategyClassDefaults(
-        sharpe=SharpeReporting(primary="per_day_mtm", secondary="per_trade",
-                               primary_periods_per_year=252),
-        wfo=WfoConfig(is_min_years=3.0, oos_years=1.0, fold_count=5,
-                      is_mode="expanding", stride_overlap_allowed=False),
-        mc=McConfig(block_size_bars=21, n_paths=200, bootstrap_method="block",
-                    max_dd_threshold_pct=0.35, max_dd_pass_prob=0.10),
+        sharpe=SharpeReporting(
+            primary="per_day_mtm", secondary="per_trade", primary_periods_per_year=252
+        ),
+        wfo=WfoConfig(
+            is_min_years=3.0,
+            oos_years=1.0,
+            fold_count=5,
+            is_mode="expanding",
+            stride_overlap_allowed=False,
+        ),
+        mc=McConfig(
+            block_size_bars=21,
+            n_paths=200,
+            bootstrap_method="block",
+            max_dd_threshold_pct=0.35,
+            max_dd_pass_prob=0.10,
+        ),
     ),
     StrategyClass.DAILY_MEAN_REVERSION: StrategyClassDefaults(
-        sharpe=SharpeReporting(primary="per_day_mtm", secondary="per_trade",
-                               primary_periods_per_year=252),
-        wfo=WfoConfig(is_min_years=3.0, oos_years=1.0, fold_count=5,
-                      is_mode="expanding", stride_overlap_allowed=False),
-        mc=McConfig(block_size_bars=21, n_paths=200, bootstrap_method="block",
-                    max_dd_threshold_pct=0.25, max_dd_pass_prob=0.10),
+        sharpe=SharpeReporting(
+            primary="per_day_mtm", secondary="per_trade", primary_periods_per_year=252
+        ),
+        wfo=WfoConfig(
+            is_min_years=3.0,
+            oos_years=1.0,
+            fold_count=5,
+            is_mode="expanding",
+            stride_overlap_allowed=False,
+        ),
+        mc=McConfig(
+            block_size_bars=21,
+            n_paths=200,
+            bootstrap_method="block",
+            max_dd_threshold_pct=0.25,
+            max_dd_pass_prob=0.10,
+        ),
     ),
     StrategyClass.CROSS_ASSET_MOMENTUM: StrategyClassDefaults(
-        sharpe=SharpeReporting(primary="per_day_mtm", secondary="per_trade",
-                               primary_periods_per_year=252),
-        wfo=WfoConfig(is_min_years=2.0, oos_years=0.5, fold_count=8,
-                      is_mode="rolling", stride_overlap_allowed=True),
+        sharpe=SharpeReporting(
+            primary="per_day_mtm", secondary="per_trade", primary_periods_per_year=252
+        ),
+        wfo=WfoConfig(
+            is_min_years=2.0,
+            oos_years=0.5,
+            fold_count=8,
+            is_mode="rolling",
+            stride_overlap_allowed=True,
+        ),
         # 63-bar (3-month) blocks preserve typical bond-equity correlation
         # regimes; threshold recalibrated from broken 25%/5% per
         # Bond-Equity Audit §4.2-c
-        mc=McConfig(block_size_bars=63, n_paths=200, bootstrap_method="shared_block",
-                    max_dd_threshold_pct=0.35, max_dd_pass_prob=0.10),
+        mc=McConfig(
+            block_size_bars=63,
+            n_paths=200,
+            bootstrap_method="shared_block",
+            max_dd_threshold_pct=0.35,
+            max_dd_pass_prob=0.10,
+        ),
     ),
     StrategyClass.PAIRS: StrategyClassDefaults(
-        sharpe=SharpeReporting(primary="per_day_mtm", secondary="per_trade",
-                               primary_periods_per_year=252),
-        wfo=WfoConfig(is_min_years=3.0, oos_years=1.0, fold_count=5,
-                      is_mode="expanding", stride_overlap_allowed=False),
-        mc=McConfig(block_size_bars=21, n_paths=200, bootstrap_method="shared_block",
-                    max_dd_threshold_pct=0.20, max_dd_pass_prob=0.05),
+        sharpe=SharpeReporting(
+            primary="per_day_mtm", secondary="per_trade", primary_periods_per_year=252
+        ),
+        wfo=WfoConfig(
+            is_min_years=3.0,
+            oos_years=1.0,
+            fold_count=5,
+            is_mode="expanding",
+            stride_overlap_allowed=False,
+        ),
+        mc=McConfig(
+            block_size_bars=21,
+            n_paths=200,
+            bootstrap_method="shared_block",
+            max_dd_threshold_pct=0.20,
+            max_dd_pass_prob=0.05,
+        ),
     ),
     StrategyClass.ML_CLASSIFIER: StrategyClassDefaults(
         sharpe=SharpeReporting(primary="per_bar", secondary="per_trade"),
-        wfo=WfoConfig(is_min_years=2.0, oos_years=0.5, fold_count=8,
-                      is_mode="rolling", stride_overlap_allowed=True),
-        mc=McConfig(block_size_bars=50, n_paths=200, bootstrap_method="block",
-                    max_dd_threshold_pct=0.25, max_dd_pass_prob=0.10),
+        wfo=WfoConfig(
+            is_min_years=2.0,
+            oos_years=0.5,
+            fold_count=8,
+            is_mode="rolling",
+            stride_overlap_allowed=True,
+        ),
+        mc=McConfig(
+            block_size_bars=50,
+            n_paths=200,
+            bootstrap_method="block",
+            max_dd_threshold_pct=0.25,
+            max_dd_pass_prob=0.10,
+        ),
     ),
     StrategyClass.META_LABELING: StrategyClassDefaults(
         sharpe=SharpeReporting(primary="per_trade", secondary="per_bar"),
-        wfo=WfoConfig(is_min_years=2.0, oos_years=0.5, fold_count=8,
-                      is_mode="rolling", stride_overlap_allowed=True),
-        mc=McConfig(block_size_bars=50, n_paths=200, bootstrap_method="block",
-                    max_dd_threshold_pct=0.25, max_dd_pass_prob=0.10),
+        wfo=WfoConfig(
+            is_min_years=2.0,
+            oos_years=0.5,
+            fold_count=8,
+            is_mode="rolling",
+            stride_overlap_allowed=True,
+        ),
+        mc=McConfig(
+            block_size_bars=50,
+            n_paths=200,
+            bootstrap_method="block",
+            max_dd_threshold_pct=0.25,
+            max_dd_pass_prob=0.10,
+        ),
     ),
     StrategyClass.CARRY: StrategyClassDefaults(
-        sharpe=SharpeReporting(primary="per_day_mtm", secondary="per_trade",
-                               primary_periods_per_year=252),
-        wfo=WfoConfig(is_min_years=5.0, oos_years=1.0, fold_count=5,
-                      is_mode="expanding", stride_overlap_allowed=False),
-        mc=McConfig(block_size_bars=21, n_paths=200, bootstrap_method="block",
-                    max_dd_threshold_pct=0.30, max_dd_pass_prob=0.10),
+        sharpe=SharpeReporting(
+            primary="per_day_mtm", secondary="per_trade", primary_periods_per_year=252
+        ),
+        wfo=WfoConfig(
+            is_min_years=5.0,
+            oos_years=1.0,
+            fold_count=5,
+            is_mode="expanding",
+            stride_overlap_allowed=False,
+        ),
+        mc=McConfig(
+            block_size_bars=21,
+            n_paths=200,
+            bootstrap_method="block",
+            max_dd_threshold_pct=0.30,
+            max_dd_pass_prob=0.10,
+        ),
     ),
 }
 

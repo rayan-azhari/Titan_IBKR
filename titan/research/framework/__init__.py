@@ -53,19 +53,40 @@ from titan.research.framework.wfo import Fold, build_folds, iter_folds
 
 __all__ = [
     # Typology
-    "StrategyClass", "StrategyClassDefaults", "WfoConfig", "McConfig",
-    "SharpeReporting", "CostModel", "DEFAULTS", "defaults_for",
-    "COST_CME_FUTURES_LIQUID", "COST_US_EQUITY_LARGE_CAP", "COST_US_ETF_LIQUID",
-    "COST_UCITS_ETF", "COST_FX_MAJOR", "COST_IG_DFB_INDEX",
+    "StrategyClass",
+    "StrategyClassDefaults",
+    "WfoConfig",
+    "McConfig",
+    "SharpeReporting",
+    "CostModel",
+    "DEFAULTS",
+    "defaults_for",
+    "COST_CME_FUTURES_LIQUID",
+    "COST_US_EQUITY_LARGE_CAP",
+    "COST_US_ETF_LIQUID",
+    "COST_UCITS_ETF",
+    "COST_FX_MAJOR",
+    "COST_IG_DFB_INDEX",
     # WFO
-    "Fold", "build_folds", "iter_folds",
+    "Fold",
+    "build_folds",
+    "iter_folds",
     # Sanctuary
-    "SanctuarySlice", "slice_sanctuary",
-    "DivergenceTest", "sanctuary_divergence_test",
+    "SanctuarySlice",
+    "slice_sanctuary",
+    "DivergenceTest",
+    "sanctuary_divergence_test",
     # MC
-    "McResult", "run_block_mc",
+    "McResult",
+    "run_block_mc",
     # DSR
-    "DsrResult", "deflated_sharpe", "sr_var_from_sweep",
+    "DsrResult",
+    "deflated_sharpe",
+    "sr_var_from_sweep",
     # Decision
-    "Verdict", "DecisionInputs", "DecisionResult", "GateThresholds", "decide",
+    "Verdict",
+    "DecisionInputs",
+    "DecisionResult",
+    "GateThresholds",
+    "decide",
 ]
