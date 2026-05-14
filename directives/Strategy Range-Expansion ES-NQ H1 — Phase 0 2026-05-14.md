@@ -188,10 +188,115 @@ runs against a frozen target rather than a moving one.
 
 ## 4. Result log
 
-To be appended in stages as milestones complete. Backtest result first
-(after milestone 1-3); paper-trial result later (after milestone 7).
+Milestone 1-3 (backtest runner + MC + sanctuary) ran 2026-05-14. §1-§3
+unchanged (V3.1).
 
-> _Pending backtest run — appended below after each milestone lands._
+### 4.1 WFO stitched OOS Sharpe + bootstrap CI (audit-corrected)
+
+| Instrument | Cell (θ_entry, H) | OOS Sharpe | CI_lo | CI_hi | MaxDD | n_folds | n_trades | DSR prob |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| NQ | 0.25, 1 | -4.18 | -4.99 | -3.33 | -0.90 | 5 | 16,742 | 0.0 |
+| **NQ** | **0.50, 1 (headline)** | **-3.63** | **-4.43** | **-2.70** | **-0.83** | **5** | **11,330** | **0.0** |
+| NQ | 1.00, 1 | -1.13 | -1.96 | -0.19 | -0.36 | 5 | 2,928 | 0.0 |
+| NQ | 0.50, 4 | -1.71 | -2.51 | -0.91 | -0.78 | 5 | 17,971 | 0.0 |
+| NQ | 0.50, 8 | -1.00 | -1.82 | -0.13 | -0.67 | 5 | 21,691 | 0.0 |
+| ES | 0.25, 1 | -1.91 | -2.87 | -1.01 | -0.85 | 5 | 16,470 | 0.0 |
+| **ES** | **0.50, 1 (headline)** | **-1.86** | **-2.71** | **-1.01** | **-0.78** | **5** | **10,888** | **0.0** |
+| ES | 1.00, 1 | -0.69 | -1.48 | +0.29 | -0.37 | 5 | 2,588 | 0.0 |
+| ES | 0.50, 4 | -1.09 | -1.95 | -0.11 | -0.79 | 5 | 17,155 | 0.0 |
+| ES | 0.50, 8 | -0.76 | -1.65 | +0.06 | -0.76 | 5 | 20,663 | 0.0 |
+
+### 4.2 Underlying-resampled Monte Carlo (audit A6)
+
+50 bootstrap paths with 50-bar shared block indices. The synthetic
+H/L per bar carries the observed (high-low)/close ratio resampled
+together with the close-return — preserves bar-size autocorrelation
+which is what the strategy actually trades.
+
+| Instrument | Cell | Median Sharpe | Median MaxDD | P5 Sharpe | P95 Sharpe | **P(MaxDD > 25%)** |
+|---|---|---:|---:|---:|---:|---:|
+| NQ | 0.25, 1 | -2.61 | -0.91 | -6.18 | -1.09 | **1.00** |
+| NQ | 0.50, 1 | -2.68 | -0.87 | -5.74 | -1.15 | **1.00** |
+| NQ | 1.00, 1 | -1.19 | -0.53 | -2.65 | -0.25 | **0.98** |
+| NQ | 0.50, 4 | -1.39 | -0.82 | -2.34 | -0.36 | **1.00** |
+| NQ | 0.50, 8 | -0.85 | -0.78 | -1.62 | -0.28 | **1.00** |
+| ES | 0.25, 1 | -1.78 | -0.98 | -3.65 | -0.65 | **1.00** |
+| ES | 0.50, 1 | -1.70 | -0.95 | -3.33 | -0.67 | **1.00** |
+| ES | 1.00, 1 | -0.62 | -0.51 | -1.09 | -0.14 | **1.00** |
+| ES | 0.50, 4 | -0.86 | -0.94 | -1.67 | -0.15 | **1.00** |
+| ES | 0.50, 8 | -0.75 | -0.94 | -1.20 | -0.21 | **1.00** |
+
+The MC's P(MaxDD > 25%) = 100% on every cell confirms the cost-dominated
+loss is a structural feature, not a sample artefact.
+
+### 4.3 Sanctuary pass (last 12 months, NOT used in WFO)
+
+| Instrument | Cell | Sharpe | MaxDD | n_trades | win rate | Net P&L (USD) |
+|---|---|---:|---:|---:|---:|---:|
+| NQ | 0.25, 1 | -0.00 | -0.16 | 1,655 | 0.485 | -8 |
+| **NQ** | **0.50, 1** | **+1.24** | **-0.14** | **1,087** | **0.494** | **+$13,603** |
+| **NQ** | **1.00, 1** | **+1.66** | **-0.07** | **286** | **0.549** | **+$14,744** |
+| NQ | 0.50, 4 | +0.32 | -0.21 | 701 | 0.477 | +$5,153 |
+| NQ | 0.50, 8 | -0.03 | -0.17 | 489 | 0.483 | -$514 |
+| ES | 0.25, 1 | -0.80 | -0.29 | 1,659 | 0.450 | -$18,601 |
+| ES | 0.50, 1 | -0.04 | -0.20 | 1,079 | 0.470 | -$807 |
+| **ES** | **1.00, 1** | **+0.80** | **-0.11** | **250** | **0.456** | **+$11,517** |
+| ES | 0.50, 4 | +0.05 | -0.28 | 700 | 0.466 | +$1,607 |
+| ES | 0.50, 8 | -0.22 | -0.33 | 487 | 0.481 | -$7,690 |
+
+**Sanctuary diverges sharply from pre-sanctuary** — the higher-threshold cells (θ=0.5, 1.0 with H=1) show positive Sharpe in the last 12 months despite being deeply negative in the 14-year WFO. Per V3.1, **a positive sanctuary cannot override a failing WFO** — and this divergence is itself a warning signal that whatever produced the sanctuary's lift is not stable across regimes.
+
+### 4.4 Verdict per §1.8 no-go conditions
+
+| §1.8 condition | Status | Pass? |
+|---|---|:---:|
+| Stitched OOS Sharpe CI_lo ≤ 0 | All cells CI_lo ∈ [-4.99, -0.11], all < 0 | **FAIL** |
+| DSR-adjusted prob < 0.95 | All cells dsr_prob = 0.0 | **FAIL** |
+| Underlying-resampled MC P(MaxDD > 25%) ≥ 5% | All cells 98-100% | **FAIL** |
+| Sanctuary-pass Sharpe < 0 | Cell-dependent: NQ θ=0.5 H=1 is +1.24; ES θ=0.5 H=1 is -0.04 | Mixed |
+| Plateau-stability: IS Sharpe at headline > 2× neighbours | All Sharpes negative; ratio undefined / not the bottleneck | n/a |
+| Live parity test | Not run (failed gates above stop us before this) | n/a |
+
+**Three independent no-go conditions fail.** The strategy is **not deployment-eligible** under the pre-registered gates.
+
+### 4.5 Mechanism analysis
+
+The IC at H1 horizon=1 was real (Phase C: NQ +0.025, ES +0.023, t_NW > 6.5). But the per-trade economic content scales with the IC magnitude × per-bar volatility × position size, while the cost is fixed per contract:
+
+```
+Expected per-trade alpha ≈ IC * std(forward_return) * notional * size
+  ≈ 0.025 * 0.002 * $25k * 1 contract  ≈ $1.25 on ES
+Round-trip cost ≈ 2 * (spread+slip + commission) * size
+  ≈ 2 * ($6.25 + $1.04) * 1  ≈ $14.58 on ES
+```
+
+Cost exceeds alpha by ~10×. The IC discovery was statistically significant but **economically below the friction floor**. This is exactly the case the audit-grade cost-aware backtest is designed to catch — DSR alone (Phase C's gate) confirmed the signal exists; the cost-aware engine confirms it doesn't translate to deployable alpha at realistic CME futures friction.
+
+### 4.6 Action
+
+1. **No live deployment.** Strategy is closed at Phase 0.
+2. **No milestone 4-7.** Live class + parity test are not built (they presume gate-passing backtest).
+3. **No retroactive cost-tuning.** V3.1 forbids re-running with a more aggressive cost model to make the backtest profitable.
+4. **IG DFB execution route is not auto-evaluated.** The directive committed to evaluating both IBKR CME and IG DFB. The IG DFB cost structure differs (point value scaled to GBP stake, spread varies by index). A **separate** pre-registration is required to test IG DFB at H1 — under V3.1, this isn't a continuation of the current strategy spec, it's a new strategy because the cost model is structurally different. Filed for later; not started now.
+5. **The sanctuary's positive result is research output, not a deployment signal.** Could indicate a recent regime change in volatility clustering on NQ/ES — worth a separate research directive (signal stability over time, not strategy deployment) if pursued.
+
+### 4.7 V3.6 negative-result hygiene
+
+This is the cleanest "IC is real but not tradeable at realistic friction" outcome in the project to date. Two lasting lessons:
+
+1. **DSR-passing IC doesn't equal deployable strategy.** Phase C's audit-discipline gates filtered signals statistically; the strategy pre-reg's cost-aware backtest filtered them economically. Both gates are needed.
+2. **The cost/alpha ratio is the binding constraint on H1 microstructure mechanisms.** Range-expansion is real, but its per-bar economic content (~0.0025% in raw return) is on the order of the CME futures half-spread. Most short-term microstructure signals will face the same ratio. Future H1 strategy proposals must compute `alpha_per_trade / cost_per_trade` BEFORE running a full backtest -- it's a one-line check.
+
+### 4.8 Outcome record
+
+| Field | Value |
+|---|---|
+| Backtest run? | Yes — milestone 1-3 |
+| Live class built? | **No** — gates failed |
+| Parity test written? | **No** — strategy closed at Phase 0 |
+| Phase 0 verdict | **REJECTED** under audit-discipline gates |
+| TIER_B IC discovery retained as research output? | Yes (Phase C census parquet unchanged) |
+| Re-pre-registration permitted with different cost model? | Only as a structurally new strategy (e.g. IG DFB execution route) with its own pre-reg |
 
 ---
 
