@@ -117,6 +117,29 @@ For each strategy below:
      `gld_confluence` likely RETIRE per L58 + L56 pattern; `orb`,
      `pairs`, `ic_equity_daily` need dedicated audit harnesses.
 
+   **Wave B ic_mtf full audit 2026-05-16: COMPLETE. Verdict: RETIRED**
+   (L21 look-ahead bug confirmed). V1 Phase 3 (2026-03-19) claimed
+   OOS Sharpe +7.71 to +8.28 across 6 FX pairs. Three-variant
+   reproduction:
+   - V1-style baseline (full look-ahead permitted): recovers V1
+     claim with Sharpe +6.6 to +14.3 — confirming V1's numbers
+     are reproducible at V1's methodology.
+   - Causal higher-TF alignment (shift by 1 TF bar): edge destroyed,
+     Sharpe −1.04 to −0.15 across all 6 pairs.
+   - Strict causal + IS-only fit + IS-only OOS: Sharpe −1.21 to
+     −0.33, every pair negative.
+   - L21 contribution: 7-15 SR units per pair (vs mtf's ~2 SR) —
+     multi-signal × multi-TF composite amplifies leakage 4-5x.
+   **Methodology note**: my first run produced false-negative due to
+   a data-loader bug (FX H1 parquets use timestamp-column-with-int-
+   index, not datetime-index). User challenge caught it. New
+   lesson L63: verify V1-style baseline recovers V1 claim BEFORE
+   concluding fabrication.
+   Two lessons added: **L62 (refined)** Sharpe-gap classification
+   table + **L63 (NEW)** V1-style verification protocol.
+   Live impact: NONE (never Docker-deployed).
+   See `.tmp/reports/sweep_ic_mtf/findings.md`.
+
 **Wave C (P3 / blocked):**
 
 9. `ml` — fix the L19 same-bar look-ahead bug before any sweep is

@@ -1,4 +1,48 @@
 # IC MTF Strategy Configuration
+#
+# *** V3.6 RETIRED (Wave B causality+signal-layer audit, 2026-05-16) ***
+# L21 look-ahead bug CONFIRMED -- same pattern as mtf (Wave A.5),
+# dramatically more severe due to multi-signal x multi-TF composite
+# amplifying the leakage.
+#
+# V1 Phase 3 (2026-03-19) claimed OOS Sharpe +7.71 to +8.28 across 6
+# FX pairs. Three-variant reproduction:
+#
+#   pair      V1 claim   V1-style (LA OK)   causal align   strict causal IS-OOS
+#   EUR/USD   +7.71      +14.30             -1.04          -1.21
+#   GBP/USD   +8.28      +12.79             -0.15          -0.33
+#   USD/JPY   +7.35      +12.42             -1.01          -0.54
+#   AUD/USD   +6.84       +6.63             -0.51          -0.49
+#   AUD/JPY   +7.33      +13.29             -0.32          -0.47
+#   USD/CHF   +7.34      +12.84             -0.36          -0.46
+#
+# V1-style baseline (full look-ahead permitted in IC sign fit + full-
+# series mu/sigma + contemporaneous higher-TF alignment) RECOVERS the
+# V1 +7-8 claim (and exceeds, due to longer warm-up than V1's 1000-bar
+# window). Causality enforcement (higher-TF shifted by 1 bar of own TF
+# before alignment) DESTROYS the edge, taking Sharpe negative across
+# all 6 pairs. Strict variant (IS-only sign fit + IS-only z) confirms.
+#
+# Sharpe-inflation contribution from contemporaneous higher-TF
+# alignment: 7-15 SR units per pair. This is the L21 bug class
+# scaled by composite complexity (4 TFs x 2 signals vs mtf's
+# 3 TFs x 1 signal = ~4-5x more severe).
+#
+# New lessons: L62 (refined: Sharpe-gap classification table) +
+# L63 (NEW: verify V1-style reproduction recovers V1 claim before
+# concluding fabrication; user-challenge protocol).
+#
+# Pre-reg context: roster flagged ic_mtf as P2-HIGH due to L21 risk
+# pattern like mtf. Audit CONFIRMED L21 as the verdict driver, with
+# the inflation magnitude (8-15 SR) much larger than mtf's (~2 SR).
+# Findings: `.tmp/reports/sweep_ic_mtf/findings.md`.
+# Live impact: NONE (never Docker-deployed). RETIRED in registry.
+#
+# V1 claim (UNRELIABLE -- L21 LOOK-AHEAD BUG):
+#   Phase 3 OOS Sharpe +7.71 to +8.28 across 6 FX pairs.
+# V3.6 reality: signal-layer negative on every pair under causal
+# discipline; V1's Sharpe was a multi-TF-amplified leakage artifact.
+
 # Phase 3 validated thresholds (fresh run 2026-03-19)
 # OOS Sharpe: EUR/USD 7.71 | GBP/USD 8.28 | USD/JPY 7.35 | AUD/USD 6.84 | AUD/JPY 7.33 | USD/CHF 7.34
 

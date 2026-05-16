@@ -46,7 +46,7 @@ See [directives/V1-era Re-audit Sweep Roster 2026-05-16.md](../../directives/V1-
 | `gold_macro` | DAILY_TREND | P2 | Wave B | **RETIRED 2026-05-16 (full audit)** — L52 H1 plateau-fail OOS 71% spread + L46 CI_lo bottleneck (every cell CI95_lo < 0). Composite ADDS value over bare-SMA but absolute CI gate fails. Never Docker-deployed; no allocator action |
 | `turtle` | DAILY_TREND | P2 | Wave B | **RETIRED 2026-05-16 (full audit)** — Triple-fail: L60 (NEW) annualisation 1.85x inflation; L52 H1 plateau-fail + L46 CI; L61 (NEW) single-instrument selection bias (panel median −0.018, CAT 100th percentile). Never Docker-deployed |
 | `fx_carry` | CARRY | P2 | Wave B | **TRIAGE: MARGINAL 2026-05-16** — signal-layer Sharpe +0.26, CI95 straddles 0; needs macro-overlay machinery |
-| `ic_mtf` | INTRADAY_MICROSTRUCTURE | P2-HIGH | Wave B | pending — **L21 risk pattern like `mtf`**; causality-smoke FIRST |
+| `ic_mtf` | INTRADAY_MICROSTRUCTURE | P2-HIGH | Wave B | **RETIRED 2026-05-16 (full audit)** — L21 look-ahead bug CONFIRMED (same pattern as mtf, ~4-5x more severe). V1 +7-8 Sharpe reproducible at V1-style methodology; vanishes under causal higher-TF alignment. New lessons L62 (refined) + L63 added |
 | `gld_confluence` | INTRADAY_MICROSTRUCTURE | P2-low | Wave B | pending — likely RETIRE per L58 + L56 pattern |
 | `orb` | INTRADAY_BREAKOUT | P2-medium | Wave B | pending — sparse trades, per-trade Sharpe protocol |
 | `ic_equity_daily` | DAILY_MEAN_REVERSION | P2-medium | Wave B | pending — multi-ticker + tier-grid complexity |
