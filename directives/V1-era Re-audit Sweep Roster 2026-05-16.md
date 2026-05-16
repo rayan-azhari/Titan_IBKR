@@ -125,6 +125,14 @@ For each strategy below:
      `gld_confluence` likely RETIRE per L58 + L56 pattern; `orb`,
      `pairs`, `ic_equity_daily` need dedicated audit harnesses.
 
+   **Wave B gld_confluence audit 2026-05-16: COMPLETE. Verdict: RETIRED**
+   (formalises pre-existing April-2026 deprecation). L21 PASS. 16y GLD
+   H1: Sharpe +0.22 across thresholds, plateau spread 14% (excellent),
+   sanctuary +0.94 (only 8mo bars). BUT MaxDD ~−35% at every threshold
+   (class-default DD gate hard fail) + prior 34% positive WFO folds
+   (L43 cell-instability). Both strict and L64 framework: RETIRE.
+   Already removed from STRATEGY_REGISTRY pre-audit. No allocator action.
+
    **Wave B ic_mtf full audit 2026-05-16: COMPLETE. Verdict: RETIRED**
    (L21 look-ahead bug confirmed). V1 Phase 3 (2026-03-19) claimed
    OOS Sharpe +7.71 to +8.28 across 6 FX pairs. Three-variant

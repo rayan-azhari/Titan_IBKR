@@ -1,5 +1,35 @@
 # gld_confluence.toml -- GLD AND-Gated Multi-Scale Confluence
-# WFO validated: Sharpe +1.46, 80% positive folds
+#
+# *** V3.6 RETIRED (Wave B audit, 2026-05-16) ***
+# Was ALREADY deprecated 2026-05-01 per strategy.py docstring; this
+# audit formalises the RETIRE under V3.6 + L64 framework.
+#
+# Wave B audit (sweep_gld_confluence.py) results on 16y GLD H1 IS:
+#   threshold  Sharpe  CI_lo   CI_hi   MaxDD
+#   0.50      +0.218  -0.117  +0.549  -35.9%
+#   0.75 live +0.220  -0.117  +0.581  -36.5%
+#   1.00      +0.240  -0.088  +0.597  -34.9%
+#   1.25      +0.211  -0.130  +0.573  -35.5%
+# Plateau spread 14% (excellent), L21 PASS, sanctuary 12mo +0.94.
+#
+# RETIRE rationale under both strict V3.6 AND L64 relaxed framework:
+#   1. MaxDD ~-35% across ALL thresholds = at the class-default DD
+#      gate (max_dd_threshold_pct=0.35). Hard risk-management failure.
+#   2. Prior audit found 34% positive WFO folds (66% negative) --
+#      L43 knife-edge / cell-instability pattern. Aggregate +0.22 is
+#      dominated by few good folds.
+#   3. Single-instrument (GLD-only) signal AND deep DD AND poor fold
+#      stability rules out CONDITIONAL_WATCHPOINT under L64.
+#
+# Strong sanctuary Sharpe (+0.94 on 4k bars / 8 months) is intriguing
+# but 8 months does not override 16 years of weak performance + deep DD.
+#
+# Already removed from STRATEGY_REGISTRY in scripts/run_portfolio.py.
+# No allocator action required.
+# Findings: `.tmp/reports/sweep_gld_confluence/findings.md`.
+#
+# V1 claim (UNRELIABLE): Sharpe +1.46 / 80% positive folds.
+# V3.6 reality: Sharpe +0.22 / 34% positive folds (prior audit) / -36% DD.
 
 threshold = 0.75        # Z-score entry threshold
 exit_buffer = 0.10      # Exit when score crosses opposite side

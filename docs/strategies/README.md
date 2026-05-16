@@ -47,7 +47,7 @@ See [directives/V1-era Re-audit Sweep Roster 2026-05-16.md](../../directives/V1-
 | `turtle` | DAILY_TREND | P2 | Wave B | **CONDITIONAL_WATCHPOINT (CAT-scoped) 2026-05-16** — Initial RETIRE revised under L64 (NEW) relaxed framework. L21 PASS, OOS Sharpe positive every cell (peak +0.69, canonical +0.43), cell-stable IS→OOS, L60 + L61 acknowledged. Deploy C3_peak (entry=45, exit=20) on CAT only at 25-30% size; re-audit 2026-11-16 |
 | `fx_carry` | CARRY | P2 | Wave B | **TRIAGE: MARGINAL 2026-05-16** — signal-layer Sharpe +0.26, CI95 straddles 0; needs macro-overlay machinery |
 | `ic_mtf` | INTRADAY_MICROSTRUCTURE | P2-HIGH | Wave B | **RETIRED 2026-05-16 (full audit)** — L21 look-ahead bug CONFIRMED (same pattern as mtf, ~4-5x more severe). V1 +7-8 Sharpe reproducible at V1-style methodology; vanishes under causal higher-TF alignment. New lessons L62 (refined) + L63 added |
-| `gld_confluence` | INTRADAY_MICROSTRUCTURE | P2-low | Wave B | pending — likely RETIRE per L58 + L56 pattern |
+| `gld_confluence` | INTRADAY_MICROSTRUCTURE | P2-low | Wave B | **RETIRED 2026-05-16 (formalises April-2026 deprecation)** — MaxDD ~−35% at every threshold (hard DD gate) + prior 34% positive WFO folds (L43 cell-instability). Sharpe +0.22 too small to override. Already removed from STRATEGY_REGISTRY |
 | `orb` | INTRADAY_BREAKOUT | P2-medium | Wave B | pending — sparse trades, per-trade Sharpe protocol |
 | `ic_equity_daily` | DAILY_MEAN_REVERSION | P2-medium | Wave B | pending — multi-ticker + tier-grid complexity |
 | `pairs` | PAIRS | P2-low | Wave B | pending — needs dedicated pair-strategy audit harness |

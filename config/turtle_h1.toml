@@ -28,6 +28,14 @@
 #   - Instrument: CAT ONLY. Explicit scope-lock. Do NOT extend to other
 #     tickers without per-instrument audit (L61).
 #   - Initial weight: 25-30% of full DEPLOY allocation.
+#     L65 RUIN ASSESSMENT (2026-05-16) at 30% weight on 8y CAT-H1
+#     returns, 2000 MC paths, 1-year horizon, 105-bar blocks:
+#       P(portfolio kill-switch trip)   = 0.00% (gate: < 1%)  PASS
+#       P(strategy DD > 50% full size)  = 0.00% (gate: < 5%)  PASS
+#       95th-pct MaxDD at 30% weight    = -7.98% (gate: > -25%) PASS
+#       median recovery from median DD  = 287 H1 bars (~8 wks)
+#     Sensitivity: gate fails at 50% weight (P_kill 2.8%); safe up to ~40%.
+#     Joint MC with GEM J5 PENDING (required before live cutover).
 #   - Re-audit: 2026-11-16 (6 months) on fresh sanctuary.
 #   - Live monitoring: check parity vs research monthly.
 #

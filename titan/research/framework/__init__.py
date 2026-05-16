@@ -78,9 +78,18 @@ from titan.research.framework.typology import (
     WfoConfig,
     defaults_for,
 )
+from titan.research.framework.ruin import (
+    RuinAssessment,
+    assess_joint_ruin,
+    assess_strategy_ruin,
+)
 from titan.research.framework.wfo import Fold, build_folds, iter_folds
 
 __all__ = [
+    # Risk-of-ruin (L65)
+    "RuinAssessment",
+    "assess_strategy_ruin",
+    "assess_joint_ruin",
     # Typology
     "StrategyClass",
     "StrategyClassDefaults",
