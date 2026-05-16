@@ -2,8 +2,7 @@ from enum import Enum
 from typing import Optional
 
 from nautilus_trader.config import StrategyConfig
-from nautilus_trader.indicators.average_true_range import AverageTrueRange
-from nautilus_trader.indicators.donchian_channel import DonchianChannel
+from nautilus_trader.indicators import AverageTrueRange, DonchianChannel
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId

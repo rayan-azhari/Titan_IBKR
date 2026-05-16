@@ -7,6 +7,7 @@ Runs the portfolio runner in a subprocess. If it exits for any reason
 restarts. Designed for unattended Docker / systemd operation.
 
 Usage:
+    uv run python scripts/watchdog_portfolio.py --strategies v37_live
     uv run python scripts/watchdog_portfolio.py --strategies champion_portfolio
 
 Behaviour:
@@ -107,8 +108,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--strategies",
-        default="champion_portfolio",
-        help="Strategy bundle name passed to run_portfolio.py (default: champion_portfolio)",
+        default="v37_live",
+        help=(
+            "Strategy bundle name passed to run_portfolio.py. "
+            "V3.7 default: 'v37_live' (GEM J5 + turtle CAT). "
+            "Other sets: 'champion_portfolio', 'samir_validation', "
+            "'daily_only'. See STRATEGY_SETS in run_portfolio.py."
+        ),
     )
     args = parser.parse_args()
 

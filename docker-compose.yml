@@ -9,7 +9,17 @@
 # V2.0 framework-audited GEM cell C12 (see directives/Pre-Reg GEM
 # Dual Momentum 2026-05-14.md §4.2 for verdict + rationale).
 # Container name `titan-portfolio` kept for operator-tooling
-# compatibility; entrypoint is now scripts/watchdog_gem.py.
+# compatibility.
+#
+# 2026-05-17: entrypoint evolved from watchdog_gem.py (single-strategy)
+# to watchdog_portfolio.py --strategies v37_live (multi-strategy: GEM J5
+# + turtle CAT). The new entrypoint is baked into the Dockerfile CMD;
+# next `docker compose build titan-portfolio` + `docker compose up -d
+# --force-recreate titan-portfolio` performs the live cutover. See
+# directives/V3.7 Multi-Strategy Live Architecture 2026-05-17.md.
+#
+# To temporarily roll back without rebuilding, add a `command:` block
+# under titan-portfolio: `command: ["python", "scripts/watchdog_gem.py"]`
 #
 # See: directives/Docker Paper Trading Guide.md
 

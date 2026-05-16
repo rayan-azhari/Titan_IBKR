@@ -831,6 +831,114 @@ STRATEGY_REGISTRY = {
     },
 }
 
+# ────────────────────────────────────────────────────────────────────────────
+# V3.7 strategy entries (2026-05-17, added in Phase 1 refactor)
+# ────────────────────────────────────────────────────────────────────────────
+#
+# Two new registry entries for the V3.7 multi-strategy live deployment:
+#  1. gem_j5_canonical -- GEM J5 P_hl60_vt05 (currently LIVE via separate
+#     watchdog_gem.py + run_live_gem.py; this is the equivalent registry
+#     entry for unifying under run_portfolio.py).
+#  2. turtle_cat_c3peak -- turtle CAT C3_peak (CONDITIONAL_WATCHPOINT, L61
+#     scope-locked to CAT only; entry=45, exit=20).
+#
+# Both entries target the UK paper account (CSPX/IDTM substitutes for
+# SPY/IEF; turtle on CAT is direct US listing for IBKR US-trading).
+# Switching deployment requires changing the Docker entrypoint from
+# watchdog_gem.py to watchdog_portfolio.py --strategies v37_live.
+
+STRATEGY_REGISTRY["gem_j5_canonical"] = {
+    "module": "titan.strategies.gem.strategy",
+    "config_cls": "GemStrategyConfig",
+    "strategy_cls": "GemStrategy",
+    "config_module": "titan.strategies.gem.config",  # GemStrategyConfig lives here
+    # Default weight 4.0 -- matches the implied "GEM is the core" allocation
+    # used in the current single-strategy deployment. With turtle at weight
+    # 1.0 (20% of full), this gives GEM ~80% of equity (4/5). Operator can
+    # override via STRATEGY_SETS or per-strategy weight in config.
+    "weight": 4.0,
+    "contracts": [
+        # UK universe (CSPX + IWDA + IDTM via LSEETF) per run_live_gem.py UK branch.
+        IBContract(secType="STK", symbol="CSPX", exchange="LSEETF", currency="USD"),
+        IBContract(secType="STK", symbol="IWDA", exchange="LSEETF", currency="USD"),
+        IBContract(secType="STK", symbol="IDTM", exchange="LSEETF", currency="USD"),
+        # VIX index (regime signal -- optional but currently subscribed)
+        IBContract(secType="IND", symbol="VIX", exchange="CBOE", currency="USD"),
+    ],
+    "config_kwargs": {
+        # Universe + bar wiring (UK)
+        "spy_instrument_id": "CSPX.LSEETF",
+        "efa_instrument_id": "IWDA.LSEETF",
+        "ief_instrument_id": "IDTM.LSEETF",
+        "vix_instrument_id": "^VIX.CBOE",
+        "hyg_instrument_id": None,  # HYG blocked under UK PRIIPs; skipped
+        "spy_bar_type_d": "CSPX.LSEETF-1-DAY-LAST-EXTERNAL",
+        "efa_bar_type_d": "IWDA.LSEETF-1-DAY-LAST-EXTERNAL",
+        "ief_bar_type_d": "IDTM.LSEETF-1-DAY-LAST-EXTERNAL",
+        "vix_bar_type_d": "^VIX.CBOE-1-DAY-LAST-EXTERNAL",
+        "hyg_bar_type_d": None,
+        "ticker_spy": "CSPX",
+        "ticker_efa": "IWDA",
+        "ticker_ief": "IDTM",
+        # J5 P_hl60_vt05 production params (from config/gem_voltarget_lev2.toml)
+        "execution_mode": "etf",
+        "rebalance_threshold_weight": 0.05,
+        "lookback_blend_str": "3,6,12",
+        "absolute_gate_lookback_months": 12,
+        "buffer_pct": 0.005,
+        "defensive_switch": True,
+        "ann_vol_target": 0.05,        # J5: 0.10 -> 0.05
+        "vol_lookback_days": 20,
+        "max_leverage": 2.0,
+        "vol_estimator_kind": "ewma",
+        "vol_estimator_halflife": 60,   # J5: 40 -> 60
+        "stress_gate_enabled": False,
+        "dd_breaker_enabled": False,
+        "warmup_bars": 380,
+        # Initial equity gets overridden by allocator based on weight + portfolio NLV
+        "initial_equity": 24_000.0,    # 80% of 30k baseline (GEM weight 4/5)
+        "base_ccy": "USD",
+        "cost_bps_per_turnover": 6.0,
+    },
+}
+
+STRATEGY_REGISTRY["turtle_cat_c3peak"] = {
+    "module": "titan.strategies.turtle.strategy",
+    "config_cls": "TurtleConfig",
+    "strategy_cls": "TurtleStrategy",
+    # Weight 1.0 -- matches the V3.7 audit decision (20% of full portfolio).
+    # With GEM at weight 4.0, turtle gets 1/5 = 20% allocation.
+    "weight": 1.0,
+    "contracts": [
+        # CAT (Caterpillar) US listing -- direct subscription.
+        IBContract(
+            secType="STK", symbol="CAT",
+            exchange="SMART", primaryExchange="NYSE", currency="USD",
+        ),
+    ],
+    "config_kwargs": {
+        "instrument_id": "CAT.NYSE",
+        "bar_type": "CAT.NYSE-1-HOUR-MID-EXTERNAL",
+        # C3_peak winning cell from Wave B full audit (research/turtle/run_turtle_reaudit.py)
+        "entry_period": 45,
+        "exit_period": 20,
+        "atr_period": 20,
+        "risk_pct": 0.01,
+        "stop_atr_mult": 2.0,
+        "max_leverage": 1.5,
+        "direction": "long_only",
+        "max_units": 4,
+        "pyramid_atr_mult": 0.5,
+        "use_trailing_stop": True,
+        "use_moc_fill": True,
+        "flat_before_earnings": False,
+        # Initial equity (20% of 30k baseline; weight handles the actual split)
+        "initial_equity": 6_000.0,
+        "base_ccy": "USD",
+    },
+}
+
+
 # Pre-defined strategy sets.
 #
 # V3.6 STATUS (2026-05-16, post Wave A audits):
@@ -890,6 +998,27 @@ STRATEGY_SETS = {
         "daily_summary",
         "reconciliation",
         "samir_stack_paper",
+    ],
+    # V3.7 multi-strategy live (added 2026-05-17).
+    # Replaces watchdog_gem.py single-strategy path. All gates passed:
+    #   * GEM J5 P_hl60_vt05: 5/5 axes DEPLOY + L17 rel-MC PASS + L65 ruin SAFE
+    #   * turtle CAT C3_peak: L64 CONDITIONAL_WATCHPOINT (L21 PASS, peak OOS
+    #     Sharpe +0.69, joint L65 with GEM PASS at 70%/20% with P_kill=0.30%)
+    # Portfolio matrix (vs 60/40): 7/10 PASS = PORTFOLIO_CONDITIONAL.
+    # P(NAV DD > 15% in 1y) = 0.30% (vs 60/40 = 19.30%) -- 64x lower ROR.
+    # Crisis stress (10 named windows): 5/5 PASS at 15% DD threshold.
+    #
+    # See:
+    #   directives/V3.7 Multi-Strategy Live Architecture 2026-05-17.md
+    #   .tmp/reports/joint_evaluation/framework_evolution_v37.md
+    #   .tmp/reports/v37_expanded_portfolio/turtle_cutover_plan.md
+    #
+    # Deployment: update docker-compose.yml entrypoint to
+    #   watchdog_portfolio.py --strategies v37_live
+    # and `docker compose restart titan-portfolio`.
+    "v37_live": [
+        "gem_j5_canonical",
+        "turtle_cat_c3peak",
     ],
 }
 

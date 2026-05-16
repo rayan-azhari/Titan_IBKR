@@ -1,10 +1,20 @@
-# Titan-IBKR — GEM Dual Momentum Live Runner (V2.0 production)
-# Builds a runtime image for scripts/watchdog_gem.py.
+# Titan-IBKR — V3.7 Multi-Strategy Portfolio Runner (paper/live production)
+# Builds a runtime image for scripts/watchdog_portfolio.py.
 # Companion: docker-compose.yml (alongside ib-gateway service).
 #
 # Switched 2026-05-15 from the V1 champion_portfolio bundle to the
 # V2.0 framework-audited GEM cell C12 (see directives/Pre-Reg GEM
 # Dual Momentum 2026-05-14.md §4.2).
+#
+# Evolved 2026-05-17 from single-strategy watchdog_gem.py to V3.7
+# multi-strategy watchdog_portfolio.py. The 'v37_live' STRATEGY_SETS
+# entry runs GEM J5 + turtle CAT in the same TradingNode with shared
+# PRM + Allocator. See directives/V3.7 Multi-Strategy Live
+# Architecture 2026-05-17.md.
+#
+# To roll back to the previous GEM-only entrypoint, set CMD back to
+# ["python", "scripts/watchdog_gem.py"] in this Dockerfile or override
+# via docker-compose.yml `command:` block.
 
 FROM python:3.11-slim
 
@@ -41,12 +51,18 @@ ENV PYTHONUNBUFFERED=1 \
     TZ=America/New_York \
     PATH="/app/.venv/bin:${PATH}"
 
-# Sanity check at build time — fails the build if titan or the GEM
+# Sanity check at build time — fails the build if titan or any V3.7 LIVE
 # strategy module can't import.
 RUN python -c "import titan; print('titan import OK')" \
- && python -c "from titan.strategies.gem.strategy import GemStrategy; print('gem strategy import OK')"
+ && python -c "from titan.strategies.gem.strategy import GemStrategy; print('gem strategy import OK')" \
+ && python -c "from titan.strategies.turtle.strategy import TurtleStrategy; print('turtle strategy import OK')"
 
-# Default to the GEM watchdog (V2.0 production). Override with
-# `docker compose run` for debug shells or one-shot scripts
-# (kill_switch, verify_connection).
-CMD ["python", "scripts/watchdog_gem.py"]
+# Default to the V3.7 multi-strategy portfolio watchdog. The watchdog
+# forwards --strategies to scripts/run_portfolio.py, which initialises a
+# single NautilusTrader TradingNode with all selected strategies sharing
+# PRM + Allocator. Default set 'v37_live' = GEM J5 + turtle CAT.
+#
+# Override with docker-compose `command:` block to run a different set
+# (e.g., samir_validation, champion_portfolio) or to roll back to
+# scripts/watchdog_gem.py for the GEM-only path.
+CMD ["python", "scripts/watchdog_portfolio.py", "--strategies", "v37_live"]
