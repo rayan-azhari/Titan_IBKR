@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from titan.research.metrics import BARS_PER_YEAR, annualize_vol
@@ -244,6 +245,7 @@ class PortfolioRiskManager:
     def get_summary(self) -> dict:
         total = self._total_equity()
         ann_vol = self._annualized_vol()
+        risk_contribs = self._risk_contributions()
         return {
             "total_equity": round(total, 2),
             "portfolio_drawdown_pct": round(self._portfolio_drawdown() * 100, 3),
@@ -261,12 +263,61 @@ class PortfolioRiskManager:
                     "equity": round(s.current_equity, 2),
                     "drawdown_pct": round(s.drawdown_pct * 100, 3),
                     "weight_pct": round(s.current_equity / total * 100 if total > 0 else 0.0, 2),
+                    # V3.7 (L67): risk contribution = fractional share of
+                    # portfolio variance contributed by this strategy.
+                    # ERC objective: all equal at 1/N. Skewed numbers indicate
+                    # risk concentration that capital weights don't reveal.
+                    "risk_contrib_pct": round(risk_contribs.get(sid, 0.0) * 100, 2),
                     "atr_pct": round(self._atr_percentiles.get(sid, 50.0), 1),
                     "samples": len(s.samples),
                 }
                 for sid, s in self._strategies.items()
             },
         }
+
+    def _risk_contributions(self) -> dict[str, float]:
+        """V3.7 risk-contribution decomposition per strategy.
+
+        Computes each strategy's fractional contribution to portfolio
+        variance using empirical covariance of recent strategy returns
+        (60 business days, aligned on common index). Returns a mapping
+        ``strategy_id -> risk_contribution`` with values summing to ~1.0
+        when valid. Returns empty dict if insufficient history.
+
+        Reference: Maillard, Roncalli & Teiletche 2010, "Properties of
+        Equally Weighted Risk Contribution Portfolios."
+        """
+        try:
+            histories = self.get_equity_histories()
+        except Exception:  # noqa: BLE001
+            return {}
+        names: list[str] = []
+        rets: list[pd.Series] = []
+        for sid, eq in histories.items():
+            if len(eq) < 20:
+                continue
+            r = eq.pct_change().dropna()
+            if len(r) < 20:
+                continue
+            names.append(sid)
+            rets.append(r.iloc[-60:])
+        if len(rets) < 2:
+            return {}
+        df = pd.concat(rets, axis=1, keys=names).fillna(0.0)
+        cov = df.cov().to_numpy()
+        total = self._total_equity()
+        if total <= 0:
+            return {}
+        weights = np.array([
+            self._strategies[n].current_equity / total
+            for n in names
+        ])
+        portfolio_var = float(weights @ cov @ weights)
+        if portfolio_var <= 1e-18:
+            return {n: 1.0 / len(names) for n in names}
+        marginal = cov @ weights
+        rc = weights * marginal / portfolio_var
+        return {names[i]: float(rc[i]) for i in range(len(names))}
 
     def check_correlation_regime(self) -> None:
         """Compute rolling correlation on a shared business-day grid.

@@ -18,10 +18,17 @@ should NOT be mass-refactored; instead they are RE-RUN under the
 framework as part of Phase 2 of the methodology directive.
 """
 
+from titan.research.framework.allocator_erc import ErcResult, compute_erc_weights
 from titan.research.framework.amortised_mc import (
     InferFn,
     PrefitFn,
     run_block_mc_amortised,
+)
+from titan.research.framework.crisis_stress import (
+    NAMED_CRISES,
+    CrisisStressResult,
+    CrisisWindowResult,
+    run_crisis_stress,
 )
 from titan.research.framework.dashboard import (
     AuditResult,
@@ -36,6 +43,7 @@ from titan.research.framework.decision import (
     classify_axis_noise,
     decide,
 )
+from titan.research.framework.drift_cusum import CusumResult, run_cusum_drift
 from titan.research.framework.dsr import DsrResult, deflated_sharpe, sr_var_from_sweep
 from titan.research.framework.early_gate import (
     Pass1GateResult,
@@ -44,6 +52,7 @@ from titan.research.framework.early_gate import (
     pass1_can_clear_ci_gate,
     pass1_can_clear_from_returns,
 )
+from titan.research.framework.kelly import KellyFraction, compute_kelly_fraction
 from titan.research.framework.mc import (
     McResult,
     RelativeMcResult,
@@ -55,6 +64,11 @@ from titan.research.framework.robustness import (
     NoiseLevelResult,
     NoiseRobustnessResult,
     run_noise_robustness,
+)
+from titan.research.framework.ruin import (
+    RuinAssessment,
+    assess_joint_ruin,
+    assess_strategy_ruin,
 )
 from titan.research.framework.sanctuary import (
     DivergenceTest,
@@ -78,18 +92,23 @@ from titan.research.framework.typology import (
     WfoConfig,
     defaults_for,
 )
-from titan.research.framework.ruin import (
-    RuinAssessment,
-    assess_joint_ruin,
-    assess_strategy_ruin,
-)
 from titan.research.framework.wfo import Fold, build_folds, iter_folds
 
 __all__ = [
-    # Risk-of-ruin (L65)
+    # V3.7 — Risk-of-ruin (L65) + Kelly (L67) + ERC + Crisis + Drift
     "RuinAssessment",
     "assess_strategy_ruin",
     "assess_joint_ruin",
+    "KellyFraction",
+    "compute_kelly_fraction",
+    "ErcResult",
+    "compute_erc_weights",
+    "CrisisStressResult",
+    "CrisisWindowResult",
+    "NAMED_CRISES",
+    "run_crisis_stress",
+    "CusumResult",
+    "run_cusum_drift",
     # Typology
     "StrategyClass",
     "StrategyClassDefaults",
