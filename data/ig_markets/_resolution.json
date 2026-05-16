@@ -1,0 +1,10 @@
+[
+  {
+    "sleeve": "equity_index",
+    "instrument": "NDX",
+    "epic": "IX.D.NASDAQ.CASH.IP",
+    "name": "US Tech 100",
+    "type": "INDICES",
+    "expiry": "DFB"
+  }
+]

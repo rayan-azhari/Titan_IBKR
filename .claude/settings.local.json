@@ -78,7 +78,9 @@
       "Bash(\"/c/Users/rayan/Desktop/Antigravity workspaces/Titan-IBKR/.venv/Scripts/python.exe\" scripts/download_data_spread.py)",
       "Bash(\"/c/Users/rayan/Desktop/Antigravity workspaces/Titan-IBKR/.venv/Scripts/python.exe\" research/spread/run_spread_backtest.py)",
       "Bash(/c/Users/rayan/AppData/Roaming/Python/Python314/Scripts/uv.exe run:*)",
-      "PowerShell(wsl -d docker-desktop -- echo \"started\"; Start-Sleep -Seconds 5; wsl -l -v)"
+      "PowerShell(wsl -d docker-desktop -- echo \"started\"; Start-Sleep -Seconds 5; wsl -l -v)",
+      "Bash(uv run python scripts/probe_*.py:*)",
+      "Bash(uv run python scripts/download_*.py:*)"
     ]
   }
 }

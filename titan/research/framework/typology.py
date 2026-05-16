@@ -32,6 +32,7 @@ class StrategyClass(Enum):
     INTRADAY_BREAKOUT = "intraday_breakout"  # M5/M15, ORB-style, very sparse
     DAILY_TREND = "daily_trend"  # D, persistent long-only
     DAILY_MEAN_REVERSION = "daily_mean_reversion"  # D, oscillator-based
+    DAILY_MEAN_REVERSION_VOL_CARRY = "daily_mean_reversion_vol_carry"  # D, short-vol carry
     CROSS_ASSET_MOMENTUM = "cross_asset_momentum"  # D, always-on long
     PAIRS = "pairs"  # D, market-neutral
     ML_CLASSIFIER = "ml_classifier"  # any TF, predicts label, holds until flip
@@ -204,6 +205,29 @@ DEFAULTS: dict[StrategyClass, StrategyClassDefaults] = {
             n_paths=200,
             bootstrap_method="block",
             max_dd_threshold_pct=0.25,
+            max_dd_pass_prob=0.10,
+        ),
+    ),
+    # L25 (2026-05-15): short-vol-carry sub-class. Same Sharpe / WFO as
+    # DAILY_MEAN_REVERSION but with a relaxed MC threshold calibrated to
+    # the empirical Eraker-Wu / Cheng range for VRP-harvest strategies
+    # (MaxDDs of 30-70% are structural, not failure modes).
+    StrategyClass.DAILY_MEAN_REVERSION_VOL_CARRY: StrategyClassDefaults(
+        sharpe=SharpeReporting(
+            primary="per_day_mtm", secondary="per_trade", primary_periods_per_year=252
+        ),
+        wfo=WfoConfig(
+            is_min_years=3.0,
+            oos_years=1.0,
+            fold_count=5,
+            is_mode="expanding",
+            stride_overlap_allowed=False,
+        ),
+        mc=McConfig(
+            block_size_bars=21,
+            n_paths=200,
+            bootstrap_method="block",
+            max_dd_threshold_pct=0.50,  # short-vol exposure: 50% MaxDD is the realistic tail
             max_dd_pass_prob=0.10,
         ),
     ),

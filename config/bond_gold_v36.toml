@@ -1,0 +1,61 @@
+# bond_gold_v36.toml -- Bond->Gold V3.6 PROMOTED CANONICAL (Wave A.1)
+#
+# *** PHASE 1 SHADOW CONFIG — NOT YET LIVE. ***
+# Live remains `config/bond_gold.toml` (V1-era lookback=60, threshold=0.50)
+# pending allocator approval + 6-month shadow comparison per
+# `.tmp/reports/bond_gold_reaudit/findings.md` migration plan.
+#
+# Lineage:
+#   V1-era audit (deleted under V2.0 cleanse) claimed Sharpe +1.17, 68%
+#   positive folds, 37 folds (2007-2026). Numbers NOT reproducible under
+#   V3.6 cost + math modelling.
+#   ->
+#   2026-05-16 L52 hybrid sweep on 19y IS data (sweep_bond_gold.py)
+#   identified plateau at lookback=120 (the live lookback=60 sits OFF
+#   the plateau).
+#   ->
+#   2026-05-16 V3.6 re-audit (run_bond_gold_reaudit.py) on 60 rolling
+#   folds (21y IEF + GLD) PROMOTED (lookback=120, threshold=0.50) to
+#   CONDITIONAL_WATCHPOINT. Live config (60, 0.50) downgrades under
+#   V3.6 (CI_lo +0.075 vs +0.152 for V3.6 canonical).
+#
+# Why CONDITIONAL_WATCHPOINT, not DEPLOY:
+#   The 24-month sanctuary (2024-04 → 2026-04) was the gold-rally
+#   regime. All cells with threshold <= 0.50 have sanctuary
+#   percentile=1.00 (lucky_flag=True per L55). The stitched-OOS Sharpe
+#   +0.66 with CI_lo +0.15 is the deployment-relevant number; the
+#   sanctuary Sharpe of +1.67 is regime-favourable and MUST NOT be
+#   cited as a forward claim.
+#
+# Audit headline (V3.6 PROMOTED, lookback=120, threshold=0.50):
+#   Stitched OOS Sharpe : +0.6559
+#   CI95 lo             : +0.152
+#   CI95 hi             : +1.159
+#   Rel-MC pass         : YES (38% DD reduction vs B&H GLD)
+#   Sanctuary Sharpe    : +1.671 (lucky_flag=True per L55 — do NOT cite)
+#   Sanctuary %ile      : 1.00
+#   5-axis verdict      : CONDITIONAL_WATCHPOINT (noise=mid)
+#
+# References:
+#   * Pre-reg: directives/Pre-Reg bond_gold Re-audit 2026-05-16.md
+#   * Findings: .tmp/reports/bond_gold_reaudit/findings.md
+#   * Strategy guide: docs/strategies/bond-gold.md
+#
+# **Migration to LIVE requires:**
+#   1. 6-month paper shadow alongside V1-era live config (Phase 1).
+#   2. Fresh sanctuary re-test at 6-month mark (covers a non-gold-rally
+#      regime to clear the L55 lucky-flag caveat).
+#   3. Allocator sign-off (Phase 2 cutover).
+#
+# Rollback if live migration goes ahead and fails: restore
+# `config/bond_gold.toml` from git history (the V1-era version is the
+# pre-2026-05-XX commit) + `docker compose restart titan-portfolio`.
+
+# ── Strategy parameters ─────────────────────────────────────────────
+lookback = 120          # *** V3.6 CHANGE: 60 -> 120 (L52 plateau centre) ***
+threshold = 0.50        # unchanged from V1
+hold_days = 20          # unchanged from V1
+vol_target_pct = 0.10   # unchanged from V1 (vol-target overlay)
+ewma_span = 20          # unchanged
+max_leverage = 1.5      # unchanged
+warmup_bars = 120       # unchanged (120 bars = ~6mo, covers the new lookback)

@@ -1,10 +1,17 @@
-"""run_live_gem.py -- Live runner for GEM Dual Momentum (C12 production cell).
+"""run_live_gem.py -- Live runner for GEM Dual Momentum.
+
+Production cell (since 2026-05-16): **J5 P_hl60_vt05**
+    vol_estimator_kind="ewma", vol_estimator_halflife=60, ann_vol_target=0.05.
+    Replaces J4 A1_ewma_hl40 via L52 hybrid-framework re-audit.
+    See `directives/Pre-Reg J5 GEM Hybrid Re-audit 2026-05-16.md` +
+    `docs/strategies/gem-dual-momentum.md` for the full lineage.
 
 Cross-asset momentum strategy: monthly SPY / EFA / IEF rotation with
 multi-speed blend (3,6,12), continuous vol-target overlay, and defensive
 switch into IEF when risk assets underperform.
 
-Selected production cell C12 expects max_leverage=2.0. Two execution modes:
+Production cell expects max_leverage=2.0 (rarely binds at the J5
+vol_target=0.05 operating point — L57). Two execution modes:
 
   * ``etf``  -- trade SPY/EFA/IEF as ETFs (caps effective leverage at 1.0).
                Use this for paper trading and the first 30+ days live.
@@ -93,30 +100,60 @@ def main() -> None:
         IBMarketDataTypeEnum.REALTIME if is_live else IBMarketDataTypeEnum.DELAYED_FROZEN
     )
 
+    universe = os.getenv("UNIVERSE", "us").lower()
+
     logger.info("=" * 60)
-    logger.info("  GEM DUAL MOMENTUM (C12 production cell) -- IBKR GATEWAY")
+    logger.info("  GEM DUAL MOMENTUM (J5 P_hl60_vt05 production cell) -- IBKR GATEWAY")
     logger.info(f"  Host: {ib_host}:{ib_port}  |  Mode: {'LIVE' if is_live else 'PAPER'}")
     logger.info(f"  Account: {ib_account_id}  |  ClientID: {ib_client_id}")
+    logger.info(f"  Universe: {universe.upper()}")
     logger.info("=" * 60)
 
-    # Required instruments: SPY, EFA, IEF (all US ETFs on ARCA).
-    spy_contract = IBContract(
-        secType="STK", symbol="SPY", exchange="SMART", primaryExchange="ARCA", currency="USD"
-    )
-    efa_contract = IBContract(
-        secType="STK", symbol="EFA", exchange="SMART", primaryExchange="ARCA", currency="USD"
-    )
-    ief_contract = IBContract(
-        secType="STK", symbol="IEF", exchange="SMART", primaryExchange="ARCA", currency="USD"
-    )
+    if universe == "uk":
+        # UK UCITS substitutes (LSEETF). Required because UK retail
+        # paper accounts are restricted from trading US-listed ETFs
+        # under PRIIPs/KID rules. Mapping:
+        #   SPY -> CSPX (iShares Core S&P 500 UCITS, USD, LSE)
+        #   EFA -> IWDA (iShares Core MSCI World UCITS, USD, LSE)
+        #          NOTE: IWDA includes ~65% US; not a pure EFA substitute.
+        #          The audit on this UK universe shows the strategy is mostly
+        #          CSPX-or-cash; the EFA leg rarely wins under this mapping.
+        #   IEF -> IDTM (iShares $ Treasury Bond 7-10y UCITS, USD, LSEETF).
+        #          yfinance ticker is IBTM.L; IBKR's broker symbol is IDTM.
+        #          The IBKR ticker "IBTM" resolves to an unrelated US fund.
+        spy_contract = IBContract(secType="STK", symbol="CSPX", exchange="LSEETF", currency="USD")
+        efa_contract = IBContract(secType="STK", symbol="IWDA", exchange="LSEETF", currency="USD")
+        # NB: yfinance ticker is "IBTM.L" but IBKR lists the same fund as
+        # "IDTM" on LSEETF (ConId=68489992, "ISHARES USD TREASURY 7-10Y").
+        # Symbol "IBTM" on IBKR resolves to an unrelated US fund.
+        ief_contract = IBContract(secType="STK", symbol="IDTM", exchange="LSEETF", currency="USD")
+    else:
+        # US-listed primary universe. Used for non-UK paper / live accounts.
+        spy_contract = IBContract(
+            secType="STK", symbol="SPY", exchange="SMART", primaryExchange="ARCA", currency="USD"
+        )
+        efa_contract = IBContract(
+            secType="STK", symbol="EFA", exchange="SMART", primaryExchange="ARCA", currency="USD"
+        )
+        # IEF's primary exchange is NASDAQ (not ARCA).
+        ief_contract = IBContract(
+            secType="STK", symbol="IEF", exchange="SMART", primaryExchange="NASDAQ", currency="USD"
+        )
+
     contracts = [spy_contract, efa_contract, ief_contract]
 
-    # Optional regime instruments.
+    # Optional regime instruments (VIX index + HYG ETF). HYG is US-listed
+    # so it WILL hit PRIIPs on UK retail -- but the strategy only reads its
+    # bars, never trades it, so the subscription succeeds and the rejection
+    # only matters if we try to trade. Skipped entirely under UK universe
+    # to keep the subscription clean.
     vix_contract = IBContract(secType="IND", symbol="VIX", exchange="CBOE", currency="USD")
-    hyg_contract = IBContract(
-        secType="STK", symbol="HYG", exchange="SMART", primaryExchange="ARCA", currency="USD"
-    )
-    contracts.extend([vix_contract, hyg_contract])
+    contracts.append(vix_contract)
+    if universe != "uk":
+        hyg_contract = IBContract(
+            secType="STK", symbol="HYG", exchange="SMART", primaryExchange="ARCA", currency="USD"
+        )
+        contracts.append(hyg_contract)
 
     inst_config = InteractiveBrokersInstrumentProviderConfig(
         load_all=False, load_contracts=frozenset(contracts)
@@ -162,18 +199,41 @@ def main() -> None:
     with cfg_path.open("rb") as fh:
         toml_cfg = tomllib.load(fh)
 
+    # Build instrument ids + bar types per universe. Strategy roles stay
+    # logical (spy_*, efa_*, ief_*) — only the underlying broker symbol
+    # changes. NT instrument-id suffixes:
+    #   - US: ".ARCA" for SPY/EFA/HYG, ".NASDAQ" for IEF (primary listing).
+    #   - UK: ".LSEETF" for CSPX/IWDA/IBTM (LSE-listed UCITS USD class).
+    #   - VIX is the same index in both ("^VIX.CBOE").
+    #   - HYG (US-only) only used as a regime signal; under UK we point
+    #     the role at a benign placeholder and the strategy ignores it
+    #     because hyg_contract is not subscribed.
+    if universe == "uk":
+        spy_iid, efa_iid, ief_iid = "CSPX.LSEETF", "IWDA.LSEETF", "IDTM.LSEETF"
+        hyg_iid: str | None = None  # HYG not subscribed under UK (PRIIPs-blocked)
+        # Warmup parquet is data/IDTM_D.parquet (a copy of IBTM_D — yfinance
+        # ticker IBTM.L == IBKR IDTM, same iShares USD Treasury 7-10y fund).
+        ticker_spy, ticker_efa, ticker_ief = "CSPX", "IWDA", "IDTM"
+    else:
+        spy_iid, efa_iid, ief_iid = "SPY.ARCA", "EFA.ARCA", "IEF.NASDAQ"
+        hyg_iid = "HYG.ARCA"
+        ticker_spy, ticker_efa, ticker_ief = "SPY", "EFA", "IEF"
+
     strat_config = GemStrategyConfig(
-        # Instrument ids + bar types
-        spy_instrument_id="SPY.ARCA",
-        efa_instrument_id="EFA.ARCA",
-        ief_instrument_id="IEF.ARCA",
-        vix_instrument_id="VIX.CBOE",
-        hyg_instrument_id="HYG.ARCA",
-        spy_bar_type_d="SPY.ARCA-1-DAY-LAST-EXTERNAL",
-        efa_bar_type_d="EFA.ARCA-1-DAY-LAST-EXTERNAL",
-        ief_bar_type_d="IEF.ARCA-1-DAY-LAST-EXTERNAL",
-        vix_bar_type_d="VIX.CBOE-1-DAY-LAST-EXTERNAL",
-        hyg_bar_type_d="HYG.ARCA-1-DAY-LAST-EXTERNAL",
+        spy_instrument_id=spy_iid,
+        efa_instrument_id=efa_iid,
+        ief_instrument_id=ief_iid,
+        vix_instrument_id="^VIX.CBOE",
+        hyg_instrument_id=hyg_iid,
+        spy_bar_type_d=f"{spy_iid}-1-DAY-LAST-EXTERNAL",
+        efa_bar_type_d=f"{efa_iid}-1-DAY-LAST-EXTERNAL",
+        ief_bar_type_d=f"{ief_iid}-1-DAY-LAST-EXTERNAL",
+        vix_bar_type_d="^VIX.CBOE-1-DAY-LAST-EXTERNAL",
+        hyg_bar_type_d=(f"{hyg_iid}-1-DAY-LAST-EXTERNAL" if hyg_iid else None),
+        # Physical parquet filenames for warmup (data/{ticker}_D.parquet).
+        ticker_spy=ticker_spy,
+        ticker_efa=ticker_efa,
+        ticker_ief=ticker_ief,
         # Spread remaining params from TOML
         **{k: v for k, v in toml_cfg.items() if k in GemStrategyConfig.__annotations__},
     )

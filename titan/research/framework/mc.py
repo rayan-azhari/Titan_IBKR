@@ -270,21 +270,25 @@ def run_block_mc(
     extras_log_rets: dict[str, np.ndarray] = {}
     extras_initial: dict[str, float] = {}
     if extra_series:
+        # Build the common-valid-index across primary + ALL extras FIRST,
+        # then reindex everything to that single shared index. This ensures
+        # extras_log_rets[name] has the same length as log_returns_primary
+        # (required by the shared_block bootstrap path).
+        common_idx = primary_close.index
         for name, s in extra_series.items():
-            s = s.reindex(primary_close.index).dropna()
-            # Truncate primary to the common index for the MC run.
-            common = primary_close.index.intersection(s.index)
-            if len(common) < cfg.block_size_bars * 2:
-                continue
-            extras_log_rets[name] = np.log(s.reindex(common)).diff().dropna().to_numpy()
-            extras_initial[name] = float(s.iloc[0])
-        if extras_log_rets:
-            # Re-align primary to the common index
-            common_idx = primary_close.index
-            for name, _ in extras_log_rets.items():
-                common_idx = common_idx.intersection(extra_series[name].index)
+            s_aligned = s.reindex(primary_close.index).dropna()
+            common_idx = common_idx.intersection(s_aligned.index)
+        if len(common_idx) >= cfg.block_size_bars * 2:
+            # Re-align primary first.
             primary_close = primary_close.reindex(common_idx).dropna()
             log_returns_primary = np.log(primary_close).diff().dropna().to_numpy()
+            # Now build each extra on the same shared index.
+            for name, s in extra_series.items():
+                s_aligned = s.reindex(common_idx).dropna()
+                if len(s_aligned) < cfg.block_size_bars * 2:
+                    continue
+                extras_log_rets[name] = np.log(s_aligned).diff().dropna().to_numpy()
+                extras_initial[name] = float(s_aligned.iloc[0])
 
     # Per-path independent seeds (reproducible from master seed).
     path_seeds = _spawn_path_seeds(seed, cfg.n_paths)

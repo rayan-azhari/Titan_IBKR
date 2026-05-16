@@ -1,0 +1,80 @@
+# gem_voltarget_lev2_j5.toml -- GEM Dual Momentum (J5 PROMOTED cell: P_hl60_vt05)
+#
+# **PHASE 0 SHADOW CONFIG — NOT YET LIVE.** Live remains
+# `config/gem_voltarget_lev2.toml` (J4 A1_ewma_hl40) pending allocator
+# approval per `.tmp/reports/gem_j5_reaudit/findings.md` migration plan.
+#
+# This file exists to enable Phase 1 paper-shadow comparison against the
+# J4 live config. Phase 2 (live cutover) requires explicit allocator
+# sign-off because it implies a 50% capital reduction
+# (ann_vol_target=0.05 vs J4's 0.10).
+#
+# Lineage:
+#   C12 (Pre-Reg GEM Dual Momentum 2026-05-14, 15-cell sweep)
+#   -> J3 (5-axis re-audit 2026-05-15) demoted C12 to CONDITIONAL_WATCHPOINT (noise=mid)
+#   -> J4 (Noise-Robust Redesign 2026-05-15) promoted A1_ewma_hl40
+#      (halflife=40, vol_target=0.10) to LIVE 2026-05-15 13:07 UTC
+#   -> J5 (Hybrid Re-audit 2026-05-16, this file) PROMOTED P_hl60_vt05
+#      (halflife=60, vol_target=0.05) to DEPLOY, SUPERSEDES J4.
+#
+# Selection rationale: the L52 hybrid sweep (2D over halflife x vol_target)
+# revealed that the J4 1D sweep at fixed vol_target=0.10 missed the steeper
+# vol_target axis. The max_leverage=2.0 cap binds asymmetrically at high
+# vol_target (L57): truncates upside, leaves downside intact, asymmetric
+# Sharpe drag. At vol_target=0.05 the cap rarely binds, vol-targeting
+# works as designed, Sharpe is preserved.
+#
+# Pre-reg: directives/Pre-Reg J5 GEM Hybrid Re-audit 2026-05-16.md.
+# Findings: .tmp/reports/gem_j5_reaudit/findings.md.
+#
+# Audit headline (J5 P_hl60_vt05, full V3.6 protocol incl. L17 rel-MC):
+#   Sharpe         : +1.0021 (vs J4 live +0.7402; +0.26, +34%)
+#   CI95 lo        : +0.510  (vs J4 live +0.238; 2.1x tighter)
+#   DSR-prob       : 1.00
+#   Rel-MC ratio   : 0.621 (PASS; vs J4 live 0.881 FAIL)
+#   P(strat better): 0.95   (vs J4 live 0.68)
+#   Sanctuary Sh.  : +0.968 (12mo OOS, percentile 0.40, NOT lucky-flagged)
+#   Noise axis     : BEST
+#   Verdict (5-ax) : DEPLOY (5/5 axes best)
+#
+# ── Strategy parameters (mirror GemConfig — only swept axes differ) ──
+lookback_blend_str = "3,6,12"          # multi-speed momentum blend (unchanged from J4)
+absolute_gate_lookback_months = 12     # canonical 12m for defensive switch (unchanged)
+buffer_pct = 0.005                     # 0.5% buffer to reduce churn (unchanged)
+defensive_switch = true                # unchanged
+
+# Vol-target overlay (J5 PROMOTED: vol_target=0.05, halflife=60)
+ann_vol_target = 0.05                  # *** J5 CHANGE: 0.10 -> 0.05 ***
+vol_lookback_days = 20                 # rolling-std fallback window (unused at EWMA)
+max_leverage = 2.0                     # 2x cap (unchanged); rarely binds at vt=0.05
+
+# J5 hybrid re-audit (2026-05-16) -- L52 + L57.
+# P_hl60_vt05 promoted to production from the J5 8-cell sweep.
+vol_estimator_kind = "ewma"            # unchanged
+vol_estimator_halflife = 60            # *** J5 CHANGE: 40 -> 60 ***
+
+# Stress gate (Step 4) -- OFF (unchanged from J4)
+stress_gate_enabled = false
+
+# Drawdown circuit breaker (Step 5) -- OFF (unchanged from J4)
+dd_breaker_enabled = false
+
+# ── Execution + ops ─────────────────────────────────────────────────
+execution_mode = "etf"                  # unchanged from J4 (paper start)
+rebalance_threshold_weight = 0.05      # unchanged
+
+warmup_bars = 380                       # 18 months for the longest lookback
+initial_equity = 30_000.0               # unchanged at config level
+base_ccy = "USD"
+
+# IMPORTANT — allocator action required for Phase 2 (live cutover):
+# The vol_target=0.05 reduces deployed capital by 50% vs J4's 0.10. At
+# initial_equity=$30k, this means effective deployed notional drops from
+# ~$30k to ~$15k. Freed capital (~$15k) needs a destination:
+#   * Recommend: rotation to bond_gold CONDITIONAL allocation (Wave A.1)
+#   * Alternative: cash buffer + GEM-J6 re-audit candidate at 4 weeks
+# See migration memo Phase 2 for the full discussion.
+
+# Cost model — same as J4 (unchanged knobs; the J5 audit reproduced this
+# cost model and confirmed cost-drag is not material at vol_target=0.05).
+cost_bps_per_turnover = 6.0            # ETF spread+slip per side; MES uses 1.0

@@ -622,3 +622,159 @@ def test_gem_uses_cross_asset_momentum_defaults():
     assert d.mc.max_dd_pass_prob == pytest.approx(0.10)
     # WFO uses rolling (cross-asset benefits from a sliding IS).
     assert d.wfo.is_mode == "rolling"
+
+
+# ── J4 noise-robust redesign options ──────────────────────────────────────
+
+
+def test_j4_defaults_preserve_existing_behaviour():
+    """Adding the J4 mitigation knobs to GemConfig MUST NOT change any existing
+    cell's behaviour when those knobs are left at their defaults. Specifically
+    a config that matches the old C12 (vol_estimator_kind='rolling_std',
+    max_weight_delta_per_bar=None, vol_target_kind='fixed') must produce the
+    same weight series as it did before the J4 extension.
+    """
+    closes = _synthetic_closes(n_years=4, seed=1)
+    cfg_default = GemConfig(
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        max_leverage=2.0,
+    )
+    # Explicit re-declaration of the defaults — must produce the SAME weights.
+    cfg_explicit = GemConfig(
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        max_leverage=2.0,
+        vol_estimator_kind="rolling_std",
+        max_weight_delta_per_bar=None,
+        vol_target_kind="fixed",
+    )
+    w1 = gem_target_weights(closes, cfg_default, ief_for_credit=closes["IEF"])
+    w2 = gem_target_weights(closes, cfg_explicit, ief_for_credit=closes["IEF"])
+    pd.testing.assert_frame_equal(w1, w2)
+
+
+def test_j4_mitigation_a_ewma_produces_different_weights():
+    """Switching the vol estimator from rolling_std to EWMA must produce a
+    measurably different weight series (otherwise the knob is a no-op)."""
+    closes = _synthetic_closes(n_years=5, seed=2)
+    cfg_rolling = GemConfig(
+        lookback_blend=(3, 6, 12),
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        max_leverage=2.0,
+        vol_estimator_kind="rolling_std",
+    )
+    cfg_ewma = GemConfig(
+        lookback_blend=(3, 6, 12),
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        max_leverage=2.0,
+        vol_estimator_kind="ewma",
+        vol_estimator_halflife=40,
+    )
+    w_rolling = gem_target_weights(closes, cfg_rolling, ief_for_credit=closes["IEF"])
+    w_ewma = gem_target_weights(closes, cfg_ewma, ief_for_credit=closes["IEF"])
+    diff = (w_rolling - w_ewma).abs().sum().sum()
+    assert diff > 0.1, (
+        f"EWMA vol estimator produced essentially identical weights to rolling_std "
+        f"(total |diff| = {diff:.4f})"
+    )
+
+
+def test_j4_mitigation_b_position_cap_limits_per_bar_change():
+    """Mitigation B caps |w_SPY[t] - w_SPY[t-1]| <= max_weight_delta_per_bar.
+    After applying the cap, no per-bar weight change on SPY or EFA may
+    exceed the cap (within a small numerical tolerance for the IEF rebal)."""
+    closes = _synthetic_closes(n_years=4, seed=3)
+    cfg = GemConfig(
+        lookback_blend=(3, 6, 12),
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        max_leverage=2.0,
+        max_weight_delta_per_bar=0.05,
+    )
+    w = gem_target_weights(closes, cfg, ief_for_credit=closes["IEF"])
+    # The cap must hold on the risk legs.
+    for col in ("SPY", "EFA"):
+        max_step = w[col].diff().abs().max()
+        assert max_step <= 0.05 + 1e-9, f"Per-bar Δ{col} = {max_step:.5f} exceeded cap 0.05"
+
+
+def test_j4_mitigation_c_rolling_quantile_vol_target_changes_weights():
+    """Switching vol_target_kind from 'fixed' to 'rolling_quantile' must
+    produce different weights (otherwise the knob is a no-op)."""
+    closes = _synthetic_closes(n_years=5, seed=4)
+    cfg_fixed = GemConfig(
+        lookback_blend=(3, 6, 12),
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        max_leverage=2.0,
+        vol_target_kind="fixed",
+    )
+    cfg_qtile = GemConfig(
+        lookback_blend=(3, 6, 12),
+        ann_vol_target=0.10,  # ignored when kind="rolling_quantile"
+        vol_lookback_days=20,
+        max_leverage=2.0,
+        vol_target_kind="rolling_quantile",
+        vol_target_quantile=0.40,
+        vol_target_quantile_window=252,
+    )
+    w_fixed = gem_target_weights(closes, cfg_fixed, ief_for_credit=closes["IEF"])
+    w_qtile = gem_target_weights(closes, cfg_qtile, ief_for_credit=closes["IEF"])
+    diff = (w_fixed - w_qtile).abs().sum().sum()
+    assert diff > 0.1, (
+        f"Rolling-quantile vol target produced same weights as fixed target "
+        f"(total |diff| = {diff:.4f})"
+    )
+
+
+def test_j4_invalid_vol_estimator_kind_raises():
+    closes = _synthetic_closes(n_years=2)
+    cfg = GemConfig(ann_vol_target=0.10, max_leverage=2.0, vol_estimator_kind="bogus_kind")
+    with pytest.raises(ValueError, match="vol_estimator_kind"):
+        gem_target_weights(closes, cfg, ief_for_credit=closes["IEF"])
+
+
+def test_j4_invalid_vol_target_kind_raises():
+    closes = _synthetic_closes(n_years=2)
+    cfg = GemConfig(ann_vol_target=0.10, max_leverage=2.0, vol_target_kind="bogus_kind")
+    with pytest.raises(ValueError, match="vol_target_kind"):
+        gem_target_weights(closes, cfg, ief_for_credit=closes["IEF"])
+
+
+def test_j4_causality_preserved_for_all_mitigations():
+    """All three mitigations must preserve causality (corrupted future
+    does not affect past weights)."""
+    closes = _synthetic_closes(n_years=4, seed=5)
+    cfgs = [
+        GemConfig(  # mitigation A
+            lookback_blend=(3, 6, 12),
+            ann_vol_target=0.10,
+            max_leverage=2.0,
+            vol_estimator_kind="ewma",
+            vol_estimator_halflife=40,
+        ),
+        GemConfig(  # mitigation B
+            lookback_blend=(3, 6, 12),
+            ann_vol_target=0.10,
+            max_leverage=2.0,
+            max_weight_delta_per_bar=0.05,
+        ),
+        GemConfig(  # mitigation C
+            lookback_blend=(3, 6, 12),
+            ann_vol_target=0.10,
+            max_leverage=2.0,
+            vol_target_kind="rolling_quantile",
+            vol_target_quantile=0.40,
+        ),
+    ]
+    for cfg in cfgs:
+        gem_assert_causal(closes, cfg=cfg, n_trials=3, seed=42)

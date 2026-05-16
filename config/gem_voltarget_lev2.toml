@@ -1,38 +1,73 @@
-# gem_voltarget_lev2.toml -- GEM Dual Momentum (production cell: C12)
+# gem_voltarget_lev2.toml -- GEM Dual Momentum (production cell: J5 P_hl60_vt05)
 #
-# Selected from the 15-cell sweep in
-# directives/Pre-Reg GEM Dual Momentum 2026-05-14.md §4.2.
+# *** J5 PROMOTED 2026-05-16 — REPLACES J4 A1_ewma_hl40 ***
+# Phase 1 (1-week shadow) was skipped per user instruction; the J4→J5
+# cutover went directly to Phase 2. Paper-only: this change is reversible
+# by restoring vol_estimator_halflife=40 and ann_vol_target=0.10.
 #
-# Mechanism: monthly cross-asset momentum (SPY / EFA / IEF) with
-# multi-speed blend (3/6/12), continuous vol-target overlay at 10%
-# annualised, defensive switch into IEF when both risk assets
-# underperform IEF over 12m. Max leverage 2.0 (intended via MES futures).
+# Lineage:
+#   C12 (Pre-Reg GEM Dual Momentum 2026-05-14, 15-cell sweep) -> J3 demoted
+#   to CONDITIONAL_WATCHPOINT 2026-05-15 (noise=mid) -> J4 A1_ewma_hl40
+#   promoted 2026-05-15 (halflife=40, vt=0.10, LIVE since 13:07 UTC) -> J5
+#   P_hl60_vt05 promoted 2026-05-16 via L52 hybrid framework (halflife=60,
+#   vt=0.05). The J5 audit applied the FULL V3.6 protocol incl. L17
+#   relative-MC, which J4 fails (12% DD reduction vs 60/40 SPY/IEF; gate
+#   is 20%). J5 passes (38% DD reduction).
 #
-# Audit headline (with 1.5 bps/turnover costs):
-#   Sharpe    : +0.84
-#   CI95 lo   : +0.45
-#   Strategy MaxDD : -22%
-#   SPY MaxDD : -41%
-#   Rel-MC ratio   : 0.56 (PASS the L17 0.80 gate)
-#   p(strategy_MaxDD <= bench_MaxDD) : 94.5%
-#   Sanctuary Sharpe : +0.91
-#   Verdict   : DEPLOY (passes all 4 axes)
+# Mechanism (unchanged from C12/J3/J4): monthly cross-asset momentum
+# (SPY / EFA / IEF) with multi-speed blend (3/6/12), continuous vol-target
+# overlay, defensive switch into IEF when both risk assets underperform
+# IEF over 12m. Max leverage 2.0 (intended via MES futures).
+#
+# Audit headline (J5 P_hl60_vt05, full V3.6 protocol):
+#   Sharpe         : +1.0021  (J4 live was +0.7402; +0.26, +34%)
+#   CI95 lo        : +0.510   (J4 was +0.238; 2.1x tighter)
+#   DSR-prob       : 1.00
+#   Rel-MC ratio   : 0.621    (PASS; J4 was 0.881 FAIL)
+#   P(strat better): 0.95     (J4 was 0.68)
+#   Sanctuary Sh.  : +0.968   (12mo OOS, percentile 0.40, NOT lucky-flagged)
+#   Noise axis     : BEST
+#   Verdict (5-ax) : DEPLOY (5/5 axes best)
+#
+# L57 lesson (new with J5): the max_leverage=2.0 cap binds asymmetrically
+# at high vol_target — truncates upside, leaves downside intact, asymmetric
+# Sharpe drag. At vol_target=0.05 the cap rarely binds → Sharpe preserved.
+# This is why J5's vt=0.05 outperforms J4's vt=0.10 even though Sharpe is
+# theoretically leverage-invariant.
+#
+# CAPITAL DEPLOYMENT NOTE: J5 at vol_target=0.05 deploys ~50% of the
+# capital J4 deployed at vt=0.10. Absolute PnL contribution will be ~50%
+# of J4 despite higher Sharpe. Freed capital can rotate to:
+#   * bond_gold (Wave A.1 CONDITIONAL_WATCHPOINT — see migration memo)
+#   * cash buffer for upcoming J6 audit (4 weeks post-cutover)
+#
+# References:
+#   * Pre-reg: directives/Pre-Reg J5 GEM Hybrid Re-audit 2026-05-16.md
+#   * Findings: .tmp/reports/gem_j5_reaudit/findings.md
+#   * Snapshot of J4 config: kept in git history (pre-2026-05-16 commit
+#     of this file is the J4 A1_ewma_hl40 canonical).
+#   * J5 sidecar reference: config/gem_voltarget_lev2_j5.toml (identical to
+#     this file post-cutover; kept for snapshot purposes).
 
 # ── Strategy parameters (mirror GemConfig) ───────────────────────────
-lookback_blend_str = "3,6,12"          # multi-speed momentum blend
-absolute_gate_lookback_months = 12     # canonical 12m for defensive switch
-buffer_pct = 0.005                     # 0.5% buffer to reduce churn
-defensive_switch = true
+lookback_blend_str = "3,6,12"          # multi-speed momentum blend (unchanged from C12/J3/J4)
+absolute_gate_lookback_months = 12     # canonical 12m for defensive switch (unchanged)
+buffer_pct = 0.005                     # 0.5% buffer to reduce churn (unchanged)
+defensive_switch = true                # unchanged
 
-# Vol-target overlay (Step 3)
-ann_vol_target = 0.10                  # target 10% annualised vol
-vol_lookback_days = 20                 # rolling vol window
-max_leverage = 2.0                     # C12: 2x cap (MES futures provide)
+# Vol-target overlay (J5: vol_target=0.05, halflife=60)
+ann_vol_target = 0.05                  # *** J5 CHANGE: 0.10 -> 0.05 (L57) ***
+vol_lookback_days = 20                 # rolling-std fallback window (unused at EWMA setting)
+max_leverage = 2.0                     # 2x cap; rarely binds at vt=0.05 (L57)
 
-# Stress gate (Step 4) -- OFF in C12; continuous vol-target preferred
+# Vol estimator (J4 EWMA path retained; J5 changes halflife only)
+vol_estimator_kind = "ewma"            # unchanged from J4
+vol_estimator_halflife = 60            # *** J5 CHANGE: 40 -> 60 (noise axis = best) ***
+
+# Stress gate (Step 4) -- OFF; continuous vol-target preferred
 stress_gate_enabled = false
 
-# Drawdown circuit breaker (Step 5) -- OFF in C12; redundant with vol-target
+# Drawdown circuit breaker (Step 5) -- OFF; redundant with vol-target
 dd_breaker_enabled = false
 
 # ── Execution + ops ─────────────────────────────────────────────────
@@ -42,4 +77,8 @@ rebalance_threshold_weight = 0.05      # buffer order submission
 warmup_bars = 380                       # 18 months for the longest lookback
 initial_equity = 30_000.0
 base_ccy = "USD"
-cost_bps_per_turnover = 1.5            # informational; used in pre-deploy audits
+# Informational; the audit harness uses the realistic cost model
+# (see research/gem/run_gem_audit.py and V3.6 L23). At J5 vt=0.05 the
+# cost drag is +0.03 Sharpe (well below the 0.10 gate); cost is not the
+# binding constraint.
+cost_bps_per_turnover = 6.0            # ETF spread+slip per side; MES uses 1.0

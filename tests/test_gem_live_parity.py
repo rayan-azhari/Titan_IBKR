@@ -228,3 +228,92 @@ def test_sizing_rejects_invalid_inputs():
             efa_price=80.0,
             ief_price=95.0,
         )
+
+
+# ── J4 production cell (A1_ewma_hl40) -- parity + plumbing ─────────────────
+
+
+def _a1_ewma_config() -> GemConfig:
+    """The current production cell after the J4 noise-robust redesign.
+
+    Same as _c12_config() except vol_estimator_kind/halflife switched.
+    """
+    return GemConfig(
+        lookback_blend=(3, 6, 12),
+        buffer_pct=0.005,
+        defensive_switch=True,
+        ann_vol_target=0.10,
+        vol_lookback_days=20,
+        max_leverage=2.0,
+        vol_estimator_kind="ewma",
+        vol_estimator_halflife=40,
+    )
+
+
+def test_parity_a1_ewma_bulk_warmup_matches_research_exactly():
+    """A1_ewma_hl40 (J4 production) live class must agree bit-exact with
+    the research weights. Exercises the new vol_estimator_kind field
+    path through GemConfig and gem_target_weights."""
+    closes = _synthetic_history(n_years=3, seed=11)
+    cfg = _a1_ewma_config()
+
+    research_weights = gem_target_weights(closes, cfg=cfg)
+
+    logic = GemLiveLogic(cfg=cfg)
+    logic.add_bars_dataframe(closes)
+    live_weights = logic.weight_history()
+
+    pd.testing.assert_frame_equal(
+        research_weights,
+        live_weights,
+        check_exact=True,
+        check_names=False,
+    )
+
+
+def test_a1_ewma_produces_different_weights_than_c12_baseline():
+    """The whole point of the J4 deployment: the EWMA path must produce
+    measurably different weights than the rolling-std baseline.
+    """
+    closes = _synthetic_history(n_years=3, seed=12)
+    w_c12 = gem_target_weights(closes, cfg=_c12_config())
+    w_a1 = gem_target_weights(closes, cfg=_a1_ewma_config())
+    diff = (w_c12 - w_a1).abs().sum().sum()
+    assert diff > 0.1, (
+        f"A1 EWMA produced same weights as C12 baseline -- the J4 field is not "
+        f"propagating. Total |Δw| = {diff:.4f}"
+    )
+
+
+def test_strategy_config_loads_j4_fields_from_toml():
+    """The TOML config schema must accept and propagate the J4 fields.
+
+    Exercises the loading pipeline: TOML -> GemStrategyConfig -> the
+    research GemConfig translation in titan/strategies/gem/strategy.py
+    (which is mediated by GemStrategyConfig's defaults if the TOML omits
+    them). This test ensures the new fields land on the live config
+    object with the right values for the A1 production cell.
+    """
+    from titan.strategies.gem.config import GemStrategyConfig
+
+    # Mimic what NautilusTrader's TOML loader does when handed the new
+    # production TOML: it instantiates GemStrategyConfig from the parsed
+    # dict. Required positional / non-default fields stubbed.
+    cfg = GemStrategyConfig(
+        spy_instrument_id="SPY.ARCA",
+        efa_instrument_id="EFA.ARCA",
+        ief_instrument_id="IEF.ARCA",
+        spy_bar_type_d="SPY.ARCA-1-DAY-LAST-EXTERNAL",
+        efa_bar_type_d="EFA.ARCA-1-DAY-LAST-EXTERNAL",
+        ief_bar_type_d="IEF.ARCA-1-DAY-LAST-EXTERNAL",
+        # J4 fields from the production TOML:
+        vol_estimator_kind="ewma",
+        vol_estimator_halflife=40,
+    )
+    assert cfg.vol_estimator_kind == "ewma"
+    assert cfg.vol_estimator_halflife == 40
+    # Other J4 fields should have their L31 defaults.
+    assert cfg.max_weight_delta_per_bar is None
+    assert cfg.vol_target_kind == "fixed"
+    assert cfg.vol_target_quantile == 0.40
+    assert cfg.vol_target_quantile_window == 252

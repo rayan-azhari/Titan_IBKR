@@ -88,6 +88,28 @@ class GemConfig:
     vol_lookback_days: int = 20
     max_leverage: float = 1.0  # 1.0 = no leverage-up; >1 allows scaling up
 
+    # ── J4 (2026-05-15) noise-robust redesign options ────────────────────
+    # L30 mitigation A: EWMA / longer-window vol estimator. The 20-day
+    # rolling-std denominator is sensitive to single-bar noise; smoother
+    # estimators reduce the noise amplification into position swings.
+    # Defaults preserve C12 behaviour (vol_estimator_kind="rolling_std").
+    vol_estimator_kind: str = "rolling_std"  # or "ewma"
+    vol_estimator_halflife: int = 40  # used only when vol_estimator_kind=="ewma"
+
+    # L30 mitigation B: per-bar position-change cap. After all overlay
+    # logic, clip |w[t] - w[t-1]| <= max_weight_delta_per_bar on each
+    # risk-asset leg. Decouples position trajectory from vol-estimator
+    # noise. None (default) disables the cap.
+    max_weight_delta_per_bar: float | None = None
+
+    # L30 mitigation C: rolling-percentile vol target. Replace the fixed
+    # ann_vol_target (e.g. 0.10) with a rolling quantile of realised vol
+    # itself. The target moves with the data, so noise affects numerator
+    # and denominator together. Defaults preserve fixed-target behaviour.
+    vol_target_kind: str = "fixed"  # or "rolling_quantile"
+    vol_target_quantile: float = 0.40
+    vol_target_quantile_window: int = 252
+
     # ── Step 4: conditional stress gate (limit exposure ONLY in stress) ──
     # The Step 3 overlay scales exposure ALL the time -- including calm
     # markets, which costs total return. The Step 4 enhancement gates the
@@ -436,18 +458,56 @@ def _apply_vol_target(
     bar_returns = closes_aligned.pct_change().fillna(0.0)
     # UNSCALED strategy returns (the binary version of the strategy).
     raw_strat_ret = (weights * bar_returns).sum(axis=1)
-    # Realised vol over a rolling window (annualised). Sufficient samples
-    # only after vol_lookback_days bars; before that, scale = 1.0 (don't
-    # over-correct on a short sample).
-    rolling_std = raw_strat_ret.rolling(
-        cfg.vol_lookback_days, min_periods=cfg.vol_lookback_days
-    ).std(ddof=1)
+
+    # J4 mitigation A: choose realised-vol estimator. Default "rolling_std"
+    # preserves C12 / pre-J4 behaviour. "ewma" uses an exponentially-
+    # weighted vol estimator with half-life vol_estimator_halflife (smoother
+    # response to single-bar noise; L30 mitigation A).
+    if cfg.vol_estimator_kind == "rolling_std":
+        rolling_std = raw_strat_ret.rolling(
+            cfg.vol_lookback_days, min_periods=cfg.vol_lookback_days
+        ).std(ddof=1)
+    elif cfg.vol_estimator_kind == "ewma":
+        # EWMA std on bar returns; min_periods guard keeps it None until
+        # we have at least halflife bars of data (consistent with the
+        # rolling-std warmup).
+        rolling_std = raw_strat_ret.ewm(
+            halflife=cfg.vol_estimator_halflife, min_periods=cfg.vol_estimator_halflife
+        ).std(bias=False)
+    else:
+        raise ValueError(
+            f"GemConfig.vol_estimator_kind must be 'rolling_std' or 'ewma', "
+            f"got {cfg.vol_estimator_kind!r}"
+        )
     realised_vol = rolling_std * np.sqrt(BARS_PER_YEAR["D"])
+
+    # J4 mitigation C: choose vol-target source. Default "fixed" preserves
+    # C12 / pre-J4 behaviour (cfg.ann_vol_target). "rolling_quantile" sets
+    # the target to a rolling quantile of realised vol itself (target moves
+    # with the data; L30 mitigation C).
+    if cfg.vol_target_kind == "fixed":
+        if cfg.ann_vol_target is None:
+            raise ValueError("vol_target_kind='fixed' requires cfg.ann_vol_target to be set")
+        vol_target = pd.Series(cfg.ann_vol_target, index=weights.index, dtype=float)
+    elif cfg.vol_target_kind == "rolling_quantile":
+        vol_target = (
+            realised_vol.rolling(
+                cfg.vol_target_quantile_window,
+                min_periods=max(20, cfg.vol_target_quantile_window // 4),
+            )
+            .quantile(cfg.vol_target_quantile)
+            .ffill()
+        )
+    else:
+        raise ValueError(
+            f"GemConfig.vol_target_kind must be 'fixed' or 'rolling_quantile', "
+            f"got {cfg.vol_target_kind!r}"
+        )
 
     # Vol-target scale -- can be < 1 (scale down) or > 1 (lever up,
     # bounded by max_leverage). Where realised vol is zero or NaN, fall
     # back to 1.0 (full position).
-    voltarget_scale = (cfg.ann_vol_target / realised_vol).clip(upper=cfg.max_leverage)
+    voltarget_scale = (vol_target / realised_vol).clip(upper=cfg.max_leverage)
     voltarget_scale = voltarget_scale.fillna(1.0)
 
     # Apply stress gate: on calm bars the scale is held at max_leverage
@@ -480,6 +540,30 @@ def _apply_vol_target(
         scaled.loc[risk_mask, "IEF"] = scaled.loc[risk_mask, "IEF"] + leftover.loc[risk_mask]
 
     # If we're already in IEF (defensive switch), leave as-is.
+
+    # J4 mitigation B: per-bar position-change cap. After all overlay logic,
+    # clip each risk-asset leg so |w[t] - w[t-1]| <= max_weight_delta_per_bar.
+    # Excess move is routed to IEF (the cash-equivalent) to preserve the
+    # weights-sum invariant. Causal: cap acts on already-causal weights, no
+    # additional shift needed. Iterating row-by-row because the cap depends
+    # on the prior (already-capped) row's weights, not the raw target.
+    if cfg.max_weight_delta_per_bar is not None and cfg.max_weight_delta_per_bar > 0:
+        cap = float(cfg.max_weight_delta_per_bar)
+        risk_cols = ["SPY", "EFA"]
+        capped = scaled.copy()
+        prev = scaled.iloc[0][risk_cols].values.astype(float)
+        for i in range(1, len(capped)):
+            tgt = scaled.iloc[i][risk_cols].values.astype(float)
+            delta = tgt - prev
+            clipped_delta = np.clip(delta, -cap, cap)
+            new_w = prev + clipped_delta
+            # Excess move (what we did NOT take) goes to IEF.
+            uncovered = delta - clipped_delta
+            capped.iloc[i, capped.columns.get_indexer(risk_cols)] = new_w
+            capped.iloc[i, capped.columns.get_loc("IEF")] = scaled.iloc[i]["IEF"] + uncovered.sum()
+            prev = new_w
+        return capped
+
     return scaled
 
 
@@ -577,6 +661,31 @@ def _apply_dd_breaker(
     return scaled
 
 
+def _apply_rebalance_threshold(weights: pd.DataFrame, threshold: float) -> pd.DataFrame:
+    """Suppress weight updates where no per-asset delta exceeds ``threshold``.
+
+    Mirrors live-strategy behaviour (``GemStrategy._reconcile`` only submits
+    when ``|w_target - w_current| > rebalance_threshold_weight`` per asset).
+    Backtest parity: without this filter, the backtest charges spread + slip
+    + a $1-$4 commission floor on sub-threshold daily vol-target tweaks the
+    live class would have skipped.
+
+    Returns the realized weight path. Sequential, but only ~4000 bars in the
+    GEM universe so the loop cost is negligible.
+    """
+    if threshold <= 0.0:
+        return weights
+    realized = weights.copy()
+    last = weights.iloc[0].values.copy()
+    for i in range(1, len(weights)):
+        target = weights.iloc[i].values
+        # Only "land" the new weights if any asset crosses the threshold.
+        if (np.abs(target - last) > threshold).any():
+            last = target.copy()
+        realized.iloc[i] = last
+    return realized
+
+
 def gem_returns(
     closes: pd.DataFrame,
     cfg: GemConfig | None = None,
@@ -585,47 +694,109 @@ def gem_returns(
     hyg: pd.Series | None = None,
     ief_for_credit: pd.Series | None = None,
     cost_bps_per_turnover: float = 0.0,
+    cost_fixed_usd_per_fill: float = 0.0,
+    cost_bps_per_turnover_mes: float = 0.0,
+    cost_fixed_usd_per_fill_mes: float = 0.0,
+    notional_usd: float = 0.0,
+    execution_mode: str = "etf",
+    rebalance_threshold: float = 0.0,
 ) -> pd.Series:
     """Compute the per-day GEM strategy returns (geometric, simple-return).
 
     Implementation contract::
 
-        ret_t = sum_n weight[t, n] * (close[t, n] / close[t-1, n] - 1)
-              - cost_bps_per_turnover * turnover[t] / 1e4
+        realized_w[t] = _apply_rebalance_threshold(target_w, rebalance_threshold)
+        ret_t = sum_n realized_w[t, n] * (close[t, n] / close[t-1, n] - 1) - cost[t]
 
-    where weight is the CAUSAL shifted weight from ``gem_target_weights``
-    and turnover[t] = sum(|weight[t] - weight[t-1]|).
+    where turnover[t, n] = |realized_w[t, n] - realized_w[t-1, n]|.
 
-    Transaction costs (``cost_bps_per_turnover``):
-      * Default 0 = costless (legacy behaviour; backward-compatible).
-      * ETF realistic default: 1.5 bps per unit of turnover. Derived from
-        ``COST_US_ETF_LIQUID`` (spread 1.0 + slip 0.5 = 1.5 bps one-way).
-        Commission ~$0.35/side on a $100 share is sub-bp; folded in.
-      * MES futures: ~1.0 bps per unit of turnover.
+    Cost model — leg-aware to handle the MES futures path on the SPY leg::
 
-    Turnover semantics: ``|weight_new - weight_old|`` per asset, summed.
-    A clean 100% SPY -> 100% IEF rotation has turnover = 2.0 (1.0 sold
-    SPY + 1.0 bought IEF). At 1.5 bps that's a 3 bp round-trip cost,
-    matching the realistic US-ETF round-trip.
+        execution_mode == "etf"  (default):
+            All three legs (SPY/EFA/IEF or their UK UCITS substitutes) are
+            traded as ETFs. Single ETF cost rate applies to all turnover.
+
+            cost[t] = sum(turnover[t]) * cost_bps_per_turnover / 1e4
+                    + 1{any fill}     * cost_fixed_usd_per_fill / notional_usd
+
+        execution_mode == "mes":
+            SPY leg is traded as MES futures (cheap, leveraged); EFA + IEF
+            remain ETFs.
+
+            cost_spy[t] = turnover[t, SPY] * cost_bps_per_turnover_mes / 1e4
+                        + 1{SPY fill}    * cost_fixed_usd_per_fill_mes / notional_usd
+            cost_etf[t] = turnover[t, EFA+IEF] * cost_bps_per_turnover / 1e4
+                        + 1{EFA+IEF fill}    * cost_fixed_usd_per_fill / notional_usd
+            cost[t] = cost_spy[t] + cost_etf[t]
+
+    Calibration reference (from directives/Cost Model Audit 2026-05-11.md):
+
+    ETF leg, UK UCITS at $30k notional, IBKR Pro tier:
+      * cost_bps_per_turnover = 6.0      (spread ~2.5 + slip 0.5 per side;
+                                          CSPX/IDTM/IWDA blend; live-audited)
+      * cost_fixed_usd_per_fill = 1.0    (IBKR Pro commission floor)
+        Lite tier alternative: 4.0      (IBKR Lite, much worse at $30k)
+
+    MES futures, SPY leg, $30k notional (1 MES ≈ $5 × ES ≈ $30k):
+      * cost_bps_per_turnover_mes = 1.0  (1 tick spread on MES front-month
+                                          = $1.25 / $30k ≈ 0.4 bps + slip)
+      * cost_fixed_usd_per_fill_mes = 1.19 (IBKR all-in: $0.85 commission
+                                            + $0.32 exchange + $0.02 NFA)
+
+    Together MES is ~3x cheaper per turnover unit than the ETF path, which
+    is the whole reason C12 (max_leverage=2) is feasible only via MES.
+
+    Rebalance threshold:
+      * ``rebalance_threshold`` — per-asset weight delta below which a
+        rebalance is NOT submitted live. Matches GemStrategy's
+        ``rebalance_threshold_weight`` (default 0.05). Set 0 for legacy
+        backtest comparability; 0.05 for production parity with the live
+        class. Without this filter the vol-target overlay generates ~3x
+        more daily "fills" than the live class actually submits.
 
     Optional ``vix`` / ``hyg`` / ``ief_for_credit`` series feed the Step 4
     stress signal (when ``cfg.stress_gate_enabled``). Absent series silently
     skip their stress component.
     """
-    weights = gem_target_weights(closes, cfg=cfg, vix=vix, hyg=hyg, ief_for_credit=ief_for_credit)
+    if execution_mode not in ("etf", "mes"):
+        raise ValueError(f"execution_mode must be 'etf' or 'mes', got {execution_mode!r}")
+    target_weights = gem_target_weights(
+        closes, cfg=cfg, vix=vix, hyg=hyg, ief_for_credit=ief_for_credit
+    )
+    weights = _apply_rebalance_threshold(target_weights, rebalance_threshold)
     closes_aligned = closes[list(GEM_UNIVERSE)].astype(float).reindex(weights.index)
     bar_returns = closes_aligned.pct_change()
-    # Sanity: at any row, weights sum to either 0 (warmup) or some value
-    # in [0, max_leverage]. Not enforced here.
     strat_ret = (weights * bar_returns).sum(axis=1)
-    if cost_bps_per_turnover > 0:
-        # Turnover[t] = sum over assets of |w[t] - w[t-1]|. This counts
-        # both legs of a rotation (sell + buy) so total is 2 for a clean
-        # swap; cost_bps_per_turnover is the ONE-WAY rate.
-        turnover = (weights - weights.shift(1).fillna(0.0)).abs().sum(axis=1)
-        cost = turnover * cost_bps_per_turnover / 1e4
-        strat_ret = strat_ret - cost
-    return strat_ret
+
+    has_var = cost_bps_per_turnover > 0 or cost_bps_per_turnover_mes > 0
+    has_fixed = cost_fixed_usd_per_fill > 0 or cost_fixed_usd_per_fill_mes > 0
+    if not (has_var or has_fixed):
+        return strat_ret
+
+    per_asset_turn = (weights - weights.shift(1).fillna(0.0)).abs()
+    spy_turn = per_asset_turn["SPY"]
+    etf_legs_turn = per_asset_turn[["EFA", "IEF"]].sum(axis=1)
+
+    cost = pd.Series(0.0, index=weights.index)
+    fixed_inv = (1.0 / notional_usd) if notional_usd > 0 else 0.0
+
+    if execution_mode == "mes":
+        # SPY leg priced as MES futures.
+        cost = cost + spy_turn * cost_bps_per_turnover_mes / 1e4
+        if cost_fixed_usd_per_fill_mes > 0 and fixed_inv > 0:
+            cost = cost + (spy_turn > 1e-9).astype(float) * cost_fixed_usd_per_fill_mes * fixed_inv
+        # EFA/IEF legs priced as ETFs.
+        cost = cost + etf_legs_turn * cost_bps_per_turnover / 1e4
+        if cost_fixed_usd_per_fill > 0 and fixed_inv > 0:
+            cost = cost + (etf_legs_turn > 1e-9).astype(float) * cost_fixed_usd_per_fill * fixed_inv
+    else:
+        # All legs priced as ETFs (default).
+        total_turn = per_asset_turn.sum(axis=1)
+        cost = cost + total_turn * cost_bps_per_turnover / 1e4
+        if cost_fixed_usd_per_fill > 0 and fixed_inv > 0:
+            cost = cost + (total_turn > 1e-9).astype(float) * cost_fixed_usd_per_fill * fixed_inv
+
+    return strat_ret - cost
 
 
 def gem_assert_causal(

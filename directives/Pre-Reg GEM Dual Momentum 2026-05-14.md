@@ -140,16 +140,18 @@ Why C12 over C8:
 
 ### §4.4 Verdict + deployment plan
 
-**VERDICT: DEPLOY**
+**VERDICT: DEPLOY** (4-axis, as of 2026-05-14).
+
+**Subsequent revision (2026-05-15):** Under the J3 5-axis matrix (`Pre-Reg J3 Noise Robustness 5th Axis 2026-05-15.md`), C12 demoted DEPLOY → CONDITIONAL_WATCHPOINT because the vol-target overlay's `realised_vol_20d` denominator is fragile to small input-price noise (L30). The J4 noise-robust redesign audit (`Pre-Reg J4 GEM Noise-Robust Redesign 2026-05-15.md`) tested three mitigations and promoted **A1_ewma_hl40** — same mechanism as C12, but with `vol_estimator_kind="ewma"` + `vol_estimator_halflife=40`. A1 holds a true 5/5-axis DEPLOY (noise axis recovered to `best`) at ~3% point Sharpe drag (+0.7773 vs +0.8016) and CI_lo +0.387. **A1_ewma_hl40 is the current production cell in `config/gem_voltarget_lev2.toml`** (deployed on Docker paper account 2026-05-15 13:07 UTC). The C12 row in §4.1 above remains the historical record; do not edit.
 
 Next steps (per `directives/Strategy Deployment Guide.md`):
 
-1. Port to `titan/strategies/gem/` (live class).
-2. Parity test (V3.6 A10): one-bar bit-exact agreement between research function and live class.
-3. Wire to `titan/adapters/ibkr/` + add to `scripts/run_live_gem.py`.
-4. Register with `PortfolioRiskManager`.
-5. Paper trade for ≥30 days before live capital (per Deployment Guide).
-6. MES futures sizing: 1 contract = $5 × ES_price. At ES ~5800 → 1 MES ≈ $29k notional. For $30k strategy NAV at 2x leverage → ~2 MES contracts in SPY-long state. The strategy's weight output (which can be up to 2.0) directly maps to MES contract sizing.
+1. Port to `titan/strategies/gem/` (live class). ✅ Done.
+2. Parity test (V3.6 A10): one-bar bit-exact agreement between research function and live class. ✅ Done. Extended for A1 in `tests/test_gem_live_parity.py::test_parity_a1_ewma_bulk_warmup_matches_research_exactly` (2026-05-15).
+3. Wire to `titan/adapters/ibkr/` + add to `scripts/run_live_gem.py`. ✅ Done.
+4. Register with `PortfolioRiskManager`. ✅ Done.
+5. Paper trade for ≥30 days before live capital (per Deployment Guide). 🔄 IN PROGRESS — A1 deployed 2026-05-15; J3 §4.3 sets the watchpoint window at 5 sessions before considering live capital.
+6. MES futures sizing: 1 contract = $5 × ES_price. At ES ~5800 → 1 MES ≈ $29k notional. For $30k strategy NAV at 2x leverage → ~2 MES contracts in SPY-long state. The strategy's weight output (which can be up to 2.0) directly maps to MES contract sizing. (Live mode is currently `execution="etf"` on the paper account; MES mode is enabled by changing `execution_mode = "mes"` in the TOML.)
 
 ### §4.5 Auxiliary findings (V3.6 lessons spawned -- see V3.6 Catalogue update)
 

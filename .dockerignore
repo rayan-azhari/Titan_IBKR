@@ -28,11 +28,16 @@ dist/
 data/
 models/
 
-# Research, tests, notebooks — never run in production container
-research/
+# Tests, notebooks — never run in production container
 tests/
 notebooks/
 *.ipynb
+
+# research/ IS included in the production image because the V2.0 GEM
+# live class delegates to the research function gem_target_weights /
+# gem_returns (parity-by-construction per V3.6 A10). Keep research/__init__.py
+# + research/gem/ at minimum; other research subpackages (ic_analysis,
+# samir_stack, etc.) are included for transitive imports but not invoked.
 
 # Docs / runbooks — operators read these on the host, not in-container
 directives/

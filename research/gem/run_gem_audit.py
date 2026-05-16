@@ -10,12 +10,11 @@ The harness:
     1. Snapshots the SPY / EFA / IEF daily parquets (L11 — no in-flight
        data overwrites).
     2. Slices the sanctuary (last 12 months).
-    3. For each of 5 pre-committed cells, runs a rolling WFO on the
-       visible window, stitches per-fold OOS returns, applies the
-       4-axis decision matrix.
-    4. Runs the Varma noise-injection robustness gate on the canonical
-       cell C1 (the 5th axis we're piloting here).
-    5. Writes a result log appendix that can be pasted into
+    3. For each pre-committed cell, runs a rolling WFO on the visible
+       window, stitches per-fold OOS returns, runs the Varma noise-
+       injection robustness gate, and applies the 5-axis decision
+       matrix (J3, 2026-05-15).
+    4. Writes a result log appendix that can be pasted into
        ``directives/Pre-Reg GEM Dual Momentum 2026-05-14.md`` §4.
 
 V3.6 discipline applied throughout:
@@ -68,14 +67,75 @@ from titan.research.framework.wfo import build_folds  # noqa: E402
 from titan.research.metrics import BARS_PER_YEAR, bootstrap_sharpe_ci, sharpe  # noqa: E402
 
 DATA_DIR = PROJECT_ROOT / "data"
-REPORTS_DIR = PROJECT_ROOT / ".tmp" / "reports" / "gem"
+
+# Universe selection. The strategy's INTERNAL keys are always SPY/EFA/IEF
+# (the audit-original US universe). The UNIVERSE env var overrides which
+# parquets get loaded under those keys -- so we can re-audit on UK UCITS
+# substitutes without changing strategy code.
+#
+#   UNIVERSE=us   (default): use SPY / EFA / IEF parquets.
+#   UNIVERSE=uk:            use CSPX (SPY substitute) / IWDA (EFA substitute,
+#                            ~65% US overlap acknowledged) / IBTM (IEF substitute,
+#                            iShares $ Treasury 7-10y UCITS, LSE).
+import os as _os  # noqa: E402
+
+_UNIVERSE = _os.environ.get("UNIVERSE", "us").lower()
+_UNIVERSE_MAPS: dict[str, dict[str, str]] = {
+    "us": {"SPY": "SPY", "EFA": "EFA", "IEF": "IEF", "VIX": "VIX", "HYG": "HYG"},
+    "uk": {"SPY": "CSPX", "EFA": "IWDA", "IEF": "IBTM", "VIX": "VIX", "HYG": "HYG"},
+}
+if _UNIVERSE not in _UNIVERSE_MAPS:
+    raise ValueError(f"Unknown UNIVERSE='{_UNIVERSE}'. Valid: {list(_UNIVERSE_MAPS)}")
+_TICKER_MAP = _UNIVERSE_MAPS[_UNIVERSE]
+
+REPORTS_DIR = PROJECT_ROOT / ".tmp" / "reports" / f"gem_{_UNIVERSE}"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Transaction-cost rate applied to every gem_returns call in the audit.
-# 1.5 bps per unit of turnover ≈ COST_US_ETF_LIQUID (spread 1.0 + slip 0.5).
-# Step 6 introduced this. Setting to 0.0 reverts to the legacy costless
-# audit for A/B comparison.
-COST_BPS_PER_TURNOVER = 1.5
+# ── Transaction-cost calibration ────────────────────────────────────────
+# Recalibrated 2026-05-15 against the live IBKR fill audit
+# (directives/Cost Model Audit 2026-05-11.md). Previous setting was
+# 1.5 bps/turnover which was 3-5x too low because it used the
+# COST_US_ETF_LIQUID model rather than COST_UCITS_ETF, and ignored the
+# IBKR commission FLOOR ($1 Pro / $4 Lite) entirely.
+#
+# These rates feed every gem_returns(...) call in the audit. Mixed-execution
+# cells (execution_mode='mes') apply the MES rates to the SPY leg only.
+#
+# ETF leg (CSPX/IWDA/IDTM under UK, SPY/EFA/IEF under US):
+COST_BPS_PER_TURNOVER = 6.0  # spread+slip one-way (live: ~2.5+0.5 bps/side)
+COST_FIXED_USD_PER_FILL = 1.0  # IBKR Pro tier floor. Use 4.0 for Lite tier.
+# MES futures leg (SPY leg only when execution_mode='mes'):
+COST_BPS_PER_TURNOVER_MES = 1.0  # 1 tick MES spread + slip (~0.4+0.5 bps/side)
+COST_FIXED_USD_PER_FILL_MES = 1.19  # IBKR all-in: $0.85 comm + $0.32 exch + $0.02 NFA
+# Notional used for the fixed-USD->bps conversion. Mirrors the
+# initial_equity of the production C12 TOML (config/gem_voltarget_lev2.toml).
+COST_NOTIONAL_USD = 30_000.0
+# Live-class behaviour: only submit a rebalance when any per-asset weight
+# delta exceeds this threshold. Mirrors GemStrategy.rebalance_threshold_weight.
+COST_REBALANCE_THRESHOLD = 0.05
+
+
+def _cost_kwargs(cfg) -> dict:
+    """Cost-model kwargs for gem_returns, switched by intended execution mode.
+
+    Cells with max_leverage > 1.0 can only deliver that leverage via MES
+    futures on the SPY leg (you can't lever an ETF intra-day without margin
+    interest). Such cells get MES costs on SPY + ETF costs on EFA/IEF.
+    Cells with max_leverage <= 1.0 are pure ETF.
+    """
+    # The MC universe DataFrame uses a stub config (extras-only) so guard
+    # against cfg without max_leverage.
+    max_lev = getattr(cfg, "max_leverage", 1.0) or 1.0
+    use_mes = max_lev > 1.0
+    return dict(
+        cost_bps_per_turnover=COST_BPS_PER_TURNOVER,
+        cost_fixed_usd_per_fill=COST_FIXED_USD_PER_FILL,
+        cost_bps_per_turnover_mes=COST_BPS_PER_TURNOVER_MES if use_mes else 0.0,
+        cost_fixed_usd_per_fill_mes=COST_FIXED_USD_PER_FILL_MES if use_mes else 0.0,
+        notional_usd=COST_NOTIONAL_USD,
+        execution_mode="mes" if use_mes else "etf",
+        rebalance_threshold=COST_REBALANCE_THRESHOLD,
+    )
 
 
 # ── Pre-registered cells (V3.1 — frozen at directive commit) ──────────────
@@ -256,8 +316,20 @@ def _load_close(sym: str, required: bool = True) -> pd.Series | None:
 
 
 def load_closes() -> pd.DataFrame:
-    """Load the three universe parquets and align to common dates."""
-    parts = [_load_close(sym, required=True) for sym in GEM_UNIVERSE]
+    """Load the three universe parquets, rename to strategy-internal keys,
+    align on common dates.
+
+    The strategy is symbol-agnostic internally (always uses logical keys
+    SPY / EFA / IEF). When ``UNIVERSE=uk``, the loaded parquets are the
+    UCITS substitutes (CSPX/IWDA/IBTM) but renamed to SPY/EFA/IEF so the
+    same gem_target_weights call works without changes.
+    """
+    parts = []
+    for logical_sym in GEM_UNIVERSE:
+        file_sym = _TICKER_MAP[logical_sym]
+        s = _load_close(file_sym, required=True)
+        s.name = logical_sym  # rename to logical key
+        parts.append(s)
     closes = pd.concat(parts, axis=1).dropna(how="any")
     closes.index = pd.to_datetime(closes.index).tz_localize(None)
     return closes
@@ -303,6 +375,11 @@ class CellResult:
     sanctuary_percentile: float
     sanctuary_lucky_flag: bool
     sanctuary_unlucky_flag: bool
+    # Noise-injection robustness (J3 — 5th decision axis).
+    noise_base_sharpe: float
+    noise_passes_mean: bool
+    noise_passes_worst: bool
+    noise_axis: str
     verdict: str
     verdict_rationale: str
 
@@ -330,7 +407,7 @@ def _strategy_fn_for_cell(cell_cfg: GemConfig):
             return pd.Series(0.0, index=df.index)
         # vix/hyg/ief_for_credit are None in MC (extras only cover EFA, IEF).
         # The strategy's stress gate falls back to realised-vol-only.
-        return gem_returns(universe_df, cfg=cell_cfg, cost_bps_per_turnover=COST_BPS_PER_TURNOVER)
+        return gem_returns(universe_df, cfg=cell_cfg, **_cost_kwargs(cell_cfg))
 
     return strategy_fn
 
@@ -346,6 +423,7 @@ def run_cell(
     sweep_sharpes: list[float],
     mc_n_workers: int = 1,
     regime_extras: dict[str, pd.Series] | None = None,
+    noise_cfg: NoiseConfig | None = None,
 ) -> tuple[CellResult, pd.Series, pd.Series, dict]:
     """Run a single cell through the full audit pipeline.
 
@@ -372,7 +450,7 @@ def run_cell(
         vix=rextras.get("vix"),
         hyg=rextras.get("hyg"),
         ief_for_credit=visible["IEF"],
-        cost_bps_per_turnover=COST_BPS_PER_TURNOVER,
+        **_cost_kwargs(cfg),
     )
     stitched_parts: list[pd.Series] = []
     fold_diagnostics: list[dict] = []
@@ -449,7 +527,7 @@ def run_cell(
         vix=rextras.get("vix"),
         hyg=rextras.get("hyg"),
         ief_for_credit=full_for_sanctuary["IEF"],
-        cost_bps_per_turnover=COST_BPS_PER_TURNOVER,
+        **_cost_kwargs(cfg),
     )
     sanc_ret = full_rets.iloc[len(visible) :]
     sanc_sh = float(sharpe(sanc_ret, periods_per_year=bars_per_year))
@@ -459,7 +537,37 @@ def run_cell(
         periods_per_year=bars_per_year,
     )
 
-    # ── 4-axis decision ──────────────────────────────────────────────────
+    # ── Noise-injection robustness gate (Varma — J3 5th decision axis) ───
+    # Runs on the SAME visible window the cell's stitched OOS was computed
+    # on. The strategy_fn here mirrors the audit's `gem_returns(...)` call
+    # with the cell's full cost model; regime extras (VIX/HYG) are passed
+    # UN-perturbed (this axis tests price-series robustness, not
+    # regime-signal robustness).
+    rextras_local = rextras
+    cost_kwargs_local = _cost_kwargs(cfg)
+
+    def _noise_strategy_fn(df: pd.DataFrame) -> pd.Series:
+        ief_for_credit = df["IEF"] if "IEF" in df.columns else None
+        return gem_returns(
+            df,
+            cfg=cfg,
+            vix=rextras_local.get("vix"),
+            hyg=rextras_local.get("hyg"),
+            ief_for_credit=ief_for_credit,
+            **cost_kwargs_local,
+        )
+
+    _noise_cfg = noise_cfg or NoiseConfig(
+        noise_levels=(0.1, 0.3, 0.5), n_trials=10, max_degradation=0.30
+    )
+    noise_result = run_noise_robustness(
+        visible,
+        _noise_strategy_fn,
+        periods_per_year=bars_per_year,
+        cfg=_noise_cfg,
+    )
+
+    # ── 5-axis decision (J3) ─────────────────────────────────────────────
     # MC axis uses the RELATIVE gate (L17). We synthesise a virtual
     # "p_maxdd_gt_threshold" / "pass_threshold_prob" pair that the decision
     # matrix can consume: pass=0 if rel_mc passes (best bucket), pass=2x gate
@@ -475,6 +583,8 @@ def run_cell(
         p_maxdd_gt_threshold=rel_axis_value,
         pass_threshold_prob=rel_axis_gate,
         sanctuary_sharpe=sanc_sh,
+        noise_passes_mean=noise_result.passes,
+        noise_passes_worst=noise_result.worst_case_passes,
     )
     decision = decide(inputs)
 
@@ -500,6 +610,10 @@ def run_cell(
         else float("nan"),
         sanctuary_lucky_flag=div.lucky_flag,
         sanctuary_unlucky_flag=div.unlucky_flag,
+        noise_base_sharpe=round(noise_result.base_sharpe, 4),
+        noise_passes_mean=noise_result.passes,
+        noise_passes_worst=noise_result.worst_case_passes,
+        noise_axis=decision.noise_axis,
         verdict=decision.verdict.value,
         verdict_rationale=decision.rationale,
     )
@@ -512,6 +626,7 @@ def run_cell(
         "mc_pass_prob": mc.pass_threshold_prob,
         "rel_mc_median_ratio_gate": rel_mc.median_ratio_gate,
         "rel_mc_p_strategy_better_gate": rel_mc.p_strategy_better_gate,
+        "noise_result": noise_result,
     }
     return (cell_result, stitched, sanc_ret, extras)
 
@@ -563,7 +678,7 @@ def main():
             vix=regime_extras.get("vix"),
             hyg=regime_extras.get("hyg"),
             ief_for_credit=visible["IEF"],
-            cost_bps_per_turnover=COST_BPS_PER_TURNOVER,
+            **_cost_kwargs(cfg),
         )
         stitched_parts = [visible_rets.iloc[f.oos_start : f.oos_end_excl] for f in folds]
         stitched = pd.concat(stitched_parts).fillna(0.0)
@@ -572,16 +687,21 @@ def main():
         pass1_stitched[cell_name] = stitched
         print(f"  {cell_name}: Sharpe={sh:+.4f}  oos_bars={len(stitched)}")
 
-    # ── Pass 2: full audit per cell (DSR, MC, sanctuary, decision) ───────
+    # ── Pass 2: full audit per cell (DSR, MC, sanctuary, NOISE, decision) ─
     # Run MC paths in parallel -- each cell still serial wrt the outer loop,
     # but the 200 MC paths per cell are split across CPU cores. This is the
     # main bottleneck (each path runs the strategy_fn end-to-end on a
     # synthetic 22-year series).
+    #
+    # J3 (2026-05-15): the Varma noise-injection robustness gate now runs
+    # PER CELL inside run_cell(...) and is the 5th axis fed to decide().
+    # The previous "Pass 3 canonical-only" was deleted -- per-cell evaluation
+    # is necessary for the verdict assignment.
     from titan.research.framework.mc import DEFAULT_MC_WORKERS
 
     print(
         f"\n[Pass 2/2] Running full audit per cell "
-        f"(DSR + MC + sanctuary + decide) -- MC paths parallel x{DEFAULT_MC_WORKERS}..."
+        f"(DSR + MC + sanctuary + noise + decide) -- MC paths parallel x{DEFAULT_MC_WORKERS}..."
     )
     results: list[CellResult] = []
     cell_oos_returns: dict[str, pd.Series] = {}
@@ -621,43 +741,16 @@ def main():
         print(
             f"    Sanctuary Sharpe={result.sanctuary_sharpe:+.4f}  pct={result.sanctuary_percentile}"
         )
-        print(f"    Verdict (4-axis, MC=rel): {result.verdict}")
+        print(
+            f"    Noise (Varma 5th axis): base_sh={result.noise_base_sharpe:+.4f} "
+            f"mean_pass={result.noise_passes_mean} worst_pass={result.noise_passes_worst} "
+            f"axis={result.noise_axis}"
+        )
+        print(f"    Verdict (5-axis, J3): {result.verdict}")
         print(f"    Rationale: {result.verdict_rationale}")
 
-    # ── Pass 3: Varma noise-injection robustness gate on the canonical cell.
-    print(f"\n[Pass 3/3] Noise-injection robustness gate (Varma) on {CANONICAL_CELL}...")
-    canonical_cfg = CELLS[CANONICAL_CELL]
-    # Noise gate uses unperturbed regime extras (VIX/HYG unaffected by
-    # SPY/EFA/IEF noise injection; this is appropriate because the gate
-    # tests price-series robustness, not regime-signal robustness).
-    _v = regime_extras.get("vix")
-    _h = regime_extras.get("hyg")
-
-    def full_strategy_fn(df: pd.DataFrame) -> pd.Series:
-        ief_for_credit = df["IEF"] if "IEF" in df.columns else None
-        return gem_returns(
-            df,
-            cfg=canonical_cfg,
-            vix=_v,
-            hyg=_h,
-            ief_for_credit=ief_for_credit,
-            cost_bps_per_turnover=COST_BPS_PER_TURNOVER,
-        )
-
-    noise_result = run_noise_robustness(
-        visible,
-        full_strategy_fn,
-        periods_per_year=bars_per_year,
-        cfg=NoiseConfig(noise_levels=(0.1, 0.3, 0.5), n_trials=10, max_degradation=0.3),
-    )
-    print(f"  Base Sharpe (no noise):   {noise_result.base_sharpe:+.4f}")
-    for r in noise_result.per_level:
-        print(
-            f"  Noise sigma={r.noise_level:.1f}:  Sharpe mean={r.sharpe_mean:+.4f} "
-            f"p5={r.sharpe_p5:+.4f}  degradation={r.degradation_mean:+.4f}"
-        )
-    print(f"  PASSES (mean):       {noise_result.passes}")
-    print(f"  PASSES (worst-case): {noise_result.worst_case_passes}")
+    # Canonical cell's per-level noise diagnostics for the dashboard / log.
+    noise_result = canonical_extras["noise_result"]
 
     # ── Write the result log ─────────────────────────────────────────────
     report_path = REPORTS_DIR / "result_log.md"
@@ -670,20 +763,24 @@ def main():
 
         fh.write("## §4.1 Per-cell verdicts\n\n")
         fh.write(
-            "Verdict uses the 4-axis decision matrix where the MC axis is "
-            "the **relative** MC gate (L17): median strategy-vs-benchmark "
-            "MaxDD ratio. Benchmark is always-long SPY on the same synthetic paths.\n\n"
+            "Verdict uses the **5-axis decision matrix (J3, 2026-05-15)**. "
+            "Axes: CI_lo, DSR, MC (relative; L17), Sanctuary, Noise (Varma). "
+            "Benchmark for MC is always-long SPY on the same synthetic paths. "
+            "Noise axis: best=passes mean & worst-case at all levels (0.1, 0.3, 0.5)σ; "
+            "mid=passes mean only; worst=fails mean gate. Default max_degradation=0.30.\n\n"
         )
         fh.write(
-            "| Cell | Sharpe | CI95 lo | CI95 hi | DSR-prob | Abs MC P(>35%) | Rel MC ratio | Rel MC pass | Sanc Sharpe | Sanc pct | Verdict |\n"
+            "| Cell | Sharpe | CI95 lo | CI95 hi | DSR-prob | Abs MC P(>35%) | "
+            "Rel MC ratio | Rel MC pass | Sanc Sharpe | Sanc pct | Noise axis | Verdict |\n"
         )
-        fh.write("|---|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---|\n")
+        fh.write("|---|---:|---:|---:|---:|---:|---:|:---:|---:|---:|:---:|---|\n")
         for r in results:
             fh.write(
                 f"| {r.cell} | {r.sharpe:+.4f} | {r.ci_lo:+.3f} | {r.ci_hi:+.3f} | "
                 f"{r.dsr_prob:.4f} | {r.mc_p_maxdd_gt_threshold:.4f} | "
                 f"{r.rel_mc_median_ratio:.4f} | {'PASS' if r.rel_mc_passes else 'FAIL'} | "
-                f"{r.sanctuary_sharpe:+.4f} | {r.sanctuary_percentile} | {r.verdict} |\n"
+                f"{r.sanctuary_sharpe:+.4f} | {r.sanctuary_percentile} | "
+                f"{r.noise_axis} | {r.verdict} |\n"
             )
         fh.write(
             "\nRel-MC gate: median DD ratio <= 0.80 AND p(strategy_MaxDD <= "
@@ -800,7 +897,7 @@ def main():
         vix=regime_extras.get("vix"),
         hyg=regime_extras.get("hyg"),
         ief_for_credit=visible["IEF"],
-        cost_bps_per_turnover=COST_BPS_PER_TURNOVER,
+        **_cost_kwargs(CELLS[CANONICAL_CELL]),
     )
     full_benchmark_visible = visible["SPY"].pct_change().fillna(0.0)
 

@@ -30,7 +30,7 @@ A menu of novel strategy ideas not yet implemented in `titan/strategies/`. Every
 | B1 | **GEM dual-momentum macro sleeve** | CROSS_ASSET_MOMENTUM | Antonacci | 1d | **DOABLE NOW** — SPY/EFA/IEF parquets present |
 | B2 | Carver multi-speed EWMAC futures ensemble | DAILY_TREND | Carver, *Systematic Trend Following* | 5d | **DATA**: needs ~8 futures + continuous-contract roll |
 | B3 | Donchian + pyramiding Turtle-plus | DAILY_TREND | Turtle.md + Strategic Pyramiding doc | 3d | **DATA**: same as B2 |
-| B4 | TSMOM 10-15 futures | DAILY_TREND | Moskowitz-Ooi-Pedersen 2012 | 4d | **DATA**: same as B2 |
+| B4 | TSMOM 10-15 futures | DAILY_TREND | Moskowitz-Ooi-Pedersen 2012 | 4d | ✅ DONE (RETIRED on 24-commodity yfinance; sign of L37 confirmed but magnitude +0.16 << MOP's +1.0). Plateau FAIL. See L39, L40 — fixable with multi-asset universe + IBKR per-contract roll-aware data. |
 | B5 | **[NEW] Intraday momentum** (first-30m → last-30m) | INTRADAY_BREAKOUT | Gao, Han, Li & Zhou, *JFE* 2018 | 2d | Decayed post-2014; SPY M5 data needed |
 | B6 | **[NEW] Momentum-crash hedge** (Daniel-Moskowitz dynamic scaling) | META_LABELING | Daniel & Moskowitz, *JFE* 2016 | 2d | Specification-sensitive |
 
@@ -115,18 +115,21 @@ A menu of novel strategy ideas not yet implemented in `titan/strategies/`. Every
 
 ## Recommended order of execution
 
-10-step plan, ~31 days total for 8 strategies + 3 infrastructure upgrades:
+10-step plan, ~31 days total for 8 strategies + 3 infrastructure upgrades.
 
-1. **B1 — GEM dual momentum** (1d) — smallest E2E test of framework — **STARTING NOW**
-2. **J3 — Noise-injection robustness gate** (2d) — becomes 5th axis we apply to all subsequent strategies — **NEXT**
-3. **E1 — VRP capture** (2d) — different class
-4. **D2 — Commodity futures carry [NEW]** (5d) — strong peer-reviewed edge — **NEEDS 24-commodity data acquisition first**
-5. **G4 — Overnight session decomposition [NEW]** (2d) — quick win, SPY-only first
-6. **J1+J2 — HRP → NCO allocator** (3+2d) — infrastructure
-7. **A1 — Residual momentum [NEW]** (4d) — first cross-sectional equity sleeve
-8. **I1 — HMM regime + XGBoost meta-labeler** (3d) — exercises ML class
-9. **B5 — Intraday momentum (Gao-Han-Li-Zhou) [NEW]** (2d)
-10. **B2 — Carver EWMAC ensemble** (5d) — biggest build
+**Status (2026-05-15):** Steps 1–3 complete; J4 redesign added as 3.5 between E1 and D2. Step 4 (D2) is up next.
+
+1. ✅ **B1 — GEM dual momentum** (1d) — DONE. Original C12 verdict DEPLOY (4-axis). Promoted to production 2026-05-14.
+2. ✅ **J3 — Noise-injection robustness gate** (2d) — DONE. 5th decision axis live. C12 demoted DEPLOY → CONDITIONAL_WATCHPOINT. See `Pre-Reg J3 Noise Robustness 5th Axis 2026-05-15.md` + L24 in V3.6 Catalogue.
+3. ✅ **E1 — VRP capture** (2d) — DONE (RETIRED). E1 SUSPECT under 5-axis; E1b's percentile-gate redesign aborted at plateau pre-flight. VIX-term-structure VRP on VIXY at retail daily resolution is not viable (L29). See E1 + E1b pre-regs + L25/L26/L27/L28/L29.
+3.5. ✅ **J4 — GEM noise-robust redesign** (1d, unplanned) — DONE. Promoted **A1_ewma_hl40** to production 2026-05-15 — recovers C12's DEPLOY verdict under 5-axis. EWMA vol estimator (half-life 40) recovers noise axis to `best` at ~3% Sharpe drag. Live on Docker paper account since 13:07 UTC 2026-05-15. See `Pre-Reg J4 GEM Noise-Robust Redesign 2026-05-15.md` + L30/L31/L32.
+4. ✅ **D2 — Commodity futures carry [NEW]** (5d) — DONE (proxy variant RETIRED; strict-carry deferred). Databento `.c.1` queries proved structurally too slow (L34 — ~5 s/bar vs `.c.0`'s 0.005 s/bar; ~4h per commodity for second-month series). Pivoted to yfinance M1-only basket + BGR §3.2 rolling-yield proxy (12-month trailing return). Audit aborted at plateau pre-flight (L27): all 5 cells produced Sharpe -0.30 to -0.62 across 24 commodities × 25 years (2000-2026); commodities exhibit medium-horizon mean reversion AGAINST the rolling-yield signal. RETIRED as a hypothesis; strict-carry BGR remains open pending M2 data acquisition. See `Pre-Reg D2 Commodity Futures Carry 2026-05-15.md` + L34/L35.
+5. ✅ **G4 — Overnight session decomposition [NEW]** (2d) — DONE (RETIRE). Gross edge confirmed (+0.75 Sharpe in C3 no-costs) but +0.83 Sharpe cost drag kills it at retail SPY ETF cost levels; Rel-MC ratio = 2.22× buy-hold (L33 — session-bounded strategies have asymmetric tail risk on regime-shuffled MC). See `Pre-Reg G4 Overnight Session Decomposition 2026-05-15.md` + L33.
+6. **J1+J2 — HRP → NCO allocator** (3+2d) — infrastructure for multi-strategy portfolios. Becomes load-bearing only when ≥ 3 strategies hold DEPLOY simultaneously.
+7. ✅ **A1 — Residual momentum [NEW]** (4d) — DONE (RETIRED on current-S&P-500 universe). Audit aborted at plateau pre-flight (L27): all 5 cells produced negative Sharpe (-0.25 to -0.42), 66.44% relative spread. Survivorship bias + post-2009 cross-sectional momentum decay flip the sign on retail-accessible yfinance current-constituent samples (L36). Survivorship-free CRSP/Compustat data ($2k/yr WRDS) would unblock a proper replication. See `Pre-Reg A1 Residual Momentum 2026-05-15.md` + L36/L37. NOTE: backlog label "A1" — unrelated to J4's GEM cell name "A1_ewma_hl40".
+8. **I1 — HMM regime + XGBoost meta-labeler** (3d) — exercises ML class. `research/ml/ML_STRATEGY_DOCUMENTATION.md` is the reference; same-bar causality must be re-verified post-V2.0 framework.
+9. **B5 — Intraday momentum (Gao-Han-Li-Zhou) [NEW]** (2d).
+10. **B2 — Carver EWMAC ensemble** (5d) — biggest build. **DATA**: same 24-futures requirement as D2.
 
 ## Discipline (V3.6 lessons applied)
 

@@ -18,6 +18,11 @@ should NOT be mass-refactored; instead they are RE-RUN under the
 framework as part of Phase 2 of the methodology directive.
 """
 
+from titan.research.framework.amortised_mc import (
+    InferFn,
+    PrefitFn,
+    run_block_mc_amortised,
+)
 from titan.research.framework.dashboard import (
     AuditResult,
     CellSummary,
@@ -28,9 +33,17 @@ from titan.research.framework.decision import (
     DecisionResult,
     GateThresholds,
     Verdict,
+    classify_axis_noise,
     decide,
 )
 from titan.research.framework.dsr import DsrResult, deflated_sharpe, sr_var_from_sweep
+from titan.research.framework.early_gate import (
+    Pass1GateResult,
+    format_gate_report,
+    pass1_can_clear_any_cell,
+    pass1_can_clear_ci_gate,
+    pass1_can_clear_from_returns,
+)
 from titan.research.framework.mc import (
     McResult,
     RelativeMcResult,
@@ -97,16 +110,27 @@ __all__ = [
     "run_block_mc",
     "RelativeMcResult",
     "run_relative_block_mc",
+    # Amortised MC (IS-frozen model state cached across paths)
+    "PrefitFn",
+    "InferFn",
+    "run_block_mc_amortised",
     # DSR
     "DsrResult",
     "deflated_sharpe",
     "sr_var_from_sweep",
+    # Early gate (Pass-1-gates-Pass-2 speed-up)
+    "Pass1GateResult",
+    "pass1_can_clear_ci_gate",
+    "pass1_can_clear_from_returns",
+    "pass1_can_clear_any_cell",
+    "format_gate_report",
     # Decision
     "Verdict",
     "DecisionInputs",
     "DecisionResult",
     "GateThresholds",
     "decide",
+    "classify_axis_noise",
     # Robustness (noise-injection gate -- Varma)
     "NoiseConfig",
     "NoiseLevelResult",

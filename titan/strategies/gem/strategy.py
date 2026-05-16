@@ -62,10 +62,13 @@ def _parse_lookback_blend(s: str) -> tuple[int, ...]:
 
 
 class GemStrategy(Strategy):
-    """Live NautilusTrader strategy implementing the C12 production cell.
+    """Live NautilusTrader strategy implementing the GEM production cell.
 
-    See ``directives/Pre-Reg GEM Dual Momentum 2026-05-14.md`` for the
-    strategy's research history and verdict.
+    Current production cell (since 2026-05-16): **J5 P_hl60_vt05**
+    (vol_estimator_halflife=60, ann_vol_target=0.05). See
+    ``docs/strategies/gem-dual-momentum.md`` for the full audit lineage
+    (C12 → J3 → J4 → J5) and ``directives/Pre-Reg J5 GEM Hybrid Re-audit
+    2026-05-16.md`` for the current pre-reg directive.
     """
 
     config: GemStrategyConfig  # type-narrow
@@ -109,6 +112,14 @@ class GemStrategy(Strategy):
             ann_vol_target=config.ann_vol_target,
             vol_lookback_days=config.vol_lookback_days,
             max_leverage=config.max_leverage,
+            # J4 (2026-05-15) noise-robust redesign options. A1_ewma_hl40
+            # production cell sets vol_estimator_kind="ewma", halflife=40.
+            vol_estimator_kind=config.vol_estimator_kind,
+            vol_estimator_halflife=config.vol_estimator_halflife,
+            max_weight_delta_per_bar=config.max_weight_delta_per_bar,
+            vol_target_kind=config.vol_target_kind,
+            vol_target_quantile=config.vol_target_quantile,
+            vol_target_quantile_window=config.vol_target_quantile_window,
             stress_gate_enabled=config.stress_gate_enabled,
             stress_realised_vol_threshold=config.stress_realised_vol_threshold,
             stress_realised_vol_window=config.stress_realised_vol_window,
@@ -193,19 +204,23 @@ class GemStrategy(Strategy):
         project_root = Path(__file__).resolve().parents[3]
         n = self._cfg.warmup_bars
 
-        # Build the closes DataFrame.
-        closes_df = self._load_parquet_columns(
-            project_root,
-            tickers=[
-                self._cfg.ticker_spy,
-                self._cfg.ticker_efa,
-                self._cfg.ticker_ief,
-            ],
-            tail=n,
-        )
+        # Build the closes DataFrame. The strategy logic uses logical role
+        # keys ("SPY"/"EFA"/"IEF"/"VIX"/"HYG") internally, but the parquet
+        # files are named by physical ticker (config.ticker_*). Under the UK
+        # UCITS universe those differ (e.g. ticker_spy="CSPX"). Load by
+        # physical name then rename columns to logical roles.
+        physical = [self._cfg.ticker_spy, self._cfg.ticker_efa, self._cfg.ticker_ief]
+        closes_df = self._load_parquet_columns(project_root, tickers=physical, tail=n)
         if closes_df is None:
             self.log.warning("Warmup skipped -- one or more required parquets missing.")
             return
+        closes_df = closes_df.rename(
+            columns={
+                self._cfg.ticker_spy: "SPY",
+                self._cfg.ticker_efa: "EFA",
+                self._cfg.ticker_ief: "IEF",
+            }
+        )
         # Add optional regime columns.
         if self.bar_type_vix is not None:
             vix_col = self._load_parquet_columns(

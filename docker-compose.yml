@@ -1,9 +1,15 @@
-# Titan-IBKR Champion Portfolio — Paper Trading Stack
+# Titan-IBKR GEM Dual Momentum — Paper Trading Stack (V2.0 production)
 #
 # Bring up:   docker compose --env-file .env.docker up -d --build
 # Tail logs:  docker compose logs -f titan-portfolio
 # Stop:       docker compose down       (graceful — SIGTERM to watchdog)
 # Kill:       docker compose down -v    (also wipes the named .tmp/ volume)
+#
+# 2026-05-15: switched from the V1 champion_portfolio bundle to the
+# V2.0 framework-audited GEM cell C12 (see directives/Pre-Reg GEM
+# Dual Momentum 2026-05-14.md §4.2 for verdict + rationale).
+# Container name `titan-portfolio` kept for operator-tooling
+# compatibility; entrypoint is now scripts/watchdog_gem.py.
 #
 # See: directives/Docker Paper Trading Guide.md
 
@@ -65,8 +71,17 @@ services:
     environment:
       IBKR_HOST: ib-gateway              # docker DNS resolves to gateway container
       IBKR_PORT: ${IBKR_PORT:-4004}
-      IBKR_CLIENT_ID: ${IBKR_CLIENT_ID:-7}
+      # GEM uses client id 21 (was 7 for the V1 champion). Override via .env.docker
+      # if running alongside any other strategy that uses the same id.
+      IBKR_CLIENT_ID: ${IBKR_CLIENT_ID:-21}
+      IBKR_CLIENT_ID_GEM: ${IBKR_CLIENT_ID_GEM:-21}
       IBKR_ACCOUNT_ID: ${IBKR_ACCOUNT_ID}
+      # Trade universe — "us" trades SPY/EFA/IEF (default), "uk" substitutes
+      # UCITS equivalents CSPX/IWDA/IBTM because UK retail accounts cannot
+      # trade US-listed ETFs under PRIIPs/KID rules. The GEM strategy reads
+      # logical SPY/EFA/IEF keys regardless; the runner and audit scripts
+      # both honour this env var.
+      UNIVERSE: ${UNIVERSE:-us}
       DATABENTO_API_KEY: ${DATABENTO_API_KEY:-}
       # Notifications: Slack (single webhook) and/or Telegram (bot+chat).
       # Either / both / neither — see .env.docker.example for setup details.

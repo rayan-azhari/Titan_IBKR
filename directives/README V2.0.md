@@ -136,13 +136,26 @@ python -m pytest tests/test_framework_synthetic.py tests/test_ic_census_lib.py -
 
 ## Status of the live strategies
 
-The strategies in `titan/strategies/` are still running on the **OLD V1 verdicts** that this cleanse declared untrustworthy. **None has been re-audited under the framework yet.** This means:
+**Updated 2026-05-15** — GEM is the first live strategy under a true 5-axis DEPLOY verdict. The remaining ~13 strategies in `titan/strategies/` still run on V1 verdicts pending framework re-audits.
 
-- Live PnL continues per the existing `config/*.toml`
-- No config changes from the prior audit cycle have been actioned (the Track 1 audit's IHYG retire / Tier-A unconfirmed flags / ORB unconfirmed flag are DROPPED — they were based on broken methodology)
-- Each live strategy needs a fresh framework-audited pre-reg + result log before its current Sharpe/CI claims can be trusted
+### Production deployments under the V2.0 framework
 
-The Methodology Audit & Unified Framework directive's §3 lists the migration plan: re-run prior strategies through the framework, then audit the un-audited families. That's the work that follows this cleanse.
+| Live strategy | Production cell | Verdict | Pre-reg | Deployed |
+|---|---|---|---|---|
+| `gem` (Dual Momentum) | **J5 P_hl60_vt05** | **DEPLOY** (5/5 axes) | `Pre-Reg J5 GEM Hybrid Re-audit 2026-05-16.md` | 2026-05-16 17:10 UTC (paper) |
+
+GEM trajectory: original C12 was DEPLOY (4-axis, 2026-05-14) → demoted CONDITIONAL_WATCHPOINT under J3's 5-axis matrix (noise axis = `mid`) → J4 `A1_ewma_hl40` promoted from the noise-robust redesign sweep (EWMA half-life=40, paper live 2026-05-15 13:07 UTC) → **J5 `P_hl60_vt05` promoted via L52 hybrid framework 2026-05-16** (vol_estimator_halflife=60, ann_vol_target=0.05). The J5 audit applied the full V3.6 protocol incl. L17 relative-MC vs 60/40 SPY/IEF benchmark — J4 fails L17 (12% DD reduction, gate is 20%) while J5 passes (38%). J5 stitched-OOS Sharpe +1.00 vs J4 +0.74 (+34%), CI_lo +0.51 vs +0.24 (2.1× tighter), MaxDD -10% vs -15%. See `directives/Pre-Reg J5 GEM Hybrid Re-audit 2026-05-16.md` + V3.6 Catalogue **L52, L57**.
+
+**L52 hybrid framework now also applied to:**
+
+- `bond_gold` (Wave A.1, 2026-05-16) — **PROMOTED CONDITIONAL_WATCHPOINT** for `(lookback=120, threshold=0.50)`. Live V1-era config remains; migration pending allocator approval. See `docs/strategies/bond-gold.md` (TODO).
+- `etf_trend` family — **SPY RETIRED** (Wave A.2; L56 — long-only equity MA-crossover fails L17 rel-MC). **TQQQ PROMOTED CONDITIONAL_WATCHPOINT** for `(slow_ma=150, exit_confirm_days=5)` (Wave A.2-confirm; L56 refined — leveraged variant survives via noise-mitigation knob). **5 unleveraged variants (QQQ/IWB/EFA/DBC/GLD) flagged for bulk-retire** per `directives/Bulk-Retire etf_trend Unleveraged Variants 2026-05-16.md`.
+
+### Strategies still on V1 verdicts (pending re-audit)
+
+The remaining V1-era strategies in `titan/strategies/` (mr_audjpy, mr_fx, mtf, orb, gld_confluence, gold_macro, fx_carry, pairs, ic_equity_daily, ic_mtf, ml, samir_stack, turtle) still run per the existing `config/*.toml`. None has been re-audited under the framework. Each needs a fresh framework-audited pre-reg + result log before its current Sharpe/CI claims can be trusted. See `directives/V1-era Re-audit Sweep Roster 2026-05-16.md` for the Wave A.3+ schedule.
+
+The Methodology Audit & Unified Framework directive's §3 lists the migration plan. The L52 hybrid framework (sweep → pre-reg → audit) is now the standard approach for any V1-era re-audit and for any new strategy entering production: 2D sweep (not 1D — L57) identifies plateau candidates, pre-reg freezes them, the full 5-axis audit on held-out sanctuary is the deployment gate.
 
 ---
 

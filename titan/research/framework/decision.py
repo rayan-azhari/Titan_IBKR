@@ -1,19 +1,24 @@
-"""4-axis decision-matrix template.
+"""5-axis decision-matrix template.
 
 Specified in directives/Methodology Audit & Unified Framework 2026-05-14.md
-§2.6. Fixes gaps G1 (incomplete matrices), G2 (UNDETERMINED verdicts),
+§2.6 + directives/Pre-Reg J3 Noise Robustness 5th Axis 2026-05-15.md.
+Fixes gaps G1 (incomplete matrices), G2 (UNDETERMINED verdicts),
 G4 (no template).
 
-Every empirical audit outcome maps to one of 81 cells (3 levels × 4
+Every empirical audit outcome maps to one of 243 cells (3 levels × 5
 axes), and every cell maps deterministically to a verdict in:
 
-    DEPLOY                  -- all 4 axes at "best"
-    CONDITIONAL_WATCHPOINT  -- 3 of 4 axes at "best" (worst on a single axis)
-    TIER_UNCONFIRMED        -- 2 of 4 axes at "best"
-    SUSPECT                 -- 1 of 4 axes at "best"
-    RETIRE                  -- 0 axes at "best"
+    DEPLOY                  -- all 5 axes at "best"
+    CONDITIONAL_WATCHPOINT  -- 4 of 5 axes at "best" (worst on a single axis)
+    TIER_UNCONFIRMED        -- 3 of 5 axes at "best"
+    SUSPECT                 -- 2 of 5 axes at "best"
+    RETIRE                  -- 0 or 1 axes at "best"
 
 UNDETERMINED is impossible by construction -- the matrix is total.
+
+The 5th axis (noise robustness) was added per J3 backlog: a strategy
+that passes the other 4 axes but is fragile to small input-price noise
+(Varma's noise-injection test) is `CONDITIONAL_WATCHPOINT`, not DEPLOY.
 """
 
 from __future__ import annotations
@@ -99,15 +104,47 @@ def classify_axis_sanctuary(
     return "worst"
 
 
+def classify_axis_noise(noise_passes_mean: bool, noise_passes_worst: bool) -> AxisLevel:
+    """Noise-injection robustness axis (J3).
+
+    Inputs come from `run_noise_robustness(...)`:
+        noise_passes_mean  -- degradation_mean < cfg.max_degradation at every level
+        noise_passes_worst -- degradation_p5  < cfg.max_degradation at every level
+
+    Truth table:
+        worst_pass=True  -> best   (passes mean AND 5th-percentile gates)
+        mean_pass=True   -> mid    (passes mean but some trial degraded too much)
+        otherwise        -> worst  (fragile: mean degradation breaches threshold)
+
+    Note: worst_pass=True implies mean_pass=True (deg_p5 >= deg_mean is generally
+    false: p5 of Sharpe across trials is the WORST observed Sharpe, so
+    degradation_p5 >= degradation_mean -- a strategy can pass mean but fail worst).
+    """
+    if noise_passes_worst:
+        return "best"
+    if noise_passes_mean:
+        return "mid"
+    return "worst"
+
+
 @dataclass(frozen=True)
 class DecisionInputs:
-    """Per-cell inputs to the 4-axis classifier."""
+    """Per-cell inputs to the 5-axis classifier.
+
+    The first 5 fields are the original 4-axis inputs (`pass_threshold_prob`
+    is the class-specific gate for the MC axis, not a separate axis).
+    The last 2 fields (J3) are the noise-injection robustness gate's
+    binary outputs from `run_noise_robustness(...)`.
+    """
 
     ci_lo: float
     dsr_prob: float
     p_maxdd_gt_threshold: float
     pass_threshold_prob: float
     sanctuary_sharpe: float
+    # J3 — 5th axis (Varma noise-injection robustness):
+    noise_passes_mean: bool
+    noise_passes_worst: bool
 
 
 @dataclass(frozen=True)
@@ -119,6 +156,7 @@ class DecisionResult:
     dsr_axis: AxisLevel
     mc_axis: AxisLevel
     sanctuary_axis: AxisLevel
+    noise_axis: AxisLevel
     n_axes_best: int
     rationale: str
 
@@ -128,19 +166,32 @@ def decide(
     *,
     thresholds: GateThresholds | None = None,
 ) -> DecisionResult:
-    """Map the 4-axis input vector to one of the 5 verdicts deterministically."""
+    """Map the 5-axis input vector to one of the 5 verdicts deterministically.
+
+    Verdict mapping (J3 — 5 axes):
+        5 -> DEPLOY
+        4 -> CONDITIONAL_WATCHPOINT
+        3 -> TIER_UNCONFIRMED
+        2 -> SUSPECT
+        0,1 -> RETIRE
+
+    The 0/1 collapse (vs. distinct buckets pre-J3) reflects that with 5 axes,
+    "1 axis at best" is as fundamentally fragile as "0 axes at best".
+    """
     thr = thresholds or GateThresholds()
     ci = classify_axis_ci_lo(inputs.ci_lo, thr)
     dsr = classify_axis_dsr(inputs.dsr_prob, thr)
     mc = classify_axis_mc(inputs.p_maxdd_gt_threshold, inputs.pass_threshold_prob, thr)
     sanc = classify_axis_sanctuary(inputs.sanctuary_sharpe, thr)
-    n_best = sum(1 for a in (ci, dsr, mc, sanc) if a == "best")
+    noise = classify_axis_noise(inputs.noise_passes_mean, inputs.noise_passes_worst)
+    n_best = sum(1 for a in (ci, dsr, mc, sanc, noise) if a == "best")
 
     verdict_by_n = {
-        4: Verdict.DEPLOY,
-        3: Verdict.CONDITIONAL_WATCHPOINT,
-        2: Verdict.TIER_UNCONFIRMED,
-        1: Verdict.SUSPECT,
+        5: Verdict.DEPLOY,
+        4: Verdict.CONDITIONAL_WATCHPOINT,
+        3: Verdict.TIER_UNCONFIRMED,
+        2: Verdict.SUSPECT,
+        1: Verdict.RETIRE,
         0: Verdict.RETIRE,
     }
     verdict = verdict_by_n[n_best]
@@ -154,6 +205,11 @@ def decide(
             f"threshold={inputs.pass_threshold_prob:.3f}",
         ),
         ("Sanctuary", sanc, f"{inputs.sanctuary_sharpe:.3f}"),
+        (
+            "Noise",
+            noise,
+            f"mean_pass={inputs.noise_passes_mean}, worst_pass={inputs.noise_passes_worst}",
+        ),
     ]
     best_axes = [n for n, lvl, _ in axis_names if lvl == "best"]
     worst_axes = [n for n, lvl, _ in axis_names if lvl == "worst"]
@@ -172,6 +228,7 @@ def decide(
         dsr_axis=dsr,
         mc_axis=mc,
         sanctuary_axis=sanc,
+        noise_axis=noise,
         n_axes_best=n_best,
         rationale=rationale,
     )

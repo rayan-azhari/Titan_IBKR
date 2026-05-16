@@ -19,8 +19,9 @@ class GemStrategyConfig(StrategyConfig, frozen=False, kw_only=True):
       * ``etf``: trade SPY/EFA/IEF directly as ETFs. Caps weight at 1.0
         per leg (no leverage). Operator gets the 1x exposure profile.
       * ``mes``: trade MES futures for the SPY leg (provides leverage),
-        ETFs for EFA/IEF. The C12 production cell expects max_leverage=2.0
-        which is achievable only with futures.
+        ETFs for EFA/IEF. The production cell expects max_leverage=2.0
+        which is achievable only with futures (note: at J5's vol_target=0.05
+        the cap rarely binds — L57).
     """
 
     # ── Instruments and bar types ─────────────────────────────────────────
@@ -61,6 +62,21 @@ class GemStrategyConfig(StrategyConfig, frozen=False, kw_only=True):
     ann_vol_target: float = 0.10
     vol_lookback_days: int = 20
     max_leverage: float = 2.0  # C12 setting
+
+    # J4 (2026-05-15) noise-robust redesign — added the EWMA path.
+    # J5 (2026-05-16) hybrid re-audit — promoted halflife=60 / vol_target=0.05.
+    # Defaults preserve pre-J4 behaviour (vol_estimator_kind="rolling_std",
+    # max_weight_delta_per_bar=None, vol_target_kind="fixed"). The CURRENT
+    # production cell (J5 P_hl60_vt05) is configured via
+    # config/gem_voltarget_lev2.toml: vol_estimator_kind="ewma",
+    # vol_estimator_halflife=60, ann_vol_target=0.05. See
+    # docs/strategies/gem-dual-momentum.md for the full audit lineage.
+    vol_estimator_kind: Literal["rolling_std", "ewma"] = "rolling_std"
+    vol_estimator_halflife: int = 40
+    max_weight_delta_per_bar: float | None = None
+    vol_target_kind: Literal["fixed", "rolling_quantile"] = "fixed"
+    vol_target_quantile: float = 0.40
+    vol_target_quantile_window: int = 252
 
     # Conditional stress gate (Step 4) -- OFF by default; C8/C12 don't use it
     stress_gate_enabled: bool = False

@@ -266,29 +266,39 @@ def test_dsr_picks_up_kurtosis():
 
 
 def test_decision_total_function_covers_all_combinations():
-    """The 81-cell matrix must produce a verdict for every combination
-    of {best, mid, worst}^4. Catches G1 (UNDETERMINED outcomes)."""
+    """The 243-cell matrix must produce a verdict for every combination
+    of {best, mid, worst}^5 (J3: 5 axes including noise robustness).
+    Catches G1 (UNDETERMINED outcomes)."""
     # Sample test points for each axis level
     ci_lo_samples = [0.1, -0.1, -0.5]
     dsr_samples = [0.97, 0.7, 0.2]
     mc_p_samples = [0.02, 0.07, 0.30]
     sanc_samples = [0.5, -0.1, -0.5]
+    # Noise axis is binary-derived: (pm, pw) -> {(T,T)=best, (T,F)=mid, (F,F)=worst}.
+    # (F,T) is impossible by construction (worst-case pass implies mean pass).
+    noise_samples = [(True, True), (True, False), (False, False)]
     seen_verdicts: set[Verdict] = set()
+    n_cells = 0
     for ci in ci_lo_samples:
         for dsr in dsr_samples:
             for mc in mc_p_samples:
                 for sanc in sanc_samples:
-                    r = decide(
-                        DecisionInputs(
-                            ci_lo=ci,
-                            dsr_prob=dsr,
-                            p_maxdd_gt_threshold=mc,
-                            pass_threshold_prob=0.05,
-                            sanctuary_sharpe=sanc,
+                    for pm, pw in noise_samples:
+                        n_cells += 1
+                        r = decide(
+                            DecisionInputs(
+                                ci_lo=ci,
+                                dsr_prob=dsr,
+                                p_maxdd_gt_threshold=mc,
+                                pass_threshold_prob=0.05,
+                                sanctuary_sharpe=sanc,
+                                noise_passes_mean=pm,
+                                noise_passes_worst=pw,
+                            )
                         )
-                    )
-                    assert r.verdict in Verdict
-                    seen_verdicts.add(r.verdict)
+                        assert r.verdict in Verdict
+                        seen_verdicts.add(r.verdict)
+    assert n_cells == 243  # 3^5
     # All 5 verdict levels should be reachable
     assert seen_verdicts == set(Verdict)
 
@@ -301,10 +311,12 @@ def test_decision_all_axes_best_returns_deploy():
             p_maxdd_gt_threshold=0.01,
             pass_threshold_prob=0.05,
             sanctuary_sharpe=1.0,
+            noise_passes_mean=True,
+            noise_passes_worst=True,
         )
     )
     assert r.verdict == Verdict.DEPLOY
-    assert r.n_axes_best == 4
+    assert r.n_axes_best == 5
 
 
 def test_decision_all_axes_worst_returns_retire():
@@ -315,10 +327,94 @@ def test_decision_all_axes_worst_returns_retire():
             p_maxdd_gt_threshold=0.30,
             pass_threshold_prob=0.05,
             sanctuary_sharpe=-0.5,
+            noise_passes_mean=False,
+            noise_passes_worst=False,
         )
     )
     assert r.verdict == Verdict.RETIRE
     assert r.n_axes_best == 0
+
+
+def test_decision_4_of_5_returns_conditional_watchpoint():
+    """4-of-5 best (noise axis as the single worst) -> CONDITIONAL_WATCHPOINT.
+    This is the canonical 'pass 4 stats axes but fail noise' case J3 was built for."""
+    r = decide(
+        DecisionInputs(
+            ci_lo=0.5,
+            dsr_prob=0.99,
+            p_maxdd_gt_threshold=0.01,
+            pass_threshold_prob=0.05,
+            sanctuary_sharpe=1.0,
+            noise_passes_mean=False,
+            noise_passes_worst=False,
+        )
+    )
+    assert r.verdict == Verdict.CONDITIONAL_WATCHPOINT
+    assert r.n_axes_best == 4
+    assert r.noise_axis == "worst"
+
+
+def test_classify_axis_noise_truth_table():
+    """Truth table for the noise classifier (J3)."""
+    from titan.research.framework.decision import classify_axis_noise
+
+    assert classify_axis_noise(True, True) == "best"
+    assert classify_axis_noise(True, False) == "mid"
+    assert classify_axis_noise(False, False) == "worst"
+    # Anomalous worst-pass-without-mean-pass: by the API contract this is
+    # impossible (worst-case <= mean), but classifier must still be total.
+    # Per the implementation, worst_pass=True short-circuits to "best".
+    assert classify_axis_noise(False, True) == "best"
+
+
+def test_decision_5axis_verdict_thresholds():
+    """Explicit n_best -> verdict mapping for J3's 5-axis matrix."""
+    # 5 best -> DEPLOY (covered above)
+    # 4 best -> CONDITIONAL_WATCHPOINT (covered above)
+    # 3 best -> TIER_UNCONFIRMED (two axes failing)
+    r = decide(
+        DecisionInputs(
+            ci_lo=0.5,  # best
+            dsr_prob=0.99,  # best
+            p_maxdd_gt_threshold=0.01,  # best
+            pass_threshold_prob=0.05,
+            sanctuary_sharpe=-0.5,  # worst
+            noise_passes_mean=False,  # worst
+            noise_passes_worst=False,
+        )
+    )
+    assert r.verdict == Verdict.TIER_UNCONFIRMED
+    assert r.n_axes_best == 3
+
+    # 2 best -> SUSPECT
+    r = decide(
+        DecisionInputs(
+            ci_lo=0.5,  # best
+            dsr_prob=0.99,  # best
+            p_maxdd_gt_threshold=0.30,  # worst
+            pass_threshold_prob=0.05,
+            sanctuary_sharpe=-0.5,  # worst
+            noise_passes_mean=False,  # worst
+            noise_passes_worst=False,
+        )
+    )
+    assert r.verdict == Verdict.SUSPECT
+    assert r.n_axes_best == 2
+
+    # 1 best -> RETIRE (collapsed with 0)
+    r = decide(
+        DecisionInputs(
+            ci_lo=0.5,  # best
+            dsr_prob=0.2,  # worst
+            p_maxdd_gt_threshold=0.30,  # worst
+            pass_threshold_prob=0.05,
+            sanctuary_sharpe=-0.5,  # worst
+            noise_passes_mean=False,  # worst
+            noise_passes_worst=False,
+        )
+    )
+    assert r.verdict == Verdict.RETIRE
+    assert r.n_axes_best == 1
 
 
 # ── End-to-end synthetic ground truth (H2 fix) ─────────────────────────────
@@ -340,7 +436,8 @@ def test_known_edge_strategy_passes_gates():
     sr_var = sr_var_from_sweep(fake_sweep)
     dsr = deflated_sharpe(sh, sr_var_across_trials=sr_var, returns=rets, n_trials=5)
     assert dsr.dsr_prob > 0.9  # strong signal clears DSR
-    # Fake MC: assume passes
+    # Fake MC: assume passes. Fake noise gate: assume passes (long-and-hold
+    # on a strong-drift series is the canonical noise-robust strategy).
     decision = decide(
         DecisionInputs(
             ci_lo=ci_lo,
@@ -348,6 +445,8 @@ def test_known_edge_strategy_passes_gates():
             p_maxdd_gt_threshold=0.02,
             pass_threshold_prob=0.05,
             sanctuary_sharpe=0.5,
+            noise_passes_mean=True,
+            noise_passes_worst=True,
         )
     )
     assert decision.verdict in (Verdict.DEPLOY, Verdict.CONDITIONAL_WATCHPOINT)
@@ -371,6 +470,8 @@ def test_known_no_edge_strategy_does_not_deploy():
             p_maxdd_gt_threshold=0.30,
             pass_threshold_prob=0.05,
             sanctuary_sharpe=-0.1,
+            noise_passes_mean=True,
+            noise_passes_worst=False,
         )
     )
     # Must NOT be a DEPLOY decision on a no-edge series
