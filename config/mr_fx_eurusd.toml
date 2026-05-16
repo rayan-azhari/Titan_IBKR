@@ -1,6 +1,21 @@
 # EUR/USD Intraday Mean Reversion — Live Strategy Configuration
 # Derived from: research/mean_reversion/ pipeline (Stages 1-3)
 # Config for: titan/strategies/mr_fx/strategy.py
+#
+# *** V3.6 RETIRED (Wave A.6 SIGNAL-LAYER FAIL — VERIFIED, 2026-05-16) ***
+# Two-pass audit:
+#   1. Original L58 sweep on M5 EUR/USD (rolling VWAP, single-tier, 1.5
+#      bps cost): live proxy -3.89, every cell -2.0 to -8.4 Sharpe.
+#   2. V2 verification with live-matched mechanics (session-anchored
+#      VWAP + 4-tier grid + 0.5 bps cost): live proxy -1.13, best cell
+#      -0.34. Magnitude over-stated by ~2-3 Sharpe in (1) due to
+#      class-default conservative params, but RETIRE direction is robust
+#      (every cell still negative under corrected params).
+# 15y of M5 data (193k IS bars) — sample size is overwhelming, signal
+# is genuinely absent at any reasonable parameter point.
+# L58 magnitude-vs-direction caveat added to catalogue.
+# Recommend de-allocation at next allocator window.
+# See `.tmp/reports/sweep_mr_fx_v2/findings.md` + L58 (refined) in catalogue.
 
 [vwap]
 # Sessions at which the cumulative VWAP resets.

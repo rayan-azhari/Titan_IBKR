@@ -1,5 +1,14 @@
 # mr_audjpy.toml -- AUD/JPY MR + Confluence Regime Filter
-# WFO validated: Sharpe +2.08, 75% positive folds
+#
+# *** V3.6 RETIRED (Wave A.3 SIGNAL-LAYER FAIL, 2026-05-16) ***
+# L58 signal-layer sweep on 14y H1 AUD/JPY: IS Sharpe -0.30 at the
+# live config proxy. V1 claim of +0.53 (corrected) is NOT reproducible
+# at the signal layer — apparent edge is filter-machinery overfit on a
+# negative base signal (L43/L46 pattern). De-allocation recommended.
+# See `.tmp/reports/sweep_mr_audjpy/findings.md` + L58 in catalogue.
+#
+# V1 claim (UNRELIABLE): Sharpe +2.08, 75% positive folds.
+# V3.6 signal-layer reality: IS Sharpe -0.30 (14y H1, 87k IS bars).
 
 [vwap]
 anchor = 24             # Rolling VWAP anchor (H1 bars = 1 day)

@@ -831,24 +831,46 @@ STRATEGY_REGISTRY = {
     },
 }
 
-# Pre-defined strategy sets
+# Pre-defined strategy sets.
+#
+# V3.6 STATUS (2026-05-16, post Wave A audits):
+#   The following strategies failed V3.6 audits and were REMOVED from sets:
+#     * mr_audjpy        Wave A.3 SIGNAL-LAYER FAIL (L58); signal-layer IS Sharpe -0.30 on 14y H1
+#     * mtf              Wave A.5 RETIRE (L21 look-ahead bug; V1 +1.94 → V3.6 -0.08 = 2.02 gap)
+#     * mr_fx            Wave A.6 RETIRE (verified; live proxy -1.13 even with corrected mechanics)
+#     * etf_trend SPY    Wave A.2 RETIRED (L56 — MA-crossover trend on long-only equity fails L17 rel-MC)
+#     * etf_trend QQQ/IWB/EFA/DBC/GLD  bulk-retire (L56 + DBC/GLD spot-checks 2026-05-16)
+#
+#   Remaining V3.6-allowed strategies in sets:
+#     * GEM J5           LIVE (run via watchdog_gem.py → run_live_gem.py, separate from this runner)
+#     * bond_gold        V3.6 PROMOTED CONDITIONAL_WATCHPOINT (Wave A.1) — keep V1 config until
+#                        Phase 1 shadow + Phase 2 cutover (see config/bond_gold_v36.toml sidecar)
+#     * etf_trend TQQQ   V3.6 PROMOTED CONDITIONAL_WATCHPOINT (Wave A.2-confirm) — V3.6 canonical
+#                        is (slow_ma=150, exit_confirm_days=5); see config/etf_trend_tqqq.toml
+#     * samir_stack      Phase 5 audit VALIDATED + 3 V3.6 gaps (Wave A.4); Phase 6c gap-closure pending
+#     * bond_equity_*    Strategies still pending V3.6 re-audit (Wave B+)
+#     * gold_macro       Strategy still pending V3.6 re-audit (Wave B)
+#     * fx_carry_audjpy  Strategy still pending V3.6 re-audit (Wave B)
+#     * ic_equity_*      Strategies still pending V3.6 re-audit (Wave B)
+#
+# See `directives/V1-era Re-audit Sweep Roster 2026-05-16.md` for the full audit roster + verdicts.
 STRATEGY_SETS = {
     "all": list(STRATEGY_REGISTRY.keys()),
     "daily_only": [
-        "etf_trend_spy",
-        "gold_macro",
-        "bond_gold",
-        "fx_carry_audjpy",
+        # etf_trend_spy REMOVED 2026-05-16 — Wave A.2 RETIRED (L56).
+        "gold_macro",       # pending V3.6 re-audit
+        "bond_gold",        # V3.6 PROMOTED CONDITIONAL (V1 config remains until Phase 2 cutover)
+        "fx_carry_audjpy",  # pending V3.6 re-audit
         "ic_equity_noc",
     ],
     # gld_confluence dropped 2026-05-01 (see comment near registry).
     "gold_core": ["gold_macro", "bond_gold"],
-    "h1_only": ["mr_audjpy"],
+    # h1_only DROPPED 2026-05-16 — mr_audjpy RETIRED (Wave A.3 L58 SIGNAL-LAYER FAIL).
     # AUD/USD MR removed 2026-04-21 after post-remediation re-validation:
     # CI_lo = -0.180 < 0 fails the deployment gate. See directives/Deprecated
     # Strategies.md.
     "champion_portfolio": [
-        "mr_audjpy",
+        # mr_audjpy REMOVED 2026-05-16 — Wave A.3 RETIRED (L58 signal-layer fail).
         "bond_equity_ihyu_cspx",
         "bond_equity_ihyg_vusd",  # added 2026-05-01 (see project_ihyg_cspx_discovery.md)
         "bond_equity_ihyg_eimi",  # added 2026-05-01 (see project_ihyg_emim_discovery.md)
@@ -856,12 +878,12 @@ STRATEGY_SETS = {
         "reconciliation",  # added 2026-05-12 (see Operational Robustness Framework)
     ],
     # 4-week paper validation set — adds Samir-Stack alongside the
-    # champion portfolio. Once 4 weeks complete with zero D5 alerts and
-    # replay-audit reports zero actionable mismatches, samir_stack_paper
-    # promotes into champion_portfolio. See
-    # ``directives/Samir-Stack Paper Validation 2026-05-12.md``.
+    # champion portfolio. Phase 5 audit VALIDATED 2026-05-16 (Wave A.4)
+    # with 3 V3.6 gaps for Phase 6c gap-closure follow-up. See
+    # ``directives/Samir-Stack Paper Validation 2026-05-12.md`` +
+    # ``.tmp/reports/samir_stack_v36_gap/findings.md``.
     "samir_validation": [
-        "mr_audjpy",
+        # mr_audjpy REMOVED 2026-05-16 — Wave A.3 RETIRED.
         "bond_equity_ihyu_cspx",
         "bond_equity_ihyg_vusd",
         "bond_equity_ihyg_eimi",

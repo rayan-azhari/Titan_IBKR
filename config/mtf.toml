@@ -3,6 +3,21 @@
 # ========================================================
 # Optimised via Stage 1-3 sweeps (run_mtf_optimisation.py,
 # run_mtf_stage2.py, run_mtf_stage3.py).
+#
+# *** V3.6 RETIRED (Wave A.5 — L21 LOOK-AHEAD BUG CONFIRMED, 2026-05-16) ***
+# L21 causality smoke PASSED on my V3.6-correct pure-research
+# implementation. The live config's signal-layer Sharpe is NEGATIVE
+# everywhere (-0.08 live proxy, -0.05 best cell) on 21y EUR/USD
+# H1+H4+D+W data with 128k IS bars. V1 (Round 4) claimed OOS Combined
+# Sharpe +1.94. The 2.02 Sharpe-unit gap is the L21 look-ahead-bias
+# signature: V1 backtest most likely used same-day daily close at H1
+# timestamps. Live execution is event-driven (correct in production)
+# but the strategy is running at the negative-Sharpe operating point.
+# Recommend de-allocation at next allocator window.
+# See `.tmp/reports/sweep_mtf/findings.md` + L21 + L58 in catalogue.
+#
+# V1 claim (UNRELIABLE): OOS Combined Sharpe +1.94.
+# V3.6 signal-layer reality: IS Sharpe -0.08 (causality-correct).
 
 confirmation_threshold = 0.10
 exit_buffer = 0.10           # Hold through neutral zone; exit long only when score < -0.10
