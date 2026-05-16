@@ -1,6 +1,24 @@
 # ──────────────────────────────────────────────────────────
 # fx_carry_audjpy.toml — FX Carry Trade (AUD/JPY Daily)
 # ──────────────────────────────────────────────────────────
+#
+# *** V3.7 CONDITIONAL_WATCHPOINT (Wave B audit, 2026-05-16) ***
+# Scoped to long-yen-carry pairs only (AUD/JPY + USD/JPY).
+# Audit (research/exploration/audit_fx_carry.py) found:
+#  - L21 PASS
+#  - Live config (sma=50, vt=0.08) AUD/JPY Sharpe +0.29 (CI_lo -0.23)
+#  - L61 G10 panel: only AUD/JPY (+0.29) and USD/JPY (+0.34) positive
+#    Panel median -0.007, AUD/JPY at 83rd percentile -> STRICT L61 FAIL
+#    Pattern coherent: positive only on long-yen-carry pairs
+#  - L65 ruin at 10-20%: P_kill = 0.00% (conservative)
+#  - **Carry-premium caveat**: pure-price audit IGNORES swap differential
+#    (~+0.6 SR boost from AUD-JPY rate differential). True economic
+#    Sharpe likely higher than test shows.
+# Verdict: CONDITIONAL_WATCHPOINT scoped to AUD/JPY (and optionally
+# USD/JPY) at ~10% deployment weight, with explicit "no generalisation"
+# clause (L61 scope-lock). Joint L65 + L67 portfolio matrix needed
+# before live cutover.
+# Findings: `.tmp/reports/fx_carry_audit/` + `.tmp/reports/wave_b_completion/summary.md`.
 
 [strategy]
 instrument_id   = "AUD/JPY.IDEALPRO"

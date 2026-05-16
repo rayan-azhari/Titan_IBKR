@@ -1,3 +1,19 @@
+#
+# *** V3.7 TENTATIVE RETIRE -- DATA INSUFFICIENT (Wave B audit, 2026-05-16) ***
+# Audit (research/exploration/audit_orb.py) found:
+#  - L21 PASS on the 5-week data window we have
+#  - Only 5 weeks of M5 data (~24 trading days) per ticker = 17-19 trades each
+#  - Simplified-no-filter ORB (no per-ticker SMA/RSI/Gauss filters, no
+#    bracket OCO): panel median per-trade SR = -2.50; only 29% positive
+#    (INTC +0.16, WMT +0.82)
+#  - Win rates 29-53% on simplified base; pattern matches L58 "filter
+#    machinery layered on weak base"
+# **DATA INSUFFICIENT for definitive verdict.** Re-audit when 1+ year of
+# M5 historical data available (IBKR paper-account, Polygon, or Databento).
+# Until then: tentative RETIRE direction. Real live includes per-ticker
+# filter overlays not modelled here.
+# Findings: `.tmp/reports/orb_audit/` + `.tmp/reports/wave_b_completion/summary.md`.
+
 [UNH]
 atr_multiplier = 2.0
 rr_ratio = 2.0

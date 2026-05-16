@@ -156,6 +156,35 @@ For each strategy below:
    Live impact: NONE (never Docker-deployed).
    See `.tmp/reports/sweep_ic_mtf/findings.md`.
 
+**Wave B completion 2026-05-16 (batch audit of remaining 4 strategies):**
+
+8. **fx_carry** — CONDITIONAL_WATCHPOINT (long-yen-carry scope). L21 PASS,
+   live AUD/JPY SR +0.29 (CI_lo -0.23). L61 G10 panel: only AUD/JPY (+0.29)
+   and USD/JPY (+0.34) positive; panel median -0.007. Pattern coherent
+   (only long-yen-carry pairs work). Carry-premium adds ~+0.6 SR audit
+   excludes. Deploy ~10% AUD/JPY scoped, joint L65 + L67 needed.
+
+9. **orb** — TENTATIVE RETIRE (data-insufficient). Only 5 weeks of M5
+   data per ticker = 17-19 trades each. Simplified-no-filter panel
+   per-trade SR median -2.50, 29% positive (only INTC + WMT). Re-audit
+   when 1+ year M5 available.
+
+10. **ic_equity_daily** — CONDITIONAL_WATCHPOINT candidate. L21 PASS via
+    50/50 IS-OOS + IS-only ic_sign fit. All 7 tickers strict-OOS SR > 0,
+    median +0.61. L62 V1-gap +2.56 = single-LA bug class (V1 +3-4 SR was
+    LA-inflated; strict +0.6 is real edge). Pattern differs from ic_mtf's
+    8-15 SR multi-TF amplification. Deploy top-3 (HWM +1.12, WMT +0.95,
+    SYK +0.72) at ~5-10% portfolio weight, joint L65 + L67 before live.
+
+11. **pairs (GLD/EFA)** — RETIRE. **L21 smoke FAILED** on my V3.7
+    implementation (max past-return diff 0.025 — non-trivial). Subtle
+    non-causality in beta-refit / z-score-window interaction. Live SR
+    +0.11, CI_lo -0.29, MaxDD -30%. L62 V1-gap ~+1.0 = methodology drift,
+    BUT L21 PASS is non-negotiable per V3.7 framework. Even if fixed,
+    live SR + DD below CONDITIONAL gate.
+
+**Wave B status: COMPLETE.** Summary memo: `.tmp/reports/wave_b_completion/summary.md`.
+
 **Wave C (P3 / blocked):**
 
 9. `ml` — fix the L19 same-bar look-ahead bug before any sweep is

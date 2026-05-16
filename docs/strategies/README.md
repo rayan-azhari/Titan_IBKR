@@ -63,12 +63,12 @@ See [directives/V1-era Re-audit Sweep Roster 2026-05-16.md](../../directives/V1-
 | `mr_fx` | INTRADAY_MICROSTRUCTURE (M5 VWAP) | P1 | Wave A.6 | **RETIRE 2026-05-16 (verified)** — every cell negative on 15y M5 EUR/USD even with corrected mechanics; L58 magnitude-vs-direction caveat refined |
 | `gold_macro` | DAILY_TREND | P2 | Wave B | **RETIRED 2026-05-16 (full audit)** — L52 H1 plateau-fail OOS 71% spread + L46 CI_lo bottleneck (every cell CI95_lo < 0). Composite ADDS value over bare-SMA but absolute CI gate fails. Never Docker-deployed; no allocator action |
 | `turtle` | DAILY_TREND | P2 | Wave B | **CONDITIONAL_WATCHPOINT (CAT-scoped) 2026-05-16** — Initial RETIRE revised under L64 (NEW) relaxed framework. L21 PASS, OOS Sharpe positive every cell (peak +0.69, canonical +0.43), cell-stable IS→OOS, L60 + L61 acknowledged. Deploy C3_peak (entry=45, exit=20) on CAT only at 25-30% size; re-audit 2026-11-16 |
-| `fx_carry` | CARRY | P2 | Wave B | **TRIAGE: MARGINAL 2026-05-16** — signal-layer Sharpe +0.26, CI95 straddles 0; needs macro-overlay machinery |
+| `fx_carry` | CARRY | P2 | Wave B | **CONDITIONAL_WATCHPOINT (long-yen-carry scope) 2026-05-16** — L21 PASS, live AUD/JPY SR +0.29. L61 panel: only AUD/JPY + USD/JPY positive (panel median −0.007); pattern is coherent. Carry-premium adds ~+0.6 SR pure-price audit ignores. Deploy ~10% AUD/JPY only, joint L65 + L67 needed before live |
 | `ic_mtf` | INTRADAY_MICROSTRUCTURE | P2-HIGH | Wave B | **RETIRED 2026-05-16 (full audit)** — L21 look-ahead bug CONFIRMED (same pattern as mtf, ~4-5x more severe). V1 +7-8 Sharpe reproducible at V1-style methodology; vanishes under causal higher-TF alignment. New lessons L62 (refined) + L63 added |
 | `gld_confluence` | INTRADAY_MICROSTRUCTURE | P2-low | Wave B | **RETIRED 2026-05-16 (formalises April-2026 deprecation)** — MaxDD ~−35% at every threshold (hard DD gate) + prior 34% positive WFO folds (L43 cell-instability). Sharpe +0.22 too small to override. Already removed from STRATEGY_REGISTRY |
-| `orb` | INTRADAY_BREAKOUT | P2-medium | Wave B | pending — sparse trades, per-trade Sharpe protocol |
-| `ic_equity_daily` | DAILY_MEAN_REVERSION | P2-medium | Wave B | pending — multi-ticker + tier-grid complexity |
-| `pairs` | PAIRS | P2-low | Wave B | pending — needs dedicated pair-strategy audit harness |
+| `orb` | INTRADAY_BREAKOUT | P2-medium | Wave B | **TENTATIVE RETIRE 2026-05-16 — DATA INSUFFICIENT** (5 weeks M5 = 17-19 trades/ticker; simplified-no-filter panel SR median −2.50, 29% positive). Re-audit when 1+ year M5 available |
+| `ic_equity_daily` | DAILY_MEAN_REVERSION | P2-medium | Wave B | **CONDITIONAL_WATCHPOINT candidate 2026-05-16** — L21 PASS; all 7 tickers strict-OOS SR > 0 (median +0.61, mean +0.62). L62 V1-gap +2.56 = single-LA class. Deploy top-3 (HWM/WMT/SYK) at ~5-10%, joint L65 + L67 needed |
+| `pairs` | PAIRS | P2-low | Wave B | **RETIRED 2026-05-16** — L21 smoke FAILED (subtle non-causality in beta refit / z-window interaction). Live SR +0.11, CI_lo −0.29, MaxDD −30%. L21 PASS gate non-negotiable |
 | `ml` | ML_CLASSIFIER | P3 | Wave C | **L19 same-bar look-ahead bug** must be fixed before audit |
 | `gap_fade` | INTRADAY_MICROSTRUCTURE | P3 | Wave C | pending V3.6 audit (low priority) |
 

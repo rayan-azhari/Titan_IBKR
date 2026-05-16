@@ -1,6 +1,26 @@
 # ----------------------------------------------------------
 # pairs_gld_efa.toml -- Pairs Trading (GLD / EFA)
 # ----------------------------------------------------------
+#
+# *** V3.7 RETIRED (Wave B audit, 2026-05-16) ***
+# Audit (research/exploration/audit_pairs.py) found:
+#  - **L21 smoke FAILED**: max past-return diff = 0.025 (non-trivial).
+#    Subtle non-causality in beta-refit + z-score-window interaction.
+#    Implementation has a latent look-ahead bug.
+#  - Live config Sharpe +0.11 (CI_lo -0.29). MaxDD -30%.
+#  - V1 claimed +1.14 (OOS/IS ratio 3.50 = overfit signal). L62 gap
+#    of ~1.0 = methodology drift class.
+#  - L66 baseline gate technically PASSES but L21 PASS is non-negotiable.
+# Verdict: RETIRE. L21 PASS gate is binding. Would need:
+#   1. Refactor beta-refit/z-window interaction to be strictly causal
+#   2. Re-audit on fixed implementation
+#   3. Even if fixed, live SR +0.11 + DD -30% is below CONDITIONAL gate
+# Already removed-or-not-deployed in champion_portfolio. No allocator action.
+# Findings: `.tmp/reports/pairs_audit/` + `.tmp/reports/wave_b_completion/summary.md`.
+#
+# V1 claim (UNRELIABLE -- L21 bug + overfit): OOS Sharpe +1.14, OOS/IS 3.50.
+# V3.7 reality: SR +0.11 + L21 fail.
+
 # Research validated: OOS Sharpe +1.14, OOS/IS ratio 3.50
 
 [strategy]
