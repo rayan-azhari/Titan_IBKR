@@ -1,178 +1,252 @@
-# Titan V2.0 — fresh start
+# Titan V2.0 / V3.7 — current state
 
-**Date:** 2026-05-14
-**Repo:** `https://github.com/rayan-azhari/titan-V2.0.git`
-**Branch convention:** `main` is the cleansed V2.0 baseline; every new piece of work goes on a feature branch.
-
----
-
-## Why V2.0 exists
-
-The V1 codebase (`rayan-azhari/Titan_IBKR`) accumulated ~6 months of research, ~13 live strategies, and a series of audits that exposed methodology gaps the published Sharpe numbers depend on. Specifically:
-
-- Sharpe annualisation conventions varied across audits, producing extreme magnitudes on sparse-trade strategies and silently inflated numbers on filtered-bar strategies.
-- Walk-forward designs were inconsistent (5 contiguous folds, 5 expanding folds, 8 expanding-IS folds, 48 rolling folds — all simultaneously in flight).
-- Sanctuary slicing was ad-hoc; sanctuary divergence (recent 12 months >> historical OOS) appeared in three independent audits without investigation.
-- Monte Carlo gates were uniformly calibrated at P(MaxDD > 25%) < 5%, which failed every cross-asset cell including audit-trusted references.
-- Decision matrices were incomplete (one audit hit UNDETERMINED).
-- Same-bar look-ahead was confirmed in one ML file but untested in six others.
-- DSR formula assumed normal returns (skew=0, kurt=3) — real returns aren't normal.
-
-Acting on the resulting verdicts (`tier=unconfirmed` flags, retirement recommendations) before fixing the methodology would have been the opposite of disciplined. V2.0 is the disciplined response: discard the suspect results, keep the ideas, rebuild under a unified framework.
+**Date:** 2026-05-16 (last updated)
+**Repo:** `https://github.com/rayan-azhari/Titan_IBKR.git` (branch: `v2-main`)
+**Framework version:** V3.7 (portfolio-level evaluation + risk-of-ruin)
 
 ---
 
-## What's on V2.0 right now
+## TL;DR — what V3.7 changed
 
-### KEPT — code + infrastructure
+The framework went through three structural revisions in 2026-05-16, driven by user challenges that exposed real gaps:
 
-| Layer | What it contains |
-|---|---|
-| `titan/` | Live class implementations of every deployed strategy (mr_audjpy, bond_gold, etf_trend, fx_carry, gld_confluence, gold_macro, ic_equity_daily, ic_mtf, ml, mtf, orb, pairs, samir_stack, turtle, etc.). |
-| `titan/research/framework/` | **The new unified backtesting framework.** Single source of truth for typology + WFO + sanctuary + MC + DSR + decision matrix. Every new audit + every re-audit goes through this. |
-| `titan/research/metrics.py` | Audit-corrected shared metrics (`sharpe`, `bootstrap_sharpe_ci`, `BARS_PER_YEAR`, `rolling_zscore`, `is_frozen_zscore`, `max_drawdown`, etc.). |
-| `titan/risk/` | Portfolio risk architecture: per-strategy equity tracker, FX unit conversion, halt persistence, kill switch. |
-| `titan/adapters/` | IBKR / NautilusTrader adapter code. |
-| `titan/portfolio/` | Portfolio risk manager, allocator, drawdown breaker. |
-| `tests/` (~30 files, 53 tests passing) | Documents expected behaviour of every live class + the framework. |
-| `scripts/` | Deployment + ops infrastructure: kill switch, watchdogs, validators, data downloaders, run_live_*, refresh_market_data.sh, build_image.sh. |
-| `config/*.toml` | Strategy parameter intent. Values may need re-tuning under the new framework but the schema + parameter axes are the strategies' "what". |
-| `data/` | Gitignored, regen via `scripts/download_data_*.py`. |
+1. **L64 — CONDITIONAL_WATCHPOINT path** for borderline V1-era audits. The strict CI_lo > 0 gate at small fold counts is biased toward false negatives. Strategies with positive OOS Sharpe + stable cell ranking + L21 PASS + cost-not-bottleneck can deploy at small weight with re-audit cadence.
+2. **L65 — Risk-of-ruin module** (`titan/research/framework/ruin.py`). Joint MC across LIVE + proposed strategies is the binding survivability gate. Single-strategy ruin gates are necessary but not sufficient. Caught: turtle CAT at 30% FAILS joint gate alongside GEM J5; revised to 20%.
+3. **L66 + L67 — Portfolio-vs-benchmark is the deployment gate** (not individual-strategy-vs-own-instrument). Individual L17 was correct for what it tested but was the wrong test for deployment. V3.7's 10-metric portfolio matrix (`research/portfolio/joint_evaluation.py`) is the new gate.
 
-### KEPT — directives (ideas, methodology, infrastructure)
-
-**Methodology framework + lessons:**
-- `Methodology Audit & Unified Framework 2026-05-14.md` — the framework spec
-- `V3.6 Lessons Catalogue.md` — 16 distilled lessons across waves 1-4
-- `IC Signal Analysis.md` — IC framework v4.2
-
-**API / Docker / deployment learnings:**
-- `IBKR & NautilusTrader API Reference.md`
-- `IBKR UK Paper Account Setup.md`
-- `Docker Paper Trading Guide.md`
-- `Paper Trading Guide.md`
-- `Deployment & Operations.md`
-- `Strategy Deployment Guide.md`, `Strategy Deployment Protocol.md`
-- `Operational Robustness Framework 2026-05-12.md`
-- `Titan Library Reference.md`, `Titan-IBKR Adapter Guide.md`, `Workspace Structure.md`
-- `Market Data Refresh Strategy.md`
-- `Broker Migration Assessment.md` (OANDA / Pepperstone / IG comparison)
-- `Rehydration Bug 2026-05-11.md` (postmortem)
-
-**Strategy mechanism guides (how each strategy works conceptually):**
-- `ORB Trading Strategy.md`, `ORB Strategy User Guide.md`
-- `MTF Strategy User Guide.md`, `Multi-Timeframe Confluence.md`
-- `ETF Trend Strategy.md`
-- `Turtle Trading Strategy Analysis.md`
-- `Ensemble Strategy Framework.md`
-- `Samir-Stack Strategy Guide.md`
-- `Samir V3 — VIX-HMM Strategy Design 2026-05-13.md`
-- `Deprecated Strategies.md` (historical reference)
-
-**Methodology reference (the "how to do research"):**
-- `Backtesting & Validation.md`
-- `Machine Learning Strategy Discovery.md`
-- `Time Series & Correlation Analysis.md`
-- `Cost Model Audit 2026-05-11.md`
-
-**Ops runbooks:**
-- `operations/` subdirectory
-
-### DISCARDED in the cleanse
-
-- All April-22 EU strategy phase result logs
-- All April-21 candidate portfolio / remediation / rerank result logs
-- All May-11/12 Samir-Stack variant + paper validation directives (kept only the Strategy Guide + V3 design)
-- All May-13 / May-14 IC Census directives (Phase A/B/C/D + AUDJPY + Strategy Re-validation)
-- All May-14 Track 1 audit verdicts (Bond-Equity, ML Causality, MR AUDJPY, ORB DSR, Range-Expansion Phase 0)
-- `System Status and Roadmap.md` (outdated)
-- All `research/*/run_*.py` and `research/*/phase*.py` orchestrators (~122 files) — the suspect runners
-- `research/_archive/`, `research/auto/`, `research/strategies/` subtrees
-- 6 IC Census universe config files
-- 2 Phase C download scripts
-- 4 audit runner scripts created during the cleanse session
+**Result of the V3.7 reframe:** the current portfolio (GEM J5 70% + turtle CAT 20% + 10% cash) **beats 60/40 SPY/IEF on 7/10 metrics** including 64× lower P(NAV DD > 15%). The mission — "minimise risk while staying profitable vs B&H" — is being achieved at the portfolio level, not the individual-strategy level.
 
 ---
 
-## How to use V2.0
+## Current portfolio state
 
-### To audit a new strategy idea
+| Strategy | Status | Weight | Last audit | Verdict |
+|---|---|---:|---|---|
+| `gem` (J5 P_hl60_vt05) | **LIVE on paper** (Docker) | 70% | 2026-05-16 | DEPLOY (5/5 axes + L65 + portfolio matrix 6/10 vs 60/40) |
+| `turtle` (C3_peak on CAT) | **CONDITIONAL_WATCHPOINT** (deploy pending) | 20% | 2026-05-16 | CAT-scoped; joint L65 PASS at 20%; portfolio matrix 7/10 |
+| (cash buffer) | | 10% | | |
 
-1. **Read the V3.6 Lessons Catalogue.** Every lesson is a known failure mode.
-2. **Classify the strategy** under one of the 9 `StrategyClass` values in `titan.research.framework.typology`. The class determines defaults for Sharpe convention, WFO design, MC config, decision-matrix thresholds.
-3. **Write a pre-registration directive** (V3.1) listing the universe, gates, decision rule. Commit BEFORE any data is examined.
-4. **Run via the framework primitives:**
-   - `slice_sanctuary(df, months=12)` for the 12-month holdout
-   - `build_folds(idx, cfg, bars_per_year=...)` for the WFO folds
-   - `sharpe(returns, periods_per_year=...)` + `bootstrap_sharpe_ci(...)` for the headline metric
-   - `deflated_sharpe(...)` for DSR
-   - `run_block_mc(...)` for underlying-resampled Monte Carlo
-   - `sanctuary_divergence_test(...)` to check whether the sanctuary's Sharpe is unusually high vs the historical rolling-window distribution
-   - `decide(DecisionInputs(...))` for the 4-axis verdict
-5. **Append the result log** to the pre-reg directive (§4).
-6. **Append any new lesson** to `V3.6 Lessons Catalogue.md`.
+**Portfolio-vs-60/40 SPY/IEF (7.9y overlap):**
+- Sharpe: **+0.95** vs +0.74 ✓
+- Sortino: **+1.41** vs +0.91 ✓
+- MaxDD: **−13.7%** vs −22.3% ✓
+- CVaR-95 reduced 48% ✓
+- CDaR-95 reduced 44% ✓
+- **P(NAV DD > 15% in 1y): 0.30% vs 19.30%** — **64× lower risk-of-ruin** ✓
+- Verdict: **7/10 PASS → PORTFOLIO_CONDITIONAL**
 
-### To re-audit an existing live strategy
+**Crisis stress (named windows 1987-2025):**
+- GEM alone: 9/10 PASS at 20% DD threshold (worst 2022: −20.4%)
+- Portfolio: **5/5 PASS at TIGHTER 15% threshold** (worst 2022: −11.6%)
+- Diversification reduces worst-crisis DD by 44%
 
-Same workflow as above. The live class lives in `titan/strategies/*/strategy.py`; the audit calls into it through a thin backtest harness. **DO NOT** approximate the live class with a simplified simulator (Lesson L10).
+---
 
-### To run the codebase methodology scanner
+## Audit dashboard (2026-05-16)
+
+| Status | Count | Strategies |
+|---|---:|---|
+| **LIVE** | 1 | gem (J5 P_hl60_vt05) |
+| **CONDITIONAL_WATCHPOINT** | 1 | turtle (CAT C3_peak @ 20%) |
+| **SHADOW** | 1 | bond_gold (V3.6 PROMOTED params; live runs V1 config) |
+| **RETIRED** | 18 | mr_audjpy, mr_fx, mtf, ic_mtf, gold_macro, gld_confluence, 6 etf_trend variants, B2/B4/D2/E1/G4/A1/I1 from V3 era |
+| **Total audits run** | 31 | See `.tmp/dashboard/dashboard.html` |
+
+---
+
+## V3.6 → V3.7 framework
+
+### Core gates (unchanged from V3.6, refined for L66)
+
+1. **L21 causality smoke** — corrupt future bars, assert past returns bit-exact unchanged.
+2. **WFO** — class-default fold construction (rolling vs expanding per typology).
+3. **MC block bootstrap** — class-default MaxDD + L17 relative-MC vs **baseline-class-appropriate benchmark** (per L66, NOT universally own-instrument B&H).
+4. **DSR deflation** — adjust Sharpe for N-cell selection bias.
+5. **Sanctuary divergence test** — 12-month holdout never seen during sweep.
+6. **L24 noise robustness** — Varma noise-injection 5th axis.
+7. **L52 plateau detection** — 2D parameter sweep + spread-pct gate.
+
+### V3.7 additions
+
+8. **L64 CONDITIONAL_WATCHPOINT** — relaxed verdict path with non-negotiable gates (L21, costs, V1-style sanity) + relaxed-CI-gate.
+9. **L65 risk-of-ruin** (`titan/research/framework/ruin.py`) — `assess_strategy_ruin()` + `assess_joint_ruin()` with 1% kill-trip + 25% 95th-pct DD gates.
+10. **L66 baseline-must-match-thesis** — `risk_reduction` → vol-matched B&H; `alpha_generation` → CAPM/FF residual; `pure_return` → cash; `diversifier` → portfolio with-and-without; `cross_asset_rotation` → 60/40 SPY/IEF.
+11. **L67 portfolio-vs-benchmark 10-metric matrix** (`research/portfolio/joint_evaluation.py`) — the actual deployment gate.
+12. **Fractional Kelly sizer** (`titan/research/framework/kelly.py`) — 0.25× full Kelly with DSR-aware option.
+13. **ERC allocator** (`titan/research/framework/allocator_erc.py`) — Equal Risk Contribution weights, correlation-aware.
+14. **Named-crisis stress** (`titan/research/framework/crisis_stress.py`) — 12 historical windows (1987-2025 tradewar) with per-event pass/fail.
+15. **CUSUM drift monitor** (`titan/research/framework/drift_cusum.py`) — Page 1954 structural-break detection for live PnL.
+16. **Per-strategy risk-contribution** in `PortfolioRiskManager.get_summary()`.
+
+### Lessons catalogue
+
+**67 lessons** as of 2026-05-16. See `V3.6 Lessons Catalogue.md` (will be renamed `V3.7 Lessons Catalogue.md` at next batch).
+
+Recent additions (V3.7 batch):
+- **L58** (refined) — Signal-layer-first audit pattern: triage Sharpe magnitude is unreliable; direction is robust.
+- **L59** — Gap-closure pattern for strategies with credible prior audit.
+- **L60** — Cadence annualisation mismatch (FX 24/7 vs US equity RTH); use asset-class-correct `periods_per_year`.
+- **L61** — Single-instrument selection bias; require multi-instrument panel test.
+- **L62** — Sharpe-gap classification table (0.5-1.5 = methodology; 1.5-3 = single LA; 5-10 = multi-TF amplified; 10+ = fabrication boundary).
+- **L63** — Verify V1-style baseline recovers V1 claim BEFORE concluding fabrication (user-challenge protocol).
+- **L64** — CONDITIONAL_WATCHPOINT path for borderline audits.
+- **L65** — Joint risk-of-ruin is the binding survivability gate.
+- **L66** — Baseline must match strategy thesis.
+- **L67** — Portfolio-vs-benchmark 10-metric matrix is the deployment gate.
+
+---
+
+## How to use V3.7
+
+### For a new strategy candidate
+
+1. **Read** `V3.6 Lessons Catalogue.md` + `Retirement Registry.md` (avoid known failure modes).
+2. **Classify** under `StrategyClass` enum from `titan.research.framework.typology`.
+3. **Declare baseline_class** per L66 (`risk_reduction` / `alpha_generation` / `pure_return` / `diversifier` / `cross_asset_rotation`).
+4. **Pre-register** §1-§3 in a directive BEFORE examining data.
+5. **Run audit** via framework primitives:
+   ```python
+   from titan.research.framework import (
+       slice_sanctuary, build_folds, run_block_mc, run_relative_block_mc,
+       run_noise_robustness, deflated_sharpe, sanctuary_divergence_test,
+       decide, DecisionInputs,
+       # V3.7
+       compute_kelly_fraction, compute_erc_weights,
+       run_crisis_stress, assess_strategy_ruin, assess_joint_ruin,
+   )
+   ```
+6. **Apply V3.7 gates:** strategy quality gate (V3.6 5-axis) AND portfolio inclusion gate (V3.7 10-metric matrix).
+7. **L65 ruin check** at proposed deployment weight before live cutover.
+8. **Joint L65** with all existing LIVE strategies before live cutover.
+9. **Append result log** + any new lessons.
+
+### For a re-audit of an existing strategy
+
+Same workflow, but the V1-era roster (`V1-era Re-audit Sweep Roster 2026-05-16.md`) tracks status. Each strategy is one of: complete + verdict, in-progress, deferred.
+
+### To run V3.7 portfolio review
 
 ```bash
-python scripts/audit_codebase_methodology.py --write-parquet
+PYTHONIOENCODING=utf-8 uv run python research/portfolio/v37_portfolio_review.py
 ```
 
-Reports anti-patterns (hardcoded `sqrt(252)`, same-bar `position * return`, `.ffill` after `.reindex`, global z-scores, etc.) across `research/` + `titan/` + `scripts/`. False positives are expected — the script is a sieve.
+Outputs: per-strategy Kelly fractions, ERC weights, per-crisis stress, joint ruin sensitivity grid, 10-metric matrix verdict, recommended deployment weights.
 
-### To verify the framework
+### To run the 10-metric joint evaluation alone
 
 ```bash
-python -m pytest tests/test_framework_synthetic.py tests/test_ic_census_lib.py -v
+PYTHONIOENCODING=utf-8 uv run python research/portfolio/joint_evaluation.py
 ```
-
-53 tests covering: typology completeness, sanctuary slicing + divergence test, WFO fold construction, DSR with skew/kurt, decision matrix totality, end-to-end known-edge vs known-no-edge synthetic ground truth.
 
 ---
 
-## Status of the live strategies
+## Status of the strategy backlog
 
-**Updated 2026-05-15** — GEM is the first live strategy under a true 5-axis DEPLOY verdict. The remaining ~13 strategies in `titan/strategies/` still run on V1 verdicts pending framework re-audits.
+### V3-era backlog ideas (`Strategy Backlog 2026-05-14.md`)
 
-### Production deployments under the V2.0 framework
+10-step plan, ~31 days for 8 strategies + 3 infra. Steps 1-7 complete:
+1. ✅ B1 GEM dual momentum — LIVE under J5
+2. ✅ J3 Noise-injection 5th axis — framework primitive
+3. ✅ E1 VRP — RETIRED (L29)
+3.5. ✅ J4 GEM noise-robust redesign — superseded by J5
+4. ✅ D2 Commodity carry — RETIRED (L34/L35)
+5. ✅ G4 Overnight session — RETIRED (L33)
+6. 🟡 J1+J2 HRP/NCO allocator — **partially done**: ERC built (V3.7 batch 1); HRP/NCO pending until 10+ strategies
+7. ✅ A1 Residual momentum — RETIRED (L36/L37)
+8. ⏳ I1 HMM regime + XGBoost — needs multi-feature HMM (L51 lesson)
+9. ⏳ B5 Intraday momentum (Gao-Han-Li-Zhou) — 2d, US equity data ready
+10. ⏳ B2 Carver EWMAC ensemble — **biggest build**; needs futures basket data
 
-| Live strategy | Production cell | Verdict | Pre-reg | Deployed |
-|---|---|---|---|---|
-| `gem` (Dual Momentum) | **J5 P_hl60_vt05** | **DEPLOY** (5/5 axes) | `Pre-Reg J5 GEM Hybrid Re-audit 2026-05-16.md` | 2026-05-16 17:10 UTC (paper) |
+### V1-era re-audit roster (`V1-era Re-audit Sweep Roster 2026-05-16.md`)
 
-GEM trajectory: original C12 was DEPLOY (4-axis, 2026-05-14) → demoted CONDITIONAL_WATCHPOINT under J3's 5-axis matrix (noise axis = `mid`) → J4 `A1_ewma_hl40` promoted from the noise-robust redesign sweep (EWMA half-life=40, paper live 2026-05-15 13:07 UTC) → **J5 `P_hl60_vt05` promoted via L52 hybrid framework 2026-05-16** (vol_estimator_halflife=60, ann_vol_target=0.05). The J5 audit applied the full V3.6 protocol incl. L17 relative-MC vs 60/40 SPY/IEF benchmark — J4 fails L17 (12% DD reduction, gate is 20%) while J5 passes (38%). J5 stitched-OOS Sharpe +1.00 vs J4 +0.74 (+34%), CI_lo +0.51 vs +0.24 (2.1× tighter), MaxDD -10% vs -15%. See `directives/Pre-Reg J5 GEM Hybrid Re-audit 2026-05-16.md` + V3.6 Catalogue **L52, L57**.
+| Wave | Strategy | Status |
+|---|---|---|
+| A.1 | bond_gold | ✅ CONDITIONAL_WATCHPOINT (PROMOTED params; shadow vs live) |
+| A.2 | etf_trend (7 variants) | ✅ Mixed (SPY RETIRED; TQQQ CONDITIONAL; 5 unleveraged bulk-retired) |
+| A.3 | mr_audjpy | ✅ RETIRED (L58 signal-layer fail) |
+| A.4 | samir_stack | 🟡 Phase 5 validated + 3 V3.6 gaps; ~25min gap-closure pending |
+| A.5 | mtf | ✅ RETIRED (L21 look-ahead) |
+| A.6 | mr_fx | ✅ RETIRED (V2 verified) |
+| Wave B | gold_macro | ✅ RETIRED (plateau-fail + cell-instability) |
+| Wave B | turtle | ✅ CONDITIONAL_WATCHPOINT (CAT-scoped @ 20%) |
+| Wave B | ic_mtf | ✅ RETIRED (L21 multi-TF amplified) |
+| Wave B | gld_confluence | ✅ RETIRED (DD gate + fold instability) |
+| Wave B | fx_carry | ⏳ pending (needs L61 G10 panel + L66 baseline) |
+| Wave B | orb | ⏳ pending (sparse-trade harness) |
+| Wave B | pairs | ⏳ pending (cointegration harness) |
+| Wave B | ic_equity_daily | ⏳ pending (7-ticker multi-name) |
+| Wave C | ml | ⏳ L19 same-bar look-ahead bug fix first |
+| Wave C | gap_fade | ⏳ low priority |
 
-**L52 hybrid framework now also applied to:**
+---
 
-- `bond_gold` (Wave A.1, 2026-05-16) — **PROMOTED CONDITIONAL_WATCHPOINT** for `(lookback=120, threshold=0.50)`. Live V1-era config remains; migration pending allocator approval. See `docs/strategies/bond-gold.md` (TODO).
-- `etf_trend` family — **SPY RETIRED** (Wave A.2; L56 — long-only equity MA-crossover fails L17 rel-MC). **TQQQ PROMOTED CONDITIONAL_WATCHPOINT** for `(slow_ma=150, exit_confirm_days=5)` (Wave A.2-confirm; L56 refined — leveraged variant survives via noise-mitigation knob). **5 unleveraged variants (QQQ/IWB/EFA/DBC/GLD) flagged for bulk-retire** per `directives/Bulk-Retire etf_trend Unleveraged Variants 2026-05-16.md`.
+## Architecture (unchanged from V2.0)
 
-### Strategies still on V1 verdicts (pending re-audit)
+```
+directives/                     ~36 files: methodology + pre-regs + lessons + retirement registry
+titan/
+  titan/research/framework/     V3.7 unified backtesting framework (16 modules)
+  titan/strategies/             Live class implementations (15+ strategies)
+  titan/risk/                   PortfolioRiskManager + allocator + per-strategy equity
+  titan/adapters/               IBKR/NautilusTrader
+research/                       Library + audit harnesses (pre-cleanse retained)
+  research/portfolio/           V3.7 joint evaluation + v37_review (NEW)
+  research/turtle/              turtle V3.6 module + audit
+  research/cross_asset/         bond_gold + gold_macro V3.6 modules
+  research/gem/                 GEM J3/J4/J5 audits
+  research/exploration/         sweep_*.py harnesses (one per strategy)
+scripts/                        CLI: run_live_*, run_portfolio, kill switches, watchdogs, audit_dashboard
+config/*.toml                   Strategy parameter intent
+tests/                          54+ tests (framework + IC + live classes + 13 PRM tests)
+data/                           Gitignored OHLCV parquets
+.tmp/                           Reports + dashboard + logs (gitignored)
+```
 
-The remaining V1-era strategies in `titan/strategies/` (mr_audjpy, mr_fx, mtf, orb, gld_confluence, gold_macro, fx_carry, pairs, ic_equity_daily, ic_mtf, ml, samir_stack, turtle) still run per the existing `config/*.toml`. None has been re-audited under the framework. Each needs a fresh framework-audited pre-reg + result log before its current Sharpe/CI claims can be trusted. See `directives/V1-era Re-audit Sweep Roster 2026-05-16.md` for the Wave A.3+ schedule.
+---
 
-The Methodology Audit & Unified Framework directive's §3 lists the migration plan. The L52 hybrid framework (sweep → pre-reg → audit) is now the standard approach for any V1-era re-audit and for any new strategy entering production: 2D sweep (not 1D — L57) identifies plateau candidates, pre-reg freezes them, the full 5-axis audit on held-out sanctuary is the deployment gate.
+## Non-negotiable rules (V3.7)
+
+Same as V3.6 plus:
+
+- **L21 causality smoke**: every audit module must pass it. Never relaxed.
+- **L60 annualisation**: `periods_per_year` must match asset class, NOT generic `BARS_PER_YEAR[timeframe]` for non-FX.
+- **L63 V1-style verification**: before concluding "fabrication", verify V1-style baseline can reproduce the V1 claim.
+- **L65 ruin gate**: every CONDITIONAL_WATCHPOINT or STRICT DEPLOY requires single-strategy + joint L65 PASS.
+- **L66 baseline-class declaration**: every new pre-reg declares `baseline_class`. Default for new ideas: discuss before defaulting.
+- **L67 portfolio inclusion gate**: new strategies must improve the portfolio's 10-metric matrix vs 60/40 to be promotable.
+
+---
+
+## Open items (V3.7)
+
+### Framework
+
+1. **Tax-aware return computation** — UK CGT vs US Section 1256; needs operator input on jurisdiction.
+2. **HRP / NCO allocator** — defer until 10+ strategies in portfolio.
+3. **Tail risk parity** — defer (requires 5+ years OOS per strategy).
+4. **Live PnL CUSUM wiring** — wired to research-mode for now; needs live PnL tracker connection.
+5. **Exceedance correlation** in joint MC — currently uses unconditional correlation.
+
+### Strategies pending audit
+
+- fx_carry, orb, pairs, ic_equity_daily, ml, gap_fade (priority order)
+- samir_stack Phase 6c gap-closure (~25 min when allocator window opens)
+
+### Deferred (need data infrastructure)
+
+- B2 Carver EWMAC ensemble — needs futures basket data
+- B3 Donchian + pyramiding Turtle-plus — same
+- B4 TSMOM multi-asset — same
+- A1 Residual momentum re-audit — needs WRDS CRSP/Compustat
+- I1 HMM with multi-feature regime — needs VIX + term spread + credit + RV data
 
 ---
 
 ## Workflow conventions
 
-- **Branches:** every piece of work is a feature branch. Audit + research goes on `research/*` branches; deployable changes on `feat/*` or `fix/*`. Merge to `main` via PR.
-- **Pre-registration discipline:** every audit's gates / cells / decision rule lands in a directive BEFORE any data is examined. After the run, only the §4 result log is appended; §1-§3 stay frozen.
-- **V3.6 hygiene:** every audit produces a result log even when the verdict is NULL or RETIRE. Lessons get appended to the catalogue.
-- **No retroactive cell-favouring.** If gates were too tight / too loose, the next audit gets a fresh pre-reg; you don't relax the gate on the failing audit.
+- **Branches:** every piece of work is a feature branch. Audit + research on `research/*`; deployable on `feat/*` or `fix/*`. Merge to `v2-main` via PR.
+- **Pre-registration discipline:** every audit's gates / cells / decision rule lands in a directive BEFORE any data is examined.
+- **V3.6/V3.7 hygiene:** every audit produces a result log even when verdict is RETIRE. Lessons get appended to the catalogue. Retirement Registry updated.
+- **Risk gates non-negotiable:** L21 + L60 + L63 + L65 + L66 + L67 all binding for any new deployment.
 
----
-
-## What's NOT here yet (and is genuinely open)
-
-1. **Re-audit of every live strategy under the framework.** ~14 strategies in `titan/strategies/`, none yet re-audited.
-2. **Cost-model validation** against actual fills (vs the framework's class-default cost models).
-3. **Phase D paid-feed acquisition** (Eurex / CFE / breadth panel) — pending vendor selection.
-4. **ML same-bar causality sweep** on 6 untested feature files (`multi_horizon_lstm.py`, `ensemble_stacking.py`, `lstm_classifier.py`, `autoencoder_regime.py`, `run_metalabeling.py`, `calibration_kelly.py`). The same-bar fix is already documented in the framework; testing the 6 files is a separate task.
-
-The framework is the toolbox; the actual research builds back up from here, one strategy at a time, with pre-reg discipline and the lessons catalogue keeping us honest.
+The framework is the toolbox; the portfolio decision matrix is the gate; the lessons catalogue keeps us honest. As of 2026-05-16, the current portfolio achieves the V3.7 mission.

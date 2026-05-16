@@ -1,11 +1,29 @@
 # Strategy Documentation
 
 Operator + reference guides for every strategy that has reached at least
-a paper-trading deployment under the Titan-IBKR V2.0 framework. Each
-guide is the **single source of truth** for how its strategy is
+a paper-trading deployment under the Titan-IBKR V2.0 / V3.7 framework.
+Each guide is the **single source of truth** for how its strategy is
 configured, deployed, and supervised. Research artefacts (pre-reg
 directives, audit logs, dashboards) live elsewhere — see the linked
 sources in each guide.
+
+## Portfolio status (2026-05-16, V3.7 framework)
+
+| Metric (portfolio GEM 70% + turtle 20%) | Value | 60/40 SPY/IEF | Verdict |
+|---|---:|---:|:---:|
+| Sharpe (annualised) | **+0.95** | +0.74 | ✓ |
+| Sortino | **+1.41** | +0.91 | ✓ |
+| MaxDD | **−13.7%** | −22.3% | ✓ |
+| **P(NAV DD > 15% in 1y)** | **0.30%** | 19.30% | ✓ **64× lower** |
+| CVaR-95 reduction | 48% | — | ✓ |
+| CDaR-95 reduction | 44% | — | ✓ |
+| Worst named-crisis MaxDD (2022) | −11.6% | — | (vs GEM alone −20.4%) |
+| 10-metric matrix verdict | **7/10 PASS** | — | PORTFOLIO_CONDITIONAL |
+
+The portfolio HAS LOWER risk-of-ruin than passive 60/40 buy-and-hold
+AND higher Sharpe AND lower MaxDD. See
+[.tmp/reports/joint_evaluation/framework_evolution_v37.md](../../.tmp/reports/joint_evaluation/framework_evolution_v37.md)
+for the V3.6 → V3.7 reframe.
 
 ## Convention
 
@@ -56,20 +74,32 @@ See [directives/V1-era Re-audit Sweep Roster 2026-05-16.md](../../directives/V1-
 
 These strategies' V1-era pre-reg directives still exist in [directives/](../../directives/), but the V3.6 protocol (5-axis matrix + L17 relative-MC + Varma noise robustness + L52 hybrid sweep) was not applied. **Treat their advertised Sharpes as informational only** until each gets a fresh V3.6 audit + guide in this folder.
 
-## Retired strategies (V3.6 RETIRED verdict)
+## Retired strategies (V3.6/V3.7 RETIRED verdict)
 
-The following strategies were audited under V3.6 and RETIRED. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry (21 audits, 13 retired as of 2026-05-16):
+The following strategies were audited and RETIRED. **31 audits / 18 retired** as of 2026-05-16. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry and [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md) for one-line "next time" lessons per retired strategy.
+
+V3-era (data-infrastructure or methodology):
 
 - B2 Carver EWMAC universal-trend (on cross-asset 21y data) — RETIRED via B2 → B2b → B2c → B2d → I1 chain (L48-L51).
 - B4 TSMOM (3 variants) — RETIRED on L43 plateau-fragility.
-- D2 carry — RETIRED on data-quality + signal absence.
-- E1/E1b VRP — RETIRED.
-- G4 overnight — RETIRED.
-- A1 residual momentum — RETIRED on plateau-pre-flight.
+- D2 commodity carry — RETIRED on data-quality + signal absence (L34/L35).
+- E1/E1b VRP — RETIRED (L29).
+- G4 overnight session decomposition — RETIRED (cost drag + L33).
+- A1 residual momentum — RETIRED on survivorship bias (L36/L37).
 - I1 HMM regime gate — RETIRED on L51 (HMM-on-daily-returns degenerates to no-op).
-- **etf_trend SPY** — RETIRED on L56 (2026-05-16).
 
-Retired strategies are NOT documented in this folder — their lessons are captured in [directives/V3.6 Lessons Catalogue.md](../../directives/V3.6%20Lessons%20Catalogue.md).
+V1-era live strategies retired under V3.6/V3.7:
+
+- **mr_audjpy** — RETIRED (Wave A.3, L58 signal-layer fail).
+- **mr_fx EUR/USD** — RETIRED (Wave A.6, V2 verified).
+- **mtf EUR/USD** — RETIRED (Wave A.5, L21 multi-TF look-ahead).
+- **etf_trend SPY** — RETIRED (Wave A.2, L56).
+- **etf_trend QQQ, IWB, EFA, DBC, GLD** — RETIRED bulk (Wave A.2 + spot-checks, L56).
+- **ic_mtf 6 FX pairs** — RETIRED (Wave B, L21 multi-TF amplified 8-15 SR).
+- **gold_macro** — RETIRED (Wave B, L52 plateau-fail + cell-instability).
+- **gld_confluence** — RETIRED (Wave B, DD gate + 34% positive folds).
+
+Retired strategies are NOT documented in this folder — their lessons are captured in [directives/V3.6 Lessons Catalogue.md](../../directives/V3.6%20Lessons%20Catalogue.md) and one-line "next time" lessons in [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md).
 
 ## Strategies documented elsewhere (TODO: migrate)
 
@@ -80,12 +110,28 @@ The following V1-era strategy guides still live in `directives/`. They should be
 - **MTF** — [directives/MTF Strategy User Guide.md](../../directives/MTF%20Strategy%20User%20Guide.md)
 - **Samir V3 (VIX-HMM)** — [directives/Samir V3 — VIX-HMM Strategy Design 2026-05-13.md](../../directives/Samir%20V3%20%E2%80%94%20VIX-HMM%20Strategy%20Design%202026-05-13.md)
 
+## V3.7 Framework Reference
+
+The V3.6 framework was extended to V3.7 on 2026-05-16 with portfolio-level evaluation. Key new modules:
+
+- **Portfolio joint evaluation** (10-metric matrix vs benchmark): [research/portfolio/joint_evaluation.py](../../research/portfolio/joint_evaluation.py)
+- **V3.7 end-to-end review runner** (Kelly + ERC + Crisis + Joint Ruin + 10-metric): [research/portfolio/v37_portfolio_review.py](../../research/portfolio/v37_portfolio_review.py)
+- **Risk-of-ruin module** (single + joint MC): [titan/research/framework/ruin.py](../../titan/research/framework/ruin.py)
+- **Fractional Kelly sizer** (0.25× full Kelly, DSR-aware): [titan/research/framework/kelly.py](../../titan/research/framework/kelly.py)
+- **ERC allocator** (Equal Risk Contribution): [titan/research/framework/allocator_erc.py](../../titan/research/framework/allocator_erc.py)
+- **Named-crisis stress** (12 windows 1987-2025): [titan/research/framework/crisis_stress.py](../../titan/research/framework/crisis_stress.py)
+- **CUSUM drift monitor** (live PnL structural breaks): [titan/research/framework/drift_cusum.py](../../titan/research/framework/drift_cusum.py)
+- **Risk-contribution reporting** added to [titan/risk/portfolio_risk_manager.py](../../titan/risk/portfolio_risk_manager.py)`.get_summary()`
+
 ## Related reading
 
+- **Project status:** [directives/README V2.0.md](../../directives/README%20V2.0.md) (updated 2026-05-16 with V3.7 state)
 - **Methodology + decision matrix:** [directives/Methodology Audit & Unified Framework 2026-05-14.md](../../directives/Methodology%20Audit%20%26%20Unified%20Framework%202026-05-14.md)
-- **Lessons catalogue (L01–L57):** [directives/V3.6 Lessons Catalogue.md](../../directives/V3.6%20Lessons%20Catalogue.md)
+- **Lessons catalogue (L01–L67):** [directives/V3.6 Lessons Catalogue.md](../../directives/V3.6%20Lessons%20Catalogue.md)
+- **Retirement Registry** (one-line lessons per retired strategy): [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md)
 - **V1-era re-audit roster:** [directives/V1-era Re-audit Sweep Roster 2026-05-16.md](../../directives/V1-era%20Re-audit%20Sweep%20Roster%202026-05-16.md)
 - **L52 hybrid framework (sweep + plateau + audit):** [memory/reference_hybrid_workflow.md](../../) (auto-loaded into Claude memory)
 - **Strategy backlog (38 candidate ideas):** [directives/Strategy Backlog 2026-05-14.md](../../directives/Strategy%20Backlog%202026-05-14.md)
 - **Docker paper-trading runbook:** [directives/Docker Paper Trading Guide.md](../../directives/Docker%20Paper%20Trading%20Guide.md)
-- **Audit dashboard:** [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) (21 audits, regenerated by [scripts/build_audit_dashboard.py](../../scripts/build_audit_dashboard.py))
+- **Audit dashboard:** [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) (31 audits, regenerated by [scripts/build_audit_dashboard.py](../../scripts/build_audit_dashboard.py))
+- **V3.7 reframe memo** (answers "is B&H really lower risk?"): [.tmp/reports/joint_evaluation/framework_evolution_v37.md](../../.tmp/reports/joint_evaluation/framework_evolution_v37.md)
