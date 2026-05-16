@@ -98,18 +98,26 @@ For each strategy below:
      +0.35 on 8y CAT-H1). Strongest signal-layer result of any V1-era
      strategy audited so far. **Caveat**: single-instrument result;
      needs multi-ticker robustness test alongside L52 audit (~2h).
-     **UPDATE 2026-05-16: Wave B FULL AUDIT COMPLETE. Verdict: RETIRED**
-     on THREE independent failures: (1) **L60 (NEW)** annualisation
-     mismatch — triage used FX 6048 bars/year, US equity RTH H1 is 1764;
-     +1.60 deflates 1.85x to +0.87. (2) L52 H1 plateau-fail at OOS spread
-     54.76% (just over 50% gate) + L46 CI bottleneck (canonical CI_lo
-     −0.517). (3) **L61 (NEW)** single-instrument selection bias —
-     10-ticker panel median Sharpe = −0.018 (canonical) / −0.030 (live);
-     **CAT at 100th percentile in every config**. The V1-era "turtle
-     edge" is CAT-specific outlier survival, not a generalisable signal.
-     Live config was never Docker-deployed; no allocator action needed.
+     **UPDATE 2026-05-16: Wave B FULL AUDIT + SECOND-LOOK REVIEW
+     COMPLETE. Final verdict: CONDITIONAL_WATCHPOINT (CAT-scoped).**
+     Initial V3.6 strict-gate verdict was RETIRE based on three issues:
+     (1) **L60 (NEW)** annualisation mismatch — triage used FX 6048
+     bars/year, US equity RTH H1 is 1764; +1.60 deflates 1.85x to +0.87.
+     (2) L52 H1 plateau-fail (OOS spread 54.76%) + L46 CI bottleneck
+     (canonical CI_lo −0.517). (3) **L61 (NEW)** single-instrument
+     selection bias — 10-ticker panel median Sharpe negative; CAT at
+     100th percentile.
+     Second-look review (user-prompted, 2026-05-16) applied **L64 (NEW)
+     CONDITIONAL_WATCHPOINT relaxed-framework** path: L21 PASS, OOS
+     Sharpe positive on EVERY cell (canonical +0.43, peak +0.69, live
+     +0.44), cell-ranking stable IS→OOS (IS-max == OOS-max at C3_peak
+     entry=45/exit=20), C3_peak CI_lo −0.26 within relaxed −0.50 band,
+     costs not bottleneck. L61 scope-locked to CAT (explicit "no
+     generalisation" clause).
+     **Revised verdict: CONDITIONAL_WATCHPOINT scoped to CAT, deploy
+     C3_peak (entry=45, exit=20) at 25-30% size, re-audit 2026-11-16.**
      See `.tmp/reports/turtle_reaudit/findings.md` +
-     `directives/Pre-Reg turtle Re-audit 2026-05-16.md`.
+     `.tmp/reports/second_look_review/summary.md` + L64 in catalogue.
    - `fx_carry` — **MARGINAL** (signal-layer Sharpe +0.26, CI95
      straddles 0). Defer — needs full macro-overlay machinery.
    - 5 deferred with priorities: `ic_mtf` flagged **P2-HIGH** due to

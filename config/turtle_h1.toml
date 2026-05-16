@@ -1,22 +1,49 @@
 #
-# *** V3.6 RETIRED (Wave B full audit, 2026-05-16) ***
-# Full L52 hybrid audit on 7.9y CAT-H1 + 10-ticker robustness panel found
-# THREE independent failure modes:
-#   1. L60 (NEW): Triage Sharpe +1.60 used FX 24/7 annualisation (6048
-#      bars/year). US equity RTH H1 is 1764. Deflated 1.85x: +1.60 -> +0.87.
-#   2. L52 H1 + L46 CI bottleneck: WFO OOS plateau spread 54.76% (vs 50%
-#      gate); all CI95_lo < 0 (canonical -0.517, live -0.547).
-#   3. L61 (NEW): Single-instrument selection bias. Canonical on 10 other
-#      US large-caps: panel median Sharpe = -0.018 (canonical), -0.030
-#      (live). CAT at 100th percentile in every config. The +0.86 on CAT
-#      is outlier survival, not a generalisable trend signal.
-# Pre-reg: `directives/Pre-Reg turtle Re-audit 2026-05-16.md`.
-# Findings: `.tmp/reports/turtle_reaudit/findings.md`.
-# Live impact: NONE (never Docker-deployed). RETIRED in registry.
+# *** V3.6 CONDITIONAL_WATCHPOINT (Wave B audit + second-look review,
+#     2026-05-16) ***
 #
-# V1 claim (UNRELIABLE): pyramiding 1.5x leverage trend ~+1.0 Sharpe on CAT.
-# V3.6 reality: WFO OOS Sharpe +0.43 (canonical) with CI_lo -0.52;
-# multi-ticker panel median -0.018 (NEGATIVE). Selection bias confirmed.
+# REVISED VERDICT under L64 relaxed framework (user challenge: "are we
+# retiring strategies that actually work?"). Original V3.6 strict-gate
+# verdict was RETIRE based on L46 (CI_lo < 0) + L61 (CAT 100th percentile
+# vs 10-ticker panel). Second-look review found:
+#   - L21 causality smoke: PASS (no look-ahead bug)
+#   - L60: triage +1.60 deflates 1.85x -> +0.87 on full series (CAT)
+#   - WFO OOS Sharpe positive across ALL cells (+0.43 canonical, +0.69
+#     peak C3 at entry=45/exit=20, +0.44 live)
+#   - C3_peak (45, 20) is BOTH IS-max AND OOS-max -- stable parameter
+#     structure (not knife-edge)
+#   - CI_lo -0.26 for C3 is the tightest of any cell, within the
+#     relaxed -0.50 band
+#   - Costs not the bottleneck (gross-net = 0.02)
+#   - L61: panel median Sharpe negative across 10 other US large-caps
+#     (CAT at 100th percentile) -- the edge is CAT-specific, NOT
+#     generalisable
+#
+# Verdict revised RETIRE -> CONDITIONAL_WATCHPOINT scoped to CAT only.
+#
+# CONDITIONAL_WATCHPOINT DEPLOYMENT INSTRUCTIONS:
+#   - Canonical: C3_peak (entry_period=45, exit_period=20) -- NOT the
+#     live (45, 30). The L52-disciplined plateau choice (20, 30) is
+#     also valid but lower-Sharpe.
+#   - Instrument: CAT ONLY. Explicit scope-lock. Do NOT extend to other
+#     tickers without per-instrument audit (L61).
+#   - Initial weight: 25-30% of full DEPLOY allocation.
+#   - Re-audit: 2026-11-16 (6 months) on fresh sanctuary.
+#   - Live monitoring: check parity vs research monthly.
+#
+# Live-config recommendation: UPDATE entry_period=45 -> 45 (no change),
+# exit_period=30 -> 20 (peak cell). Or keep (45, 30) for backward
+# compatibility (live has +0.44 Sharpe with CI_lo -0.55 -- borderline).
+#
+# Pre-reg: `directives/Pre-Reg turtle Re-audit 2026-05-16.md`.
+# Audit findings: `.tmp/reports/turtle_reaudit/findings.md`.
+# Second-look review: `.tmp/reports/second_look_review/summary.md`.
+# Lessons: L60 (annualisation) + L61 (single-instrument bias) + L64
+# (NEW: CONDITIONAL_WATCHPOINT path for borderline V1-era audits).
+#
+# V1 claim: pyramiding 1.5x leverage trend on CAT. Plausible at small
+# size given V3.6 evidence; just requires explicit scope-lock + small
+# initial weight + 6-month re-audit cycle.
 
 [system2]
 description    = "Trend-following S2 — 45-bar entry / 30-bar exit"
