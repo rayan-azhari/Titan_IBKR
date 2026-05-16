@@ -274,6 +274,58 @@ def max_drawdown(returns: pd.Series | np.ndarray | Iterable[float]) -> float:
     return float(dd.min())
 
 
+def cvar(
+    returns: pd.Series | np.ndarray | Iterable[float],
+    *,
+    alpha: float = 0.05,
+) -> float:
+    """Conditional Value-at-Risk (Expected Shortfall) at level alpha.
+
+    CVaR_alpha is the average of returns in the worst `alpha` fraction of
+    outcomes. More robust than VaR for tail risk: captures the average
+    severity of bad days, not just the threshold.
+
+    Convention: returns negative numbers for typical loss distributions
+    (since losses live in the left tail). `cvar([0.01]*100 + [-0.10])`
+    with alpha=0.05 averages the 5 worst outcomes.
+
+    Reference: Rockafellar & Uryasev 2000, "Optimization of CVaR".
+    """
+    s = _as_series(returns).dropna()
+    n = len(s)
+    if n < 20:
+        return 0.0
+    k = max(1, int(np.ceil(n * alpha)))
+    worst = np.sort(s.to_numpy())[:k]
+    return float(worst.mean())
+
+
+def cdar(
+    returns: pd.Series | np.ndarray | Iterable[float],
+    *,
+    alpha: float = 0.05,
+) -> float:
+    """Conditional Drawdown-at-Risk at level alpha.
+
+    Average of the worst `alpha` fraction of drawdown depths along the
+    equity curve. Captures "many medium drawdowns" patterns that MaxDD
+    misses by reporting only a single point.
+
+    Reference: Chekhlov, Uryasev & Zabarankin 2005, "Drawdown Measure
+    in Portfolio Optimization".
+    """
+    s = _as_series(returns).fillna(0.0)
+    n = len(s)
+    if n < 20:
+        return 0.0
+    eq = pd.concat([pd.Series([1.0]), (1.0 + s).cumprod().reset_index(drop=True)])
+    dd = (eq - eq.cummax()) / eq.cummax()
+    dd_arr = dd.to_numpy()
+    k = max(1, int(np.ceil(n * alpha)))
+    worst = np.sort(dd_arr)[:k]  # most-negative values first
+    return float(worst.mean())
+
+
 def calmar(
     returns: pd.Series | np.ndarray | Iterable[float],
     periods_per_year: int,
