@@ -1,3 +1,23 @@
+#
+# *** V3.6 RETIRED (Wave B full audit, 2026-05-16) ***
+# Full L52 hybrid audit on 7.9y CAT-H1 + 10-ticker robustness panel found
+# THREE independent failure modes:
+#   1. L60 (NEW): Triage Sharpe +1.60 used FX 24/7 annualisation (6048
+#      bars/year). US equity RTH H1 is 1764. Deflated 1.85x: +1.60 -> +0.87.
+#   2. L52 H1 + L46 CI bottleneck: WFO OOS plateau spread 54.76% (vs 50%
+#      gate); all CI95_lo < 0 (canonical -0.517, live -0.547).
+#   3. L61 (NEW): Single-instrument selection bias. Canonical on 10 other
+#      US large-caps: panel median Sharpe = -0.018 (canonical), -0.030
+#      (live). CAT at 100th percentile in every config. The +0.86 on CAT
+#      is outlier survival, not a generalisable trend signal.
+# Pre-reg: `directives/Pre-Reg turtle Re-audit 2026-05-16.md`.
+# Findings: `.tmp/reports/turtle_reaudit/findings.md`.
+# Live impact: NONE (never Docker-deployed). RETIRED in registry.
+#
+# V1 claim (UNRELIABLE): pyramiding 1.5x leverage trend ~+1.0 Sharpe on CAT.
+# V3.6 reality: WFO OOS Sharpe +0.43 (canonical) with CI_lo -0.52;
+# multi-ticker panel median -0.018 (NEGATIVE). Selection bias confirmed.
+
 [system2]
 description    = "Trend-following S2 — 45-bar entry / 30-bar exit"
 instrument_id  = "CAT.USD"

@@ -98,6 +98,18 @@ For each strategy below:
      +0.35 on 8y CAT-H1). Strongest signal-layer result of any V1-era
      strategy audited so far. **Caveat**: single-instrument result;
      needs multi-ticker robustness test alongside L52 audit (~2h).
+     **UPDATE 2026-05-16: Wave B FULL AUDIT COMPLETE. Verdict: RETIRED**
+     on THREE independent failures: (1) **L60 (NEW)** annualisation
+     mismatch — triage used FX 6048 bars/year, US equity RTH H1 is 1764;
+     +1.60 deflates 1.85x to +0.87. (2) L52 H1 plateau-fail at OOS spread
+     54.76% (just over 50% gate) + L46 CI bottleneck (canonical CI_lo
+     −0.517). (3) **L61 (NEW)** single-instrument selection bias —
+     10-ticker panel median Sharpe = −0.018 (canonical) / −0.030 (live);
+     **CAT at 100th percentile in every config**. The V1-era "turtle
+     edge" is CAT-specific outlier survival, not a generalisable signal.
+     Live config was never Docker-deployed; no allocator action needed.
+     See `.tmp/reports/turtle_reaudit/findings.md` +
+     `directives/Pre-Reg turtle Re-audit 2026-05-16.md`.
    - `fx_carry` — **MARGINAL** (signal-layer Sharpe +0.26, CI95
      straddles 0). Defer — needs full macro-overlay machinery.
    - 5 deferred with priorities: `ic_mtf` flagged **P2-HIGH** due to
