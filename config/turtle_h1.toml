@@ -27,7 +27,7 @@
 #     also valid but lower-Sharpe.
 #   - Instrument: CAT ONLY. Explicit scope-lock. Do NOT extend to other
 #     tickers without per-instrument audit (L61).
-#   - Initial weight: 25-30% of full DEPLOY allocation.
+#   - Initial weight: 20% (revised down from 25-30% per joint L65, see below).
 #     L65 RUIN ASSESSMENT (2026-05-16) at 30% weight on 8y CAT-H1
 #     returns, 2000 MC paths, 1-year horizon, 105-bar blocks:
 #       P(portfolio kill-switch trip)   = 0.00% (gate: < 1%)  PASS
@@ -35,7 +35,15 @@
 #       95th-pct MaxDD at 30% weight    = -7.98% (gate: > -25%) PASS
 #       median recovery from median DD  = 287 H1 bars (~8 wks)
 #     Sensitivity: gate fails at 50% weight (P_kill 2.8%); safe up to ~40%.
-#     Joint MC with GEM J5 PENDING (required before live cutover).
+#     JOINT L65 (GEM J5 + turtle, 2026-05-16, daily-resampled, 2000 paths,
+#     1981-bar overlap window 2018-2026):
+#       GEM 70% + turtle 30%: P_kill=1.10% FAIL (margin 0.10 above gate)
+#       GEM 70% + turtle 20%: P_kill=0.30% PASS (3.3x margin under gate)
+#                95th-pct combined MaxDD = -9.74%
+#       Recommended deployment: GEM 70% + turtle 20% (revised from 30%).
+#     Empirical daily-return correlation rho = +0.10 (small but persistent
+#     in risk-off regimes).
+#     Findings: `.tmp/reports/joint_ruin_gem_turtle/findings.md`.
 #   - Re-audit: 2026-11-16 (6 months) on fresh sanctuary.
 #   - Live monitoring: check parity vs research monthly.
 #
