@@ -81,6 +81,22 @@ For each strategy below:
 7. `orb`, `gld_confluence`, `gold_macro`, `fx_carry`, `pairs`,
    `ic_equity_daily`, `ic_mtf`, `turtle`.
 
+   **Wave B triage 2026-05-16** (3 of 8 strategies, L58 signal-layer only;
+   see `.tmp/reports/wave_b_triage/findings.md`):
+   - `gold_macro` — **POSSIBLY VIABLE** (signal-layer Sharpe +0.69, CI_lo
+     +0.26 on 21y GLD-D). Highest-priority Wave B full L52 audit
+     (~1.5h). Likely PROMOTE under full V3.6.
+   - `turtle` — **POSSIBLY VIABLE** (signal-layer Sharpe +1.60, CI_lo
+     +0.35 on 8y CAT-H1). Strongest signal-layer result of any V1-era
+     strategy audited so far. **Caveat**: single-instrument result;
+     needs multi-ticker robustness test alongside L52 audit (~2h).
+   - `fx_carry` — **MARGINAL** (signal-layer Sharpe +0.26, CI95
+     straddles 0). Defer — needs full macro-overlay machinery.
+   - 5 deferred with priorities: `ic_mtf` flagged **P2-HIGH** due to
+     L21 risk pattern like `mtf` (causality-smoke FIRST per L21);
+     `gld_confluence` likely RETIRE per L58 + L56 pattern; `orb`,
+     `pairs`, `ic_equity_daily` need dedicated audit harnesses.
+
 **Wave C (P3 / blocked):**
 
 9. `ml` — fix the L19 same-bar look-ahead bug before any sweep is
