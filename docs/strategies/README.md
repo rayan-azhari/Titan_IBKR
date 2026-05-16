@@ -40,9 +40,9 @@ See [directives/V1-era Re-audit Sweep Roster 2026-05-16.md](../../directives/V1-
 | Strategy | Class | Priority | Audit wave | Status |
 |---|---|---|---|---|
 | `mr_audjpy` | INTRADAY_MICROSTRUCTURE (H1 MR) | P1 | Wave A.3 | **SIGNAL-LAYER FAIL 2026-05-16 (L58)** — V1 +0.53 claim not reproducible at signal layer (IS -0.30); de-allocation recommended |
-| `samir_stack` | CROSS_ASSET_MOMENTUM + overlay | P1 | Wave A.4 | pending V3.6 audit (partial May-2026 audit exists) |
-| `mtf` | INTRADAY_MICROSTRUCTURE | P1 | Wave A.5 | pending V3.6 audit (L21 causality check FIRST) |
-| `mr_fx` | INTRADAY_MICROSTRUCTURE (M5 VWAP) | P1 | Wave A.6 | pending V3.6 audit |
+| `samir_stack` | CROSS_ASSET_MOMENTUM + overlay | P1 | Wave A.4 | **PHASE 5 VALIDATED + 3 V3.6 GAPS 2026-05-16 (L59)** — keep live; ~25-min Phase 6c gap-closure scheduled |
+| `mtf` | INTRADAY_MICROSTRUCTURE | P1 | Wave A.5 | **RETIRE 2026-05-16 (L21 bug confirmed)** — V1 +1.94 claim is look-ahead-derived; V3.6-correct sweep gives -0.08 |
+| `mr_fx` | INTRADAY_MICROSTRUCTURE (M5 VWAP) | P1 | Wave A.6 | **RETIRE 2026-05-16 (verified)** — every cell negative on 15y M5 EUR/USD even with corrected mechanics; L58 magnitude-vs-direction caveat refined |
 | `orb` | INTRADAY_BREAKOUT | P2 | Wave B | pending V3.6 audit |
 | `gld_confluence` | INTRADAY_MICROSTRUCTURE | P2 | Wave B | pending V3.6 audit |
 | `gold_macro` | DAILY_TREND | P2 | Wave B | pending V3.6 audit |
