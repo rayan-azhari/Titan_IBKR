@@ -86,6 +86,14 @@ For each strategy below:
    - `gold_macro` — **POSSIBLY VIABLE** (signal-layer Sharpe +0.69, CI_lo
      +0.26 on 21y GLD-D). Highest-priority Wave B full L52 audit
      (~1.5h). Likely PROMOTE under full V3.6.
+     **UPDATE 2026-05-16: Wave B FULL AUDIT COMPLETE. Verdict: RETIRED**
+     (L52 H1 plateau-fail OOS spread 71% + L46 CI_lo bottleneck — every
+     cell CI95_lo < 0 including canonical (100, 60) at -0.253). Composite
+     ADDS value over bare-SMA but absolute CI gate fails. Live config
+     was never Docker-deployed; no allocator action needed. Refines L58:
+     triage POSSIBLY VIABLE ≠ full-audit DEPLOY. See
+     `.tmp/reports/gold_macro_reaudit/findings.md` +
+     `directives/Pre-Reg gold_macro Re-audit 2026-05-16.md`.
    - `turtle` — **POSSIBLY VIABLE** (signal-layer Sharpe +1.60, CI_lo
      +0.35 on 8y CAT-H1). Strongest signal-layer result of any V1-era
      strategy audited so far. **Caveat**: single-instrument result;

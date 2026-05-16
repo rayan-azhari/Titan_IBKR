@@ -1,7 +1,28 @@
 # ----------------------------------------------------------
 # gold_macro_gld.toml -- Gold Macro Cross-Asset Strategy
 # ----------------------------------------------------------
-# Research validated: OOS Sharpe +0.603, OOS/IS ratio 2.06
+#
+# *** V3.6 RETIRED (Wave B full audit, 2026-05-16) ***
+# Full L52 hybrid audit on 16.3y GLD+TIP+TLT+DXY daily (47 WFO folds)
+# found:
+#   1. L52 H1 plateau-fail: IS plateau spread 28.8% blows out to 71.25%
+#      on stitched OOS (vs 50% gate). Live (200, 20) IS Sharpe +0.133
+#      vs plateau-best (150, 60) IS Sharpe +0.497.
+#   2. L46 CI bottleneck: every cell has CI95_lo < 0 on stitched OOS,
+#      including the L52-recommended canonical (100, 60) at CI_lo=-0.253.
+#      Live (200, 20) CI_lo = -0.526.
+#   3. Composite ADDS value over bare-SMA (H5 SUPPORTED) but absolute
+#      level is still negative-CI even for the composite.
+#   4. V1 claim of OOS Sharpe +0.603 is NOT reproducible under V3.6 WFO.
+# L21 causality smoke: PASS (no look-ahead). The signal is real but
+# weak and unstable on 14y of DXY-constrained data; CI gate doesn't pass.
+# Pre-reg: `directives/Pre-Reg gold_macro Re-audit 2026-05-16.md`.
+# Findings: `.tmp/reports/gold_macro_reaudit/findings.md`.
+# Live impact: NONE (gold_macro was never Docker-deployed). Strategy
+# remains in titan/strategies/ as code+config but RETIRED in registry.
+#
+# V1 claim (UNRELIABLE): OOS Sharpe +0.603, OOS/IS ratio 2.06.
+# V3.6 reality: stitched-OOS Sharpe +0.057 (live config), CI_lo -0.526.
 
 [strategy]
 instrument_id     = "GLD.ARCA"

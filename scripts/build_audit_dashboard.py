@@ -759,6 +759,32 @@ REGISTRY: list[AuditEntry] = [
         new_lessons=["L58 (refined: magnitude-vs-direction caveat)"],
         notes="Wave A.6 + V2 verification. Original sweep used rolling VWAP + single-tier + 1.5 bps cost (class defaults); V2 uses session-anchored VWAP + 4-tier grid + 0.5 bps (live-matched). Both verdicts converge to RETIRE despite 2-3 Sharpe magnitude gap. L58 refined: signal-layer DIRECTION is robust; MAGNITUDE depends on cost-realism + mechanic-realism. Run verification when L58 result is ambiguous (any positive cell).",
     ),
+    # ── gold_macro Wave B full audit (RETIRE, L52 H1 + L46) ───────────────
+    AuditEntry(
+        audit_id="gold_macro_v36_audit_2026_05",
+        name="gold_macro V1-era V3.6 re-audit (Wave B full audit — RETIRE)",
+        strategy_class="CROSS_ASSET_MOMENTUM",
+        pre_reg="directives/Pre-Reg gold_macro Re-audit 2026-05-16.md",
+        result_log=".tmp/reports/gold_macro_reaudit/findings.md",
+        run_date="2026-05-16",
+        universe_size=4,
+        universe_kind="ETF cross-asset (GLD+TIP+TLT+DXY daily)",
+        window_start="2010-01-04",
+        window_end="2026-04-02",
+        n_bars=4085,
+        n_wfo_folds=47,
+        canonical_cell="C1_canonical (slow_ma=100, real_rate_window=60)",
+        canonical_sharpe=0.283,
+        canonical_ci_lo=-0.253,
+        plateau_spread_pct=71.25,
+        plateau_gate_passed=False,
+        matrix_verdict="RETIRE (L52 H1 plateau-fail + L46 CI_lo bottleneck)",
+        ci_gate_verdict="FAIL — every cell CI95_lo < 0 (best plateau cell P_east at -0.195)",
+        binding_constraint="L52 H1 plateau-fail (IS spread 28.8% blows out to OOS spread 71.25% vs 50% gate) + L46 CI_lo (no cell can clear CI > 0 on 47 rolling folds). Pass 2 correctly skipped. Composite ADDS value over bare-SMA (H5 SUPPORTED) but absolute CI gate still fails. Costs are NOT the bottleneck (H6 SUPPORTED).",
+        deployment_status="RETIRED. Live config was never Docker-deployed; no allocator action needed. Strategy remains in titan/strategies/ as code+config but RETIRED in registry.",
+        new_lessons=["L58 (refined again: triage POSSIBLY VIABLE ≠ full-audit DEPLOY)"],
+        notes="Wave B full audit — first P2 strategy to clear Wave B triage gate. L21 causality smoke PASS. Composite signal (real-rate + dollar weakness) adds value over bare-SMA but absolute economics insufficient under V3.6 WFO. Wave B triage's POSSIBLY VIABLE based on bare-SMA-on-21y-no-WFO (+0.69 Sharpe, CI_lo +0.26) does NOT survive proper WFO+composite testing (+0.28 Sharpe canonical, CI_lo -0.25). Refines L58: triage signal-layer DIRECTION can be correct (signal does exist) while still failing V3.6 deployment gate.",
+    ),
 ]
 
 
