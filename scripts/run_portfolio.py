@@ -906,29 +906,46 @@ STRATEGY_REGISTRY["ewmac_regime_i1v2_c6"] = {
     "module": "titan.strategies.ewmac_regime.strategy",
     "config_cls": "EwmacRegimeConfig",
     "strategy_cls": "EwmacRegimeStrategy",
-    # Shadow-only weight: 5% of full portfolio. Per L65/L67 2026-05-17:
-    # I1v2 C6_smoothed is a risk reducer (joint ruin 1.05% -> 0.80% at 5% weight)
-    # not a return enhancer (Sharpe diluted from +0.93 to +0.83). Live wiring
-    # deferred to next session; shadow port scaffold in titan/strategies/ewmac_regime/.
-    "weight": 0.0,  # NON-LIVE (shadow only; weight=0 means allocator ignores).
-    "trading": False,  # explicit non-trading flag.
+    # SHADOW mode: trading=False excludes from auto-equity allocation; the
+    # strategy still subscribes to bars and computes signals + synthetic PnL
+    # via StrategyEquityTracker. shadow_mode=True in config_kwargs is the
+    # secondary guard against any accidental order submission. Per L65/L67
+    # 2026-05-17: I1v2 C6_smoothed reduces joint ruin (1.05% -> 0.80% at 5%
+    # weight) but dilutes Sharpe; deployment case is risk reduction not
+    # alpha generation. 12mo paper validation before any live cutover.
+    "trading": False,
+    "weight": 0.0,
     "contracts": [
-        # 11-symbol B2e universe; IBKR contract specs deferred until live wiring.
-        # ES/NQ/CL/BZ/HG/SI/GC/ZN/ZB/6E/6J -- futures.
+        # 11-symbol B2e universe -- IBKR continuous front-month futures.
+        # CME Globex:
+        IBContract(secType="CONTFUT", symbol="ES", exchange="CME", currency="USD"),
+        IBContract(secType="CONTFUT", symbol="NQ", exchange="CME", currency="USD"),
+        IBContract(secType="CONTFUT", symbol="6E", exchange="CME", currency="USD"),
+        IBContract(secType="CONTFUT", symbol="6J", exchange="CME", currency="USD"),
+        # NYMEX (energies):
+        IBContract(secType="CONTFUT", symbol="CL", exchange="NYMEX", currency="USD"),
+        IBContract(secType="CONTFUT", symbol="BZ", exchange="NYMEX", currency="USD"),
+        # COMEX (metals):
+        IBContract(secType="CONTFUT", symbol="HG", exchange="COMEX", currency="USD"),
+        IBContract(secType="CONTFUT", symbol="SI", exchange="COMEX", currency="USD"),
+        IBContract(secType="CONTFUT", symbol="GC", exchange="COMEX", currency="USD"),
+        # CBOT (Treasuries):
+        IBContract(secType="CONTFUT", symbol="ZN", exchange="CBOT", currency="USD"),
+        IBContract(secType="CONTFUT", symbol="ZB", exchange="CBOT", currency="USD"),
     ],
     "config_kwargs": {
         "shadow_mode": True,  # never submits orders
         "initial_equity": 1_500.0,  # 5% of 30k baseline
         "base_ccy": "USD",
-        # Audit-verdict C6_smoothed cell config.
-        "speeds_str": "16/64,32/128,64/256",
-        "fdm": 1.35,
-        "hmm_n_states": 2,
-        "hmm_state_id": "mean_return",
-        "hmm_smoothing_days": 5,
-        "hmm_random_seed": 42,
-        "hmm_min_state_bars": 60,
+        # Audit-verdict C6_smoothed cell config (loaded from frozen artefact
+        # at on_start; these knobs match for clarity but are not authoritative).
+        "frozen_artefact_path": "data/i1v2_c6_frozen.json",
         "regime_panel_path": "data/i1_regime_panel.parquet",
+        # NautilusTrader instrument-id strings -- matches IBContract specs above.
+        "instrument_ids_str": (
+            "ES.CME,NQ.CME,CL.NYMEX,BZ.NYMEX,HG.COMEX,SI.COMEX,GC.COMEX,"
+            "ZN.CBOT,ZB.CBOT,6E.CME,6J.CME"
+        ),
     },
 }
 
@@ -1049,6 +1066,10 @@ STRATEGY_SETS = {
     "v37_live": [
         "gem_j5_canonical",
         "turtle_cat_c3peak",
+        # SHADOW (trading=False): added 2026-05-17 to start the 12mo paper
+        # validation period required by L65/L67 (DEPLOY-eligible but
+        # risk-reducer; live capital decision deferred to 2026-11-17 re-audit).
+        "ewmac_regime_i1v2_c6",
     ],
 }
 

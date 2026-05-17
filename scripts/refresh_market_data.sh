@@ -98,6 +98,19 @@ case "$SOURCE" in
         ;;
 esac
 
+# ── Step 3: I1 regime panel (VIX/SPY/HYG/IEF/TLT/DXY + rebuild parquet) ──
+# Added 2026-05-17 for the ewmac_regime_i1v2_c6 shadow strategy. Refreshes
+# the underlyings via yfinance and rebuilds data/i1_regime_panel.parquet.
+echo ""
+echo "[3/3] Refreshing I1 regime panel (VIX/SPY/HYG/IEF/TLT/DXY)..."
+if uv run python scripts/refresh_i1_regime_panel.py; then
+    echo "  ✓ i1_regime_panel refresh complete"
+else
+    echo "  ✗ i1_regime_panel refresh FAILED" >&2
+    ANY_FAILED=1
+    FAILED_STEPS+=("i1_regime_panel")
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────────
 END_EPOCH=$(date +%s)
 ELAPSED=$((END_EPOCH - START_EPOCH))
@@ -117,7 +130,10 @@ if command -v stat >/dev/null 2>&1; then
     echo "Parquet timestamps (UTC):"
     for f in data/AUD_JPY_H1.parquet data/AUD_JPY_D.parquet \
              data/CSPX_D.parquet data/VUSD_D.parquet data/EIMI_D.parquet \
-             data/IHYU_D.parquet data/IHYG_D.parquet; do
+             data/IHYU_D.parquet data/IHYG_D.parquet \
+             data/VIX_D.parquet data/SPY_D.parquet data/HYG_D.parquet \
+             data/IEF_D.parquet data/TLT_D.parquet data/DXY_D.parquet \
+             data/i1_regime_panel.parquet; do
         if [ -f "$f" ]; then
             mtime=$(stat -c "%y" "$f" 2>/dev/null || stat -f "%Sm" "$f" 2>/dev/null)
             size=$(du -h "$f" 2>/dev/null | cut -f1)
