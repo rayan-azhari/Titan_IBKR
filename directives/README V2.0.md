@@ -44,15 +44,19 @@ The framework went through three structural revisions in 2026-05-16, driven by u
 
 ---
 
-## Audit dashboard (2026-05-16)
+## Audit dashboard (2026-05-17)
 
 | Status | Count | Strategies |
 |---|---:|---|
-| **LIVE** | 1 | gem (J5 P_hl60_vt05) |
-| **CONDITIONAL_WATCHPOINT** | 1 | turtle (CAT C3_peak @ 20%) |
+| **LIVE** | 2 | gem J5 (80%) + turtle CAT C3_peak (20%) — multi-strategy node since 2026-05-17 23:49 UTC |
+| **CONDITIONAL_WATCHPOINT** | (incl. above) | turtle CAT scoped, fx_carry long-yen scope, ic_equity_daily top-3 (deferred from current portfolio per L67 expansion) |
 | **SHADOW** | 1 | bond_gold (V3.6 PROMOTED params; live runs V1 config) |
-| **RETIRED** | 18 | mr_audjpy, mr_fx, mtf, ic_mtf, gold_macro, gld_confluence, 6 etf_trend variants, B2/B4/D2/E1/G4/A1/I1 from V3 era |
-| **Total audits run** | 31 | See `.tmp/dashboard/dashboard.html` |
+| **RETIRED** | 21 | mr_audjpy, mr_fx, mtf, ic_mtf, gold_macro, gld_confluence, 6 etf_trend variants, **B2 family (B2/B2b/B2c/B2d/I1v1/B2e)**, **B5 intraday momentum**, B4/D2/E1/G4/A1 from V3 era |
+| **Total audits run** | 37 | See `.tmp/dashboard/dashboard.html` |
+
+**Latest closures (2026-05-17):**
+- **B5** intraday momentum on SPY/QQQ/IWM 2y IBKR M5 → panel median Sharpe −0.87, 0% positive, signal REVERSED.
+- **B2e** Carver EWMAC on IBKR cross-asset 11-symbol 9y → L52 sweep no plateau, L52-override audit confirmed no cell promotes. Failure mode = **noise fragility (L69)**, NOT regime artifact — partially falsifies B2b's L48 universal-decline claim. Motivates I1 HMM v2.
 
 ---
 
@@ -155,9 +159,9 @@ PYTHONIOENCODING=utf-8 uv run python research/portfolio/joint_evaluation.py
 5. ✅ G4 Overnight session — RETIRED (L33)
 6. 🟡 J1+J2 HRP/NCO allocator — **partially done**: ERC built (V3.7 batch 1); HRP/NCO pending until 10+ strategies
 7. ✅ A1 Residual momentum — RETIRED (L36/L37)
-8. ⏳ I1 HMM regime + XGBoost — needs multi-feature HMM (L51 lesson)
-9. ⏳ B5 Intraday momentum (Gao-Han-Li-Zhou) — 2d, US equity data ready
-10. ⏳ B2 Carver EWMAC ensemble — **biggest build**; needs futures basket data
+8. 🟡 I1 HMM regime + XGBoost — **v1 RETIRED (L51 no-op)**; v2 motivated by L69 (B2e noise fragility). Regime panel ready: `data/i1_regime_panel.parquet` (7 features × 3945d, built 2026-05-17). Awaits implementation.
+9. ✅ B5 Intraday momentum (Gao-Han-Li-Zhou) — **RETIRED 2026-05-17** on SPY/QQQ/IWM 2y M5 (panel median SR −0.87, signal reversed)
+10. ✅ B2 Carver EWMAC ensemble — **family CLOSED 2026-05-17** through B2/B2b/B2c/B2d/B2e chain. B2e on IBKR cross-asset 9y data: L52 sweep no plateau; L52-override audit no cell promotes; **noise fragility (L69)**, not regime artifact
 
 ### V1-era re-audit roster (`V1-era Re-audit Sweep Roster 2026-05-16.md`)
 

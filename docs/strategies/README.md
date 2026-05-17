@@ -7,7 +7,7 @@ configured, deployed, and supervised. Research artefacts (pre-reg
 directives, audit logs, dashboards) live elsewhere — see the linked
 sources in each guide.
 
-## Portfolio status (2026-05-16, V3.7 framework)
+## Portfolio status (2026-05-17, V3.7 framework)
 
 | Metric (portfolio GEM 70% + turtle 20%) | Value | 60/40 SPY/IEF | Verdict |
 |---|---:|---:|:---:|
@@ -77,17 +77,18 @@ These strategies' V1-era pre-reg directives still exist in [directives/](../../d
 
 ## Retired strategies (V3.6/V3.7 RETIRED verdict)
 
-The following strategies were audited and RETIRED. **31 audits / 18 retired** as of 2026-05-16. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry and [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md) for one-line "next time" lessons per retired strategy.
+The following strategies were audited and RETIRED. **37 audits / 21 retired** as of 2026-05-17. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry and [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md) for one-line "next time" lessons per retired strategy.
 
 V3-era (data-infrastructure or methodology):
 
-- B2 Carver EWMAC universal-trend (on cross-asset 21y data) — RETIRED via B2 → B2b → B2c → B2d → I1 chain (L48-L51).
+- B2 Carver EWMAC family — RETIRED via B2 → B2b → B2c → B2d → I1 (HMM v1) → **B2e** chain (L46/L48/L49/L51/**L69**). B2e (2026-05-17, IBKR cross-asset 11sym 9y, clean Databento futures) refined the closure: failure mode is **noise fragility**, not regime artifact — B2b L48 universal-decline thesis partially falsified. Signal positive every cell; sanctuary +1.0 to +1.3; what fails is worst-case noise robustness at retail costs.
+- B5 intraday momentum (Gao-Han-Li-Zhou) — **RETIRED 2026-05-17** on SPY/QQQ/IWM 2y IBKR M5. Panel median Sharpe **−0.87**, 0% positive, signal REVERSED in 2024-26 (matches academic post-2014 decay).
 - B4 TSMOM (3 variants) — RETIRED on L43 plateau-fragility.
 - D2 commodity carry — RETIRED on data-quality + signal absence (L34/L35).
 - E1/E1b VRP — RETIRED (L29).
 - G4 overnight session decomposition — RETIRED (cost drag + L33).
 - A1 residual momentum — RETIRED on survivorship bias (L36/L37).
-- I1 HMM regime gate — RETIRED on L51 (HMM-on-daily-returns degenerates to no-op).
+- I1 HMM regime gate (v1, raw-returns features) — RETIRED on L51. **A v2 with richer regime features is now motivated by L69** (B2e noise fragility opens the per-asset regime-gating rescue path).
 
 V1-era live strategies retired under V3.6/V3.7:
 
@@ -128,7 +129,7 @@ The V3.6 framework was extended to V3.7 on 2026-05-16 with portfolio-level evalu
 
 - **Project status:** [directives/README V2.0.md](../../directives/README%20V2.0.md) (updated 2026-05-16 with V3.7 state)
 - **Methodology + decision matrix:** [directives/Methodology Audit & Unified Framework 2026-05-14.md](../../directives/Methodology%20Audit%20%26%20Unified%20Framework%202026-05-14.md)
-- **Lessons catalogue (L01–L67):** [directives/V3.6 Lessons Catalogue.md](../../directives/V3.6%20Lessons%20Catalogue.md)
+- **Lessons catalogue (L01–L69):** [directives/V3.6 Lessons Catalogue.md](../../directives/V3.6%20Lessons%20Catalogue.md)
 - **Retirement Registry** (one-line lessons per retired strategy): [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md)
 - **V1-era re-audit roster:** [directives/V1-era Re-audit Sweep Roster 2026-05-16.md](../../directives/V1-era%20Re-audit%20Sweep%20Roster%202026-05-16.md)
 - **L52 hybrid framework (sweep + plateau + audit):** [memory/reference_hybrid_workflow.md](../../) (auto-loaded into Claude memory)
