@@ -28,10 +28,10 @@ A menu of novel strategy ideas not yet implemented in `titan/strategies/`. Every
 | # | Strategy | Class | Source | Effort | Caveats |
 |---|---|---|---|---|---|
 | B1 | **GEM dual-momentum macro sleeve** | CROSS_ASSET_MOMENTUM | Antonacci | 1d | **DOABLE NOW** — SPY/EFA/IEF parquets present |
-| B2 | Carver multi-speed EWMAC futures ensemble | DAILY_TREND | Carver, *Systematic Trend Following* | 5d | **DATA**: needs ~8 futures + continuous-contract roll |
+| B2 | Carver multi-speed EWMAC futures ensemble | DAILY_TREND | Carver, *Systematic Trend Following* | 5d | DATA READY 2026-05-17 (ES/NQ/CL/BZ/HG/SI/GC/ZN/ZB/6E/6J continuous M1+M2 daily; ICE+CME from Databento). Audit pending. |
 | B3 | Donchian + pyramiding Turtle-plus | DAILY_TREND | Turtle.md + Strategic Pyramiding doc | 3d | **DATA**: same as B2 |
 | B4 | TSMOM 10-15 futures | DAILY_TREND | Moskowitz-Ooi-Pedersen 2012 | 4d | ✅ DONE (RETIRED on 24-commodity yfinance; sign of L37 confirmed but magnitude +0.16 << MOP's +1.0). Plateau FAIL. See L39, L40 — fixable with multi-asset universe + IBKR per-contract roll-aware data. |
-| B5 | **[NEW] Intraday momentum** (first-30m → last-30m) | INTRADAY_BREAKOUT | Gao, Han, Li & Zhou, *JFE* 2018 | 2d | Decayed post-2014; SPY M5 data needed |
+| B5 | **[NEW] Intraday momentum** (first-30m → last-30m) | INTRADAY_BREAKOUT | Gao, Han, Li & Zhou, *JFE* 2018 | 2d | ✅ DONE 2026-05-17 (RETIRED: SPY/QQQ/IWM panel median Sharpe -0.87, 0% positive on 2y IBKR M5, signal REVERSED — matches academic post-2014 decay) |
 | B6 | **[NEW] Momentum-crash hedge** (Daniel-Moskowitz dynamic scaling) | META_LABELING | Daniel & Moskowitz, *JFE* 2016 | 2d | Specification-sensitive |
 
 ## C. Mean reversion / pairs
