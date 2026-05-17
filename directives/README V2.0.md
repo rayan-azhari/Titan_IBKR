@@ -1,8 +1,9 @@
 # Titan V2.0 / V3.7 — current state
 
-**Date:** 2026-05-16 (last updated)
+**Date:** 2026-05-17 (last updated)
 **Repo:** `https://github.com/rayan-azhari/Titan_IBKR.git` (branch: `v2-main`)
 **Framework version:** V3.7 (portfolio-level evaluation + risk-of-ruin)
+**Live deployment:** V3.7 multi-strategy (GEM J5 + turtle CAT) on paper, since 2026-05-17 23:49 UTC
 
 ---
 
@@ -22,9 +23,10 @@ The framework went through three structural revisions in 2026-05-16, driven by u
 
 | Strategy | Status | Weight | Last audit | Verdict |
 |---|---|---:|---|---|
-| `gem` (J5 P_hl60_vt05) | **LIVE on paper** (Docker) | 70% | 2026-05-16 | DEPLOY (5/5 axes + L65 + portfolio matrix 6/10 vs 60/40) |
-| `turtle` (C3_peak on CAT) | **CONDITIONAL_WATCHPOINT** (deploy pending) | 20% | 2026-05-16 | CAT-scoped; joint L65 PASS at 20%; portfolio matrix 7/10 |
-| (cash buffer) | | 10% | | |
+| `gem` (J5 P_hl60_vt05) | **LIVE on paper** (Docker, multi-strategy node) | 80% | 2026-05-16 | DEPLOY (5/5 axes + L65 + portfolio matrix 6/10 vs 60/40) |
+| `turtle` (C3_peak on CAT) | **LIVE on paper** (Docker, multi-strategy node, since 2026-05-17 23:49 UTC) | 20% | 2026-05-16 | CAT-scoped; joint L65 PASS; portfolio matrix 7/10 |
+
+**Container**: `titan-portfolio` (Docker) running `scripts/watchdog_portfolio.py --strategies v37_live` since 2026-05-17 23:49 UTC. Both strategies in same NautilusTrader TradingNode sharing IB connection + PortfolioRiskManager + PortfolioAllocator. GEM positions REHYDRATED cleanly (CSPX qty=27 + IDTM qty=45). Account balance preserved (29,846.16 GBP unchanged across cutover). See `directives/V3.7 Phase 2 Cutover Log 2026-05-17.md`.
 
 **Portfolio-vs-60/40 SPY/IEF (7.9y overlap):**
 - Sharpe: **+0.95** vs +0.74 ✓

@@ -43,9 +43,10 @@ slug, e.g. `gem-dual-momentum.md`. Each guide must contain at least:
 
 ## V3.6-confirmed strategies
 
-| Slug | Status | Class | Production cell | V3.6 verdict | Guide |
+| Slug | Status | Class | Production cell | V3.6/V3.7 verdict | Guide |
 |---|---|---|---|---|---|
-| `gem-dual-momentum` | **LIVE on paper** | CROSS_ASSET_MOMENTUM | **J5 `P_hl60_vt05`** (since 2026-05-16) | DEPLOY (5/5 axes) | [gem-dual-momentum.md](gem-dual-momentum.md) |
+| `gem-dual-momentum` | **LIVE on paper** (multi-strategy node since 2026-05-17 23:49 UTC) | CROSS_ASSET_MOMENTUM | **J5 `P_hl60_vt05`** (since 2026-05-16) | DEPLOY (5/5 axes + L65 + portfolio matrix 6/10 vs 60/40) | [gem-dual-momentum.md](gem-dual-momentum.md) |
+| `turtle-donchian` | **LIVE on paper (CAT-scoped)** (multi-strategy node since 2026-05-17 23:49 UTC) | DAILY_TREND | **C3_peak `(entry=45, exit=20)` on CAT** | L64 CONDITIONAL_WATCHPOINT + L65 joint PASS + portfolio matrix 7/10 vs 60/40 | (TODO: write guide) |
 | `bond-gold` | LIVE on paper (V1-era config); V3.6 Phase 1 shadow config exists | CROSS_ASSET_MOMENTUM | V3.6 PROMOTED `(lookback=120, threshold=0.50)` — sidecar config ready | CONDITIONAL_WATCHPOINT (4/5 axes) | [bond-gold.md](bond-gold.md) |
 | `etf-trend` | Family of 7 variants with **mixed verdicts** | DAILY_TREND | TQQQ `(150, 5)` PROMOTED CONDITIONAL; SPY RETIRED; 5 unleveraged variants HIGH-conf bulk-retire (DBC/GLD spot-checks confirmed 2026-05-16) | Mixed (see family doc) | [etf-trend.md](etf-trend.md) |
 
@@ -62,7 +63,7 @@ See [directives/V1-era Re-audit Sweep Roster 2026-05-16.md](../../directives/V1-
 | `mtf` | INTRADAY_MICROSTRUCTURE | P1 | Wave A.5 | **RETIRE 2026-05-16 (L21 bug confirmed)** — V1 +1.94 claim is look-ahead-derived; V3.6-correct sweep gives -0.08 |
 | `mr_fx` | INTRADAY_MICROSTRUCTURE (M5 VWAP) | P1 | Wave A.6 | **RETIRE 2026-05-16 (verified)** — every cell negative on 15y M5 EUR/USD even with corrected mechanics; L58 magnitude-vs-direction caveat refined |
 | `gold_macro` | DAILY_TREND | P2 | Wave B | **RETIRED 2026-05-16 (full audit)** — L52 H1 plateau-fail OOS 71% spread + L46 CI_lo bottleneck (every cell CI95_lo < 0). Composite ADDS value over bare-SMA but absolute CI gate fails. Never Docker-deployed; no allocator action |
-| `turtle` | DAILY_TREND | P2 | Wave B | **CONDITIONAL_WATCHPOINT (CAT-scoped) 2026-05-16** — Initial RETIRE revised under L64 (NEW) relaxed framework. L21 PASS, OOS Sharpe positive every cell (peak +0.69, canonical +0.43), cell-stable IS→OOS, L60 + L61 acknowledged. Deploy C3_peak (entry=45, exit=20) on CAT only at 25-30% size; re-audit 2026-11-16 |
+| `turtle` | DAILY_TREND | P2 | Wave B | **LIVE on paper since 2026-05-17 23:49 UTC** (multi-strategy node alongside GEM). C3_peak (entry=45, exit=20) on CAT only @ 20% weight. L64 CONDITIONAL_WATCHPOINT + L65 joint PASS + portfolio matrix 7/10 vs 60/40. Re-audit 2026-11-16 |
 | `fx_carry` | CARRY | P2 | Wave B | **CONDITIONAL_WATCHPOINT (long-yen-carry scope) 2026-05-16** — L21 PASS, live AUD/JPY SR +0.29. L61 panel: only AUD/JPY + USD/JPY positive (panel median −0.007); pattern is coherent. Carry-premium adds ~+0.6 SR pure-price audit ignores. Deploy ~10% AUD/JPY only, joint L65 + L67 needed before live |
 | `ic_mtf` | INTRADAY_MICROSTRUCTURE | P2-HIGH | Wave B | **RETIRED 2026-05-16 (full audit)** — L21 look-ahead bug CONFIRMED (same pattern as mtf, ~4-5x more severe). V1 +7-8 Sharpe reproducible at V1-style methodology; vanishes under causal higher-TF alignment. New lessons L62 (refined) + L63 added |
 | `gld_confluence` | INTRADAY_MICROSTRUCTURE | P2-low | Wave B | **RETIRED 2026-05-16 (formalises April-2026 deprecation)** — MaxDD ~−35% at every threshold (hard DD gate) + prior 34% positive WFO folds (L43 cell-instability). Sharpe +0.22 too small to override. Already removed from STRATEGY_REGISTRY |

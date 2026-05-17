@@ -116,6 +116,10 @@ For each strategy below:
      generalisation" clause).
      **Revised verdict: CONDITIONAL_WATCHPOINT scoped to CAT, deploy
      C3_peak (entry=45, exit=20) at 25-30% size, re-audit 2026-11-16.**
+     **UPDATE 2026-05-17: LIVE on paper since 23:49 UTC** in multi-strategy
+     node alongside GEM J5 (Phase 2 cutover). Weight: 20%. Positions: flat
+     start (waiting for first CAT Donchian breakout). Joint L65 + portfolio
+     L67 all gates passed. See `directives/V3.7 Phase 2 Cutover Log 2026-05-17.md`.
      See `.tmp/reports/turtle_reaudit/findings.md` +
      `.tmp/reports/second_look_review/summary.md` + L64 in catalogue.
    - `fx_carry` — **MARGINAL** (signal-layer Sharpe +0.26, CI95
