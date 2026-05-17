@@ -1,37 +1,40 @@
-"""I1 v2 -- Multi-feature HMM regime gate + EWMAC ensemble.
+"""I1 v2 -- Multi-feature HMM regime gate + EWMAC ensemble (LIVE/SHADOW).
 
 Live wrapper for the audit-verdict cell C6_smoothed
 (`research/ewmac/run_i1v2_audit.py`, pre-reg in
 `directives/Pre-Reg I1v2 Multi-Feature HMM Regime Gate 2026-05-17.md`).
 
-V3.6 / V3.7 discipline applied:
-  * Per-strategy equity tracker (StrategyEquityTracker)
-  * Halt persistence via portfolio_risk_manager
-  * Causal forward-filtered state path (no Viterbi, L50)
-  * IS-frozen HMM + per-asset trend-friendly mapping
-  * Equity-level kill-switch + per-bar PRM update
+Design (V3.6 / V3.7 compliant):
 
-NOT YET LIVE-WIRED INTO v37_live STRATEGY_SET.
-This file is a scaffold for the shadow port. To take live:
-  1. Wire IBKR contract subscriptions for all 11 trading instruments +
-     6 regime-feature instruments (VIX/TLT/IEF/HYG/SPY/DXY).
-  2. Implement live regime panel reconstruction (currently loads static
-     `data/i1_regime_panel.parquet` and reads the last-known row).
-  3. Implement multi-instrument bar synchronisation (similar to GEM
-     SPY/EFA/IEF sync).
-  4. Add a parity test in tests/test_ewmac_regime_parity.py that
-     compares a single-day signal from this Strategy vs the same day's
-     output from `gated_ewmac_returns()` in run_i1v2_audit.py.
-  5. Add to STRATEGY_REGISTRY in scripts/run_portfolio.py.
-  6. Add to v37_live STRATEGY_SETS in scripts/run_portfolio.py after
-     parity passes + L65/L67 are re-run with refreshed window.
+  1. **IS-FROZEN ARTEFACT**: HMM model params + per-asset trend-friendly
+     mapping are loaded from `data/i1v2_c6_frozen.json` at on_start. They
+     are NEVER refit at runtime. To re-freeze, run
+     `scripts/freeze_i1v2_c6_artefact.py` (typically after the 12mo
+     re-audit at 2026-11-17).
+  2. **CAUSAL FORWARD-FILTER**: the global regime state at each bar is
+     decoded using the frozen HMM + the cumulative panel through that
+     bar. No Viterbi (L50).
+  3. **PANEL UPDATE**: the regime panel parquet is refreshed daily by a
+     cron job (see `scripts/cusum_daemon.py` pattern); this strategy
+     reads the latest snapshot at on_start and on each bar.
+  4. **PER-ASSET GATE**: at each bar, each asset's EWMAC forecast is
+     multiplied by gate=1 if global_state in trend_friendly_per_asset,
+     else 0. Mapping is IS-frozen.
+  5. **PARITY**: validated by `tests/test_ewmac_regime_parity.py` --
+     frozen-runtime gate == audit-time gate bit-for-bit on the visible
+     window.
 
-Per L65 + L67 (2026-05-17):
-  - L65 single PASS at 5/10/15%
-  - L65 joint PASS at >=5% I1v2 (rescues current 80/20 mix which marginally
-    fails on 2019-2025 window)
-  - L67 unchanged at PORTFOLIO_CONDITIONAL
-  - VERDICT: risk reducer, not return enhancer. Shadow port at 5% weight.
+Shadow mode (config.shadow_mode=True, default):
+  - Computes EWMAC forecasts + gates + would-be portfolio weights every
+    bar but submits NO orders.
+  - Synthetic positions tracked internally; paper PnL flows through
+    `StrategyEquityTracker.on_position_closed` calls aggregated daily.
+  - 12mo paper validation period before any live capital allocation.
+
+V3.6 contract applied:
+  - StrategyEquityTracker for per-strategy equity (not whole-account NLV)
+  - Halt persistence via portfolio_risk_manager
+  - report_equity_and_check on every bar
 """
 
 from __future__ import annotations
@@ -52,22 +55,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class EwmacRegimeConfig(StrategyConfig):
-    """I1 v2 EWMAC + regime gate configuration.
+    """I1 v2 EWMAC + regime gate configuration -- maps to C6_smoothed."""
 
-    Cells map to C6_smoothed of the I1v2 pre-reg (2-state HMM, mean-return
-    state ID, 5-day median smoothing, seed=42). Default values mirror the
-    audit-verdict cell.
-    """
-
-    # Universe -- 11 instruments, comma-separated NautilusTrader instrument IDs.
-    # Order matches the audit's UNIVERSE dict in run_b2e_audit.py.
     instrument_ids_str: str = (
         "ES.CME,NQ.CME,CL.NYMEX,BZ.IFEU,HG.COMEX,SI.COMEX,GC.COMEX,"
         "ZN.CBOT,ZB.CBOT,6E.CME,6J.CME"
     )
     bar_type_template: str = "{}-1-DAY-LAST-EXTERNAL"
 
-    # EWMAC ensemble (B2 C1 baseline = 16/64, 32/128, 64/256, FDM=1.35).
+    # EWMAC ensemble (C1 baseline = 16/64, 32/128, 64/256, FDM=1.35).
     speeds_str: str = "16/64,32/128,64/256"
     fdm: float = 1.35
     forecast_cap: float = 20.0
@@ -76,42 +72,42 @@ class EwmacRegimeConfig(StrategyConfig):
     target_vol_annual: float = 0.10
     target_forecast: float = 10.0
 
-    # Regime gate (C6_smoothed config).
-    hmm_n_states: int = 2
-    hmm_state_id: str = "mean_return"
-    hmm_smoothing_days: int = 5
-    hmm_random_seed: int = 42
-    hmm_min_state_bars: int = 60
-
-    # Regime panel: load from this parquet at on_start, then live-extend.
-    # The panel must contain columns matching the audit (vix_z, term_spread_z,
-    # credit_spread_z, rv20_z, spy_above_sma200, dxy_z, dd_velocity_21).
-    regime_panel_path: str = "data/i1_regime_panel.parquet"
-
     # Costs (CME futures).
     cost_bps_per_turnover: float = 1.0
     cost_fixed_usd_per_fill: float = 1.0
     notional_usd_per_leg: float = 30_000.0
 
+    # Artefact + panel paths.
+    frozen_artefact_path: str = "data/i1v2_c6_frozen.json"
+    regime_panel_path: str = "data/i1_regime_panel.parquet"
+
+    # Rolling history cap (per-instrument). 600 ~= 2.4y daily, enough for
+    # the slowest EWMAC speed (slow_hl=256).
+    history_bars: int = 600
+
     # PRM / equity.
-    initial_equity: float = 1_500.0  # 5% of 30k baseline -- see L65/L67 2026-05-17
+    initial_equity: float = 1_500.0  # 5% of 30k baseline per L65/L67
     base_ccy: str = "USD"
 
-    # Rebalance frequency (Carver default = monthly target).
-    rebalance: str = "monthly"
-
-    # Shadow mode: when True, the strategy computes signals + paper PnL
-    # but does NOT submit orders. Defaults to True for first deployment.
+    # Shadow mode: True = no orders submitted, paper PnL only.
     shadow_mode: bool = True
 
 
 class EwmacRegimeStrategy(Strategy):
-    """I1 v2 EWMAC + regime gate live strategy.
+    """I1 v2 EWMAC + regime gate, shadow-mode default.
 
-    SCAFFOLD ONLY -- live signal computation + order submission deferred to
-    a follow-up session. This class establishes the V3.6 contract pattern
-    (PRM registration, equity tracker, kill-switch) but does not yet wire
-    EWMAC forecasts to live orders.
+    Submits no orders by default. Each bar:
+      1. Append close to per-instrument deque.
+      2. Re-read regime panel parquet (cron updates it).
+      3. Compute global state path via frozen HMM (causal forward).
+      4. Compute EWMAC forecast per instrument from the deques.
+      5. Apply per-asset gate.
+      6. Forecast -> notional position; record day-over-day PnL via
+         the equity tracker.
+
+    Bar synchronisation: signals are computed when ALL 11 instruments
+    have produced a bar with the SAME (or strictly greater) date. The
+    last fully-synced date drives the signal.
     """
 
     def __init__(self, config: EwmacRegimeConfig) -> None:
@@ -126,33 +122,38 @@ class EwmacRegimeStrategy(Strategy):
             BarType.from_str(config.bar_type_template.format(str(iid)))
             for iid in self._instrument_ids
         ]
-        # Speeds tuple parsed from "16/64,32/128,64/256".
-        self._speeds: list[tuple[int, int]] = []
-        for cell in config.speeds_str.split(","):
-            parts = cell.strip().split("/")
-            self._speeds.append((int(parts[0]), int(parts[1])))
-
-        # Per-instrument rolling close arrays. Keyed by instrument symbol.
-        self._closes: dict[str, list[float]] = {
-            str(iid): [] for iid in self._instrument_ids
+        # Speeds parsed once.
+        self._speeds: list[tuple[int, int]] = [
+            (int(p.strip().split("/")[0]), int(p.strip().split("/")[1]))
+            for p in config.speeds_str.split(",")
+            if p.strip()
+        ]
+        # Per-symbol rolling close (timestamp -> close). Symbol = bar_type.instrument_id string.
+        self._closes: dict[str, dict[pd.Timestamp, float]] = {
+            str(iid): {} for iid in self._instrument_ids
         }
-        # Regime panel (static at on_start; live extension deferred to next iteration).
-        self._regime_panel: pd.DataFrame | None = None
-        # IS-frozen HMM and per-asset trend-friendly mapping.
-        self._hmm_model: object | None = None
-        self._trend_friendly_per_asset: dict[str, set[int]] = {}
-        # Last computed state (causally forward-filtered).
-        self._last_state: int | None = None
-        self._last_signal_date: pd.Timestamp | None = None
-        # Per-instrument synthetic position (for shadow-mode paper PnL).
-        self._synthetic_positions: dict[str, float] = {
+        # Frozen artefact (loaded at on_start).
+        self._frozen = None
+        # Regime panel snapshot (last-read).
+        self._panel: pd.DataFrame | None = None
+        # Per-symbol synthetic position (notional USD, signed).
+        self._synthetic_notional: dict[str, float] = {
             str(iid): 0.0 for iid in self._instrument_ids
         }
+        # Last close per symbol used for MTM.
+        self._last_close: dict[str, float] = {
+            str(iid): float("nan") for iid in self._instrument_ids
+        }
+        # Last fully-synced date (signals computed up to this date).
+        self._last_signal_date: pd.Timestamp | None = None
 
         self._halted = False
         self._prm_id: str = ""
         self._equity_tracker: StrategyEquityTracker | None = None
 
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
     def on_start(self) -> None:
         self._prm_id = "ewmac_regime_i1v2_c6"
         portfolio_risk_manager.register_strategy(self._prm_id, self._cfg.initial_equity)
@@ -162,97 +163,243 @@ class EwmacRegimeStrategy(Strategy):
             base_ccy=self._cfg.base_ccy,
         )
 
-        # Subscribe to bars for all 11 instruments.
+        # Load frozen IS artefact (model + per-asset trend-friendly map).
+        from titan.strategies.ewmac_regime.frozen_artefact import load_frozen_artefact
+        artefact_fp = PROJECT_ROOT / self._cfg.frozen_artefact_path
+        try:
+            self._frozen = load_frozen_artefact(artefact_fp)
+            self.log.info(
+                f"loaded frozen artefact: is_end={self._frozen.is_end_date}, "
+                f"freeze_ts={self._frozen.freeze_ts[:19]}"
+            )
+        except FileNotFoundError as e:
+            self.log.error(f"{e}; strategy will not produce signals.")
+            self._frozen = None
+
+        # Load panel snapshot.
+        self._reload_panel()
+
+        # Subscribe to bars for all instruments.
         for bt in self._bar_types:
             self.subscribe_bars(bt)
 
-        # Load static regime panel + fit IS-frozen HMM.
-        panel_fp = PROJECT_ROOT / self._cfg.regime_panel_path
-        if not panel_fp.exists():
-            self.log.error(
-                f"Regime panel not found at {panel_fp}. Strategy will run "
-                f"WITHOUT gate (degenerates to bare B2e). Re-run "
-                f"research/exploration/build_i1_regime_panel.py."
-            )
-            self._regime_panel = None
-        else:
-            self._regime_panel = pd.read_parquet(panel_fp).sort_index().dropna(how="any")
-            self._fit_is_frozen_hmm()
-
         self.log.info(
             f"EwmacRegimeStrategy started | shadow_mode={self._cfg.shadow_mode} "
-            f"| n_instruments={len(self._instrument_ids)} "
-            f"| panel_rows={0 if self._regime_panel is None else len(self._regime_panel)}"
+            f"| {len(self._instrument_ids)} instruments | "
+            f"panel_rows={0 if self._panel is None else len(self._panel)}"
         )
 
-    def _fit_is_frozen_hmm(self) -> None:
-        """Fit the multi-feature HMM on the loaded panel.
-
-        Uses `research.regime.hmm_gate_v2.fit_panel_hmm` so live behaviour
-        matches the audit harness bar-for-bar.
-        """
-        from research.regime.hmm_gate_v2 import (
-            PanelHMMGateConfig,
-            fit_panel_hmm,
-        )
-
-        if self._regime_panel is None:
+    def _reload_panel(self) -> None:
+        panel_fp = PROJECT_ROOT / self._cfg.regime_panel_path
+        if not panel_fp.exists():
+            self.log.warning(f"Regime panel missing at {panel_fp}; gate disabled.")
+            self._panel = None
             return
+        try:
+            df = pd.read_parquet(panel_fp).sort_index().dropna(how="any")
+            df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
+            self._panel = df
+        except Exception as e:  # noqa: BLE001
+            self.log.warning(f"panel reload failed: {e}")
 
-        gate_cfg = PanelHMMGateConfig(
-            n_states=self._cfg.hmm_n_states,
-            state_id=self._cfg.hmm_state_id,  # type: ignore[arg-type]
-            min_state_bars=self._cfg.hmm_min_state_bars,
-            smoothing_days=self._cfg.hmm_smoothing_days,
-            random_seed=self._cfg.hmm_random_seed,
-        )
-        self._hmm_model = fit_panel_hmm(self._regime_panel, cfg=gate_cfg)
-        if self._hmm_model is None:
-            self.log.warning("HMM fit failed; gate disabled.")
-            return
-
-        # Trend-friendly mapping requires per-asset close history. For the
-        # scaffold, we defer this until enough live bars accumulate; assume
-        # all states are trend-friendly initially (degrades to no-gate).
-        # The live wiring should LOAD the audit-computed mapping from a
-        # frozen artefact (e.g., data/i1v2_trend_friendly.json) so the
-        # live mapping matches the audit's IS-frozen choice bit-for-bit.
-        self.log.info(
-            f"IS-frozen HMM fitted: n_states={self._cfg.hmm_n_states}, "
-            f"transmat diag={[round(float(d), 3) for d in np.diag(self._hmm_model.transmat_)]}"
-        )
-
+    # ------------------------------------------------------------------
+    # Bar handling
+    # ------------------------------------------------------------------
     def on_bar(self, bar: Bar) -> None:
         if self._halted:
             return
-        # Per-bar equity report; kill-switch flattens locally if PRM trips.
+        # Per-bar equity report (V3.6 contract). Kill-switch flattens.
         _, halted = report_equity_and_check(
             self, self._prm_id, bar, tracker=self._equity_tracker
         )
         if halted:
             self._halted = True
-            self.log.warning("PRM kill-switch tripped -- shadow strategy paused.")
+            self._flatten_shadow()
             return
 
-        # Append close to rolling array.
         sym = str(bar.bar_type.instrument_id)
-        self._closes[sym].append(float(bar.close))
-        # Cap memory at 600 bars (~2.4y daily).
-        if len(self._closes[sym]) > 600:
-            self._closes[sym] = self._closes[sym][-600:]
+        ts = pd.Timestamp(bar.close_time_as_datetime()).tz_localize(None).normalize()
+        close = float(bar.close)
 
-        # Live signal computation deferred to next iteration:
-        # 1. Reconstruct today's regime panel row from VIX/TLT/IEF/HYG/SPY/DXY
-        #    bar subscriptions.
-        # 2. Causally forward-filter to get today's global state.
-        # 3. Compute per-instrument EWMAC forecast from rolling close arrays.
-        # 4. Apply trend-friendly gate per asset.
-        # 5. Convert forecast to notional + sign -> synthetic position.
-        # 6. Shadow PnL = synthetic position * (close[t] - close[t-1]) / close[t-1].
+        # Mark-to-market against prior close (synthetic PnL bookkeeping).
+        prior_close = self._last_close.get(sym)
+        if prior_close is not None and np.isfinite(prior_close) and prior_close > 0:
+            ret = close / prior_close - 1.0
+            notional = self._synthetic_notional.get(sym, 0.0)
+            mtm_pnl = notional * ret
+            if abs(mtm_pnl) > 1e-9 and self._equity_tracker is not None:
+                self._equity_tracker.on_position_closed(mtm_pnl, fx_to_base=1.0)
+        self._last_close[sym] = close
+
+        # Append to history (deduplicate by date, last-write-wins).
+        self._closes[sym][ts] = close
+        if len(self._closes[sym]) > self._cfg.history_bars:
+            # Drop oldest.
+            oldest = min(self._closes[sym])
+            self._closes[sym].pop(oldest, None)
+
+        # Bar sync: compute signal when all instruments have a bar at ts
+        # (or strictly past it) AND ts is later than last signal date.
+        if self._all_synced_at(ts) and ts != self._last_signal_date:
+            self._last_signal_date = ts
+            self._compute_and_apply_signals(ts)
+
+    def _all_synced_at(self, ts: pd.Timestamp) -> bool:
+        for sym in [str(iid) for iid in self._instrument_ids]:
+            if ts not in self._closes.get(sym, {}):
+                return False
+        return True
+
+    # ------------------------------------------------------------------
+    # Signal computation
+    # ------------------------------------------------------------------
+    def _compute_and_apply_signals(self, asof: pd.Timestamp) -> None:
+        if self._frozen is None or self._panel is None:
+            return
+        from research.regime.hmm_gate_v2 import compute_panel_regime_gate_frozen
+
+        # Build closes_df aligned to the frozen artefact's asset order.
+        asset_order = self._frozen.asset_order
+        closes_df = self._build_closes_df(asset_order, asof)
+        if closes_df is None or len(closes_df) < max(s[1] for s in self._speeds) + 5:
+            return
+
+        # Compute gate using frozen artefact.
+        gate = compute_panel_regime_gate_frozen(
+            closes_df, self._panel,
+            hmm_model=self._frozen.hmm_model,
+            trend_friendly_per_asset=self._frozen.trend_friendly_per_asset,
+            smoothing_days=self._frozen.smoothing_days,
+            require_broad_trend=self._frozen.require_broad_trend,
+        )
+        if gate.empty:
+            return
+
+        # Compute EWMAC forecast per asset on the closes_df.
+        forecast = self._compute_ewmac_forecast(closes_df)
+        if forecast is None or forecast.empty:
+            return
+
+        # Apply gate -> gated forecast (latest bar only).
+        latest_forecast = forecast.iloc[-1]
+        latest_gate = gate.iloc[-1]
+        gated_forecast = latest_forecast * latest_gate
+
+        # Convert forecast to target notional per asset.
+        # target = forecast/target_forecast * (target_vol/instrument_vol_ann) * equity
+        equity = (
+            self._equity_tracker.current_equity()
+            if self._equity_tracker else self._cfg.initial_equity
+        )
+        inst_vol_ann = self._instrument_vol(closes_df).iloc[-1]
+        # Avoid div-by-zero.
+        inst_vol_ann = inst_vol_ann.replace(0, np.nan)
+        sized = (
+            gated_forecast / float(self._cfg.target_forecast)
+        ) * (self._cfg.target_vol_annual / inst_vol_ann) * equity
+        sized = sized.fillna(0.0)
+        # Cap leverage per asset at 2x equity (sanity).
+        sized = sized.clip(-2 * equity, 2 * equity)
+
+        # Update synthetic positions.
+        for asset in asset_order:
+            sym = self._sym_for_asset(asset)
+            if sym is None:
+                continue
+            self._synthetic_notional[sym] = float(sized.get(asset, 0.0))
+
+        # Log a one-liner per signal.
+        on_assets = [a for a in asset_order if abs(float(sized.get(a, 0.0))) > 1e-6]
+        self.log.info(
+            f"[shadow] {asof.date()} | equity={equity:.0f} {self._cfg.base_ccy} | "
+            f"gated_on={len(on_assets)}/{len(asset_order)} | "
+            f"max_notional={float(sized.abs().max()):.0f}"
+        )
+
+    def _build_closes_df(
+        self, asset_order: list[str], asof: pd.Timestamp,
+    ) -> pd.DataFrame | None:
+        """Stack per-symbol close history into a DataFrame indexed by date.
+
+        Returns None if any asset has too little history.
+        """
+        cols = {}
+        for asset in asset_order:
+            sym = self._sym_for_asset(asset)
+            if sym is None:
+                return None
+            hist = self._closes.get(sym, {})
+            if not hist:
+                return None
+            s = pd.Series(hist).sort_index()
+            s = s[s.index <= asof]
+            cols[asset] = s
+        df = pd.DataFrame(cols).sort_index()
+        df = df.dropna(how="any").ffill(limit=5)
+        return df if len(df) > 0 else None
+
+    def _sym_for_asset(self, asset: str) -> str | None:
+        """Map a frozen-artefact asset code (e.g. 'ES') to an instrument-id
+        string (e.g. 'ES.CME').
+        """
+        for iid in self._instrument_ids:
+            if str(iid).split(".")[0] == asset:
+                return str(iid)
+        return None
+
+    def _compute_ewmac_forecast(self, closes_df: pd.DataFrame) -> pd.DataFrame | None:
+        """Carver multi-speed EWMAC ensemble.
+
+        Per-asset, per-bar:
+          forecast = clip( FDM * mean_s( clip( scalar_s * ewmac_s / vol, +-cap ) ), +-cap )
+        """
+        try:
+            from research.ewmac.ewmac_strategy import (
+                CARVER_FDM,
+                CARVER_FORECAST_SCALARS,
+                _vol_normalised_ewmac,
+            )
+        except Exception as e:  # noqa: BLE001
+            self.log.warning(f"ewmac import failed: {e}")
+            return None
+        speeds = self._speeds
+        cap = self._cfg.forecast_cap
+        fdm = self._cfg.fdm if self._cfg.fdm > 0 else CARVER_FDM.get(len(speeds), 1.0)
+        per_asset_combined = pd.DataFrame(
+            index=closes_df.index, columns=closes_df.columns, dtype=float,
+        )
+        for asset in closes_df.columns:
+            close = closes_df[asset]
+            accum = []
+            for s in speeds:
+                norm = _vol_normalised_ewmac(
+                    close, s[0], s[1], vol_lookback=self._cfg.vol_lookback_days,
+                )
+                scalar = float(CARVER_FORECAST_SCALARS.get(s, 1.0))
+                scaled = (norm * scalar).clip(-cap, cap)
+                accum.append(scaled)
+            mean_forecast = pd.concat(accum, axis=1).mean(axis=1)
+            per_asset_combined[asset] = (mean_forecast * fdm).clip(-cap, cap)
+        return per_asset_combined.fillna(0.0)
+
+    def _instrument_vol(self, closes_df: pd.DataFrame) -> pd.DataFrame:
+        log_ret = np.log(closes_df / closes_df.shift(1))
+        return log_ret.rolling(
+            self._cfg.instrument_vol_lookback_days,
+            min_periods=self._cfg.instrument_vol_lookback_days,
+        ).std(ddof=1) * np.sqrt(252)
+
+    # ------------------------------------------------------------------
+    # Shadow / live order interface
+    # ------------------------------------------------------------------
+    def _flatten_shadow(self) -> None:
+        """Zero out synthetic positions on kill-switch."""
+        self._synthetic_notional = {k: 0.0 for k in self._synthetic_notional}
+        self.log.warning("[shadow] flattened synthetic positions (kill-switch).")
 
     def on_position_closed(self, event) -> None:  # noqa: ANN001
-        # Shadow mode submits no orders, so this should never fire. Keep
-        # the hook for parity with the live-wiring contract.
+        # Shadow mode submits no orders -> this should never fire on a
+        # real trade. Kept for forward-compatibility with live wiring.
         if self._equity_tracker is None:
             return
         try:

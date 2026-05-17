@@ -181,3 +181,53 @@ def compute_panel_regime_gate(
         in_friendly = np.isin(state_path_on_close, list(friendly))
         out[col] = (in_friendly & broad_ok).astype(float)
     return out
+
+
+def compute_panel_regime_gate_frozen(
+    closes_df: pd.DataFrame,
+    regime_panel: pd.DataFrame,
+    *,
+    hmm_model: hmm.GaussianHMM,
+    trend_friendly_per_asset: dict[str, set[int]],
+    smoothing_days: int = 0,
+    require_broad_trend: bool = False,
+) -> pd.DataFrame:
+    """Live variant: apply a PRE-FROZEN HMM + per-asset mapping.
+
+    Use this for live/shadow execution after `scripts/freeze_i1v2_c6_artefact.py`
+    has produced the artefact. The HMM is NOT refit; the trend-friendly
+    state sets are NOT recomputed. Both come from the artefact. Only the
+    causal forward state path and the per-bar gate application happen at
+    runtime.
+
+    This ensures live = research bar-for-bar on the same data: there is
+    no in-memory model that drifts between sessions.
+    """
+    out = pd.DataFrame(1.0, index=closes_df.index, columns=closes_df.columns, dtype=float)
+    panel_aligned = regime_panel.reindex(closes_df.index).ffill(limit=5).dropna(how="any")
+    if len(panel_aligned) == 0:
+        return out
+    full_obs = panel_aligned.to_numpy()
+    state_path_full = _causal_forward_states(hmm_model, full_obs)
+    if smoothing_days > 1:
+        state_path_full = _smooth(state_path_full, smoothing_days)
+    state_path_full_series = pd.Series(state_path_full, index=panel_aligned.index)
+
+    log_ret = np.log(closes_df / closes_df.shift(1))
+    if require_broad_trend:
+        broad_mean_log_ret = log_ret.mean(axis=1).fillna(0.0)
+        broad_trend = broad_mean_log_ret.ewm(halflife=64, adjust=False).mean()
+        broad_ok = (broad_trend > 0).reindex(closes_df.index).fillna(False).to_numpy()
+    else:
+        broad_ok = np.ones(len(closes_df), dtype=bool)
+    state_path_on_close = (
+        state_path_full_series.reindex(closes_df.index).ffill().fillna(0).astype(int).to_numpy()
+    )
+    for col in closes_df.columns:
+        friendly = trend_friendly_per_asset.get(col, set())
+        if not friendly:
+            out[col] = 0.0
+            continue
+        in_friendly = np.isin(state_path_on_close, list(friendly))
+        out[col] = (in_friendly & broad_ok).astype(float)
+    return out
