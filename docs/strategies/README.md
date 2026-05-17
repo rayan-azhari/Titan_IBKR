@@ -78,12 +78,13 @@ These strategies' V1-era pre-reg directives still exist in [directives/](../../d
 
 ## Retired strategies (V3.6/V3.7 RETIRED verdict)
 
-The following strategies were audited and RETIRED. **41 audits / 22 retired / 2 LIVE / 2 SHADOW** as of 2026-05-17. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry and [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md) for one-line "next time" lessons per retired strategy.
+The following strategies were audited and RETIRED. **42 audits / 22 retired / 2 LIVE / 2 SHADOW** as of 2026-05-17. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry and [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md) for one-line "next time" lessons per retired strategy.
 
 V3-era (data-infrastructure or methodology):
 
 - B2 Carver EWMAC family — RETIRED via B2 → B2b → B2c → B2d → I1 (HMM v1) → **B2e** chain (L46/L48/L49/L51/**L69**). B2e (2026-05-17, IBKR cross-asset 11sym 9y, clean Databento futures) refined the closure: failure mode is **noise fragility**, not regime artifact — B2b L48 universal-decline thesis partially falsified. Signal positive every cell; sanctuary +1.0 to +1.3; what fails is worst-case noise robustness at retail costs.
 - B5 intraday momentum (Gao-Han-Li-Zhou) — **RETIRED 2026-05-17** on SPY/QQQ/IWM 2y IBKR M5. Panel median Sharpe **−0.87**, 0% positive, signal REVERSED in 2024-26 (matches academic post-2014 decay).
+- ml (EUR/USD H1 XGB TBM meta-classifier) — **RETIRED 2026-05-17** after 4-stage exhaustive cascade: (1) single-pair / 24h: sanc AUC 0.488; (2) L61 multi-asset grid: best 6h XGB 6/16 above 0.55; (3) per-asset 5-axis on top-6: 0/6 deploy-eligible (CI_lo < 0, 96-99% bars active, costs dominate); (4) cross-asset features (regime panel as columns): mean AUC 0.5424 → 0.5576 (+0.015), equities lift 4-6pp but 0/16 above 0.60 and 5-axis unchanged. **L71** (frozen ML artefact is build-of-feature-pipeline) + **L72** (classification AUC > 0.55 is NOT a deployment signal; always close the loop with strategy-return 5-axis) added.
 - B4 TSMOM (3 variants) — RETIRED on L43 plateau-fragility.
 - D2 commodity carry — RETIRED on data-quality + signal absence (L34/L35).
 - E1/E1b VRP — RETIRED (L29).
