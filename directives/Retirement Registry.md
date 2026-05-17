@@ -28,6 +28,12 @@
 | `ic_mtf` | 2026-05-16 (Wave B) | L21 multi-TF look-ahead, 8-15 SR amplification | **Multi-signal × multi-TF composites can amplify L21 look-ahead 4-5x over single-signal multi-TF. Always verify V1-style baseline recovers V1 claim BEFORE concluding fabrication (L63).** |
 | `gld_confluence` | 2026-05-16 (Wave B) | Class-default DD gate hard fail (-35% MaxDD) + 34% positive folds | **L43 cell-instability isn't just about cell ranking on Sharpe — also applies to FOLD pass rate. <50% positive folds means aggregate Sharpe is dominated by few good folds; not deployable.** |
 
+## Wave C (P3) — speculative / deferred audits
+
+| Strategy | Retired | Verdict driver | One-line "next time" lesson |
+|---|---|---|---|
+| `ml` (EUR/USD H1 XGB meta-classifier) | **RETIRE_BLOCKED 2026-05-17** | Feature-pipeline drift (12 of 20 model features absent from current `build_features()`); strategy non-runnable. L19 same-bar look-ahead annotation was incorrect -- pipeline is causally clean. | **A frozen ML artefact is a build artefact of its feature pipeline -- treat it like a compiled binary, not immutable data. Embed feature_names in the joblib + add a CI integration test that loads each models/*.joblib and runs a 1-row predict on current build_features().** (L71) |
+
 ## V3-era systematic retires (B2-B4, E1, G4, A1, I1)
 
 | Strategy | Retired | Verdict driver | One-line "next time" lesson |
