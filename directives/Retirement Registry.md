@@ -79,7 +79,7 @@ If the framework gains the missing data infrastructure:
 
 | Strategy | Re-audit priority | Required data |
 |---|---|---|
-| ~~B2 Carver EWMAC~~ | **CLOSED 2026-05-17** (B2e IBKR x-asset 9y: full audit run despite L52 sweep stop. No cell promotes under strict 5-axis. C8 gross DEPLOYs, C2/C4 net CI_lo>0 but noise=mid not best. Failure mode = noise fragility, NOT regime artifact. L48 universal-decline thesis partially falsified — signal positive cross-source; what fails is worst-case noise robustness. Path forward: I1 per-asset regime gate.) | n/a |
+| ~~B2 Carver EWMAC~~ | **PARTIALLY REVIVED 2026-05-17 via I1v2.** B2e closed (noise fragility, L69). I1v2 multi-feature HMM regime gate on the same 11-symbol universe produced **C6_smoothed DEPLOY** (Sharpe +0.52, CI_lo +0.049, noise=best, sanctuary +1.10). First deployment-eligible cell in the B2 family. Recommended path: shadow port to `titan/strategies/ewmac_regime/` for 12mo paper validation, then re-audit 2026-11-17. L70 candidate: regime-gate-via-rich-features is the rescue path for L69. | n/a |
 | A1 Residual momentum | High (academic literature strong) | WRDS CRSP/Compustat |
 | D2 Commodity carry | Medium | IBKR M2 contracts OR Refinitiv |
 | B4 TSMOM multi-asset | Medium | same as B2 |

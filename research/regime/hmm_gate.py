@@ -166,18 +166,38 @@ def _smooth(states: np.ndarray, window: int) -> np.ndarray:
 
 
 def _gaussian_log_likelihood(obs: np.ndarray, means: np.ndarray, covars: np.ndarray) -> np.ndarray:
-    """Per-bar per-state Gaussian log-likelihood. Manual replacement for
-    hmmlearn's private ``_compute_log_likelihood``. obs shape (T, 1),
-    means shape (K, 1), covars shape (K, 1, 1). Returns shape (T, K)."""
+    """Per-bar per-state Gaussian log-likelihood. obs shape (T, F),
+    means shape (K, F), covars shape (K, F, F). Returns shape (T, K).
+
+    Supports both 1-D (v1 per-asset returns) and multi-feature (v2 regime
+    panel) inputs.
+    """
+    n_obs, n_features = obs.shape
     n_states = means.shape[0]
-    log_likelihoods = np.empty((len(obs), n_states), dtype=float)
+    log_likelihoods = np.empty((n_obs, n_states), dtype=float)
+    if n_features == 1:
+        # Fast path: 1-D Gaussian (matches v1 use).
+        for s in range(n_states):
+            mu = float(means[s, 0])
+            var = max(float(covars[s, 0, 0]), 1e-12)
+            diff = obs[:, 0] - mu
+            log_likelihoods[:, s] = -0.5 * (np.log(2 * np.pi * var) + (diff * diff) / var)
+        return log_likelihoods
+    # Multivariate path. log N(x|mu,Sigma) =
+    # -0.5*(F*log(2pi) + log|Sigma| + (x-mu)^T Sigma^-1 (x-mu))
+    log_2pi_f = n_features * np.log(2 * np.pi)
     for s in range(n_states):
-        mu = float(means[s, 0])
-        var = float(covars[s, 0, 0])
-        var = max(var, 1e-12)
-        # log N(x | mu, var) = -0.5 * (log(2*pi*var) + (x-mu)^2 / var)
-        diff = obs[:, 0] - mu
-        log_likelihoods[:, s] = -0.5 * (np.log(2 * np.pi * var) + (diff * diff) / var)
+        mu = means[s]
+        cov = covars[s] + np.eye(n_features) * 1e-12
+        sign, logdet = np.linalg.slogdet(cov)
+        if sign <= 0:
+            log_likelihoods[:, s] = -np.inf
+            continue
+        inv = np.linalg.inv(cov)
+        diff = obs - mu
+        # Mahalanobis distance per row.
+        m2 = np.einsum("ij,jk,ik->i", diff, inv, diff)
+        log_likelihoods[:, s] = -0.5 * (log_2pi_f + logdet + m2)
     return log_likelihoods
 
 
@@ -185,6 +205,9 @@ def _causal_forward_states(
     model: hmm.GaussianHMM, obs: np.ndarray
 ) -> np.ndarray:
     """Forward-filtered most-likely-state sequence — CAUSAL.
+
+    obs shape: (T, F) where F >= 1. The log-likelihood helper handles both
+    1-D (v1 per-asset returns) and multi-feature (v2 regime panel) inputs.
 
     Computes log P(state_t = j | obs_{1..t}) for each t and returns
     argmax over j. Unlike Viterbi (forward-backward), this does NOT use
