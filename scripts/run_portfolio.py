@@ -902,6 +902,36 @@ STRATEGY_REGISTRY["gem_j5_canonical"] = {
     },
 }
 
+STRATEGY_REGISTRY["ewmac_regime_i1v2_c6"] = {
+    "module": "titan.strategies.ewmac_regime.strategy",
+    "config_cls": "EwmacRegimeConfig",
+    "strategy_cls": "EwmacRegimeStrategy",
+    # Shadow-only weight: 5% of full portfolio. Per L65/L67 2026-05-17:
+    # I1v2 C6_smoothed is a risk reducer (joint ruin 1.05% -> 0.80% at 5% weight)
+    # not a return enhancer (Sharpe diluted from +0.93 to +0.83). Live wiring
+    # deferred to next session; shadow port scaffold in titan/strategies/ewmac_regime/.
+    "weight": 0.0,  # NON-LIVE (shadow only; weight=0 means allocator ignores).
+    "trading": False,  # explicit non-trading flag.
+    "contracts": [
+        # 11-symbol B2e universe; IBKR contract specs deferred until live wiring.
+        # ES/NQ/CL/BZ/HG/SI/GC/ZN/ZB/6E/6J -- futures.
+    ],
+    "config_kwargs": {
+        "shadow_mode": True,  # never submits orders
+        "initial_equity": 1_500.0,  # 5% of 30k baseline
+        "base_ccy": "USD",
+        # Audit-verdict C6_smoothed cell config.
+        "speeds_str": "16/64,32/128,64/256",
+        "fdm": 1.35,
+        "hmm_n_states": 2,
+        "hmm_state_id": "mean_return",
+        "hmm_smoothing_days": 5,
+        "hmm_random_seed": 42,
+        "hmm_min_state_bars": 60,
+        "regime_panel_path": "data/i1_regime_panel.parquet",
+    },
+}
+
 STRATEGY_REGISTRY["turtle_cat_c3peak"] = {
     "module": "titan.strategies.turtle.strategy",
     "config_cls": "TurtleConfig",
