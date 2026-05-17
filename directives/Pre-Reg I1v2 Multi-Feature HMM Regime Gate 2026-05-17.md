@@ -192,9 +192,10 @@ I1v2 rescues B2e by (a) leaving the EWMAC signal intact (sanctuary +1.10 unchang
 
 - **H1 borderline FAIL**: plateau spread 36.46% is over the 30% gate. Mitigation: C6 is itself the smoothed variant; the un-smoothed C1 underperforms. We're picking a corner of the Sharpe surface, not its centre. This warrants paper-shadow validation rather than immediate live capital.
 - **H3 FAIL on the canonical**: pre-reg specifically named C1 as the cell to test; the selected cell (C6) is a pre-registered alternative. Honest framing: H3 is about whether the v2 mechanism beats no-gate at all, and C6's +0.52 > +0.49 confirms that on the best cell.
-- **L65 ruin assessment**: pending (next step). Required before any port to `titan/strategies/`.
-- **L67 portfolio inclusion**: if L65 passes, test C6 at 5%/10% weight on the current GEM+turtle portfolio.
-- **Recommendation**: PORT C6 as a **shadow strategy** in `titan/strategies/ewmac_regime/` (not live capital yet) for 12-month paper validation. Re-audit 2026-11-17.
+- **L65 ruin assessment**: COMPLETE (2026-05-17). Single-strategy: PASS at 5%/10%/15% (P_kill 0%, max DD ≤ 1.6%). Joint with GEM+Turtle on 2019-2025 window: current 80/20 mix actually FAILS joint-ruin gate (P_kill 1.05% > 1%); adding I1v2 at ≥5% brings it back to PASS (P_kill 0.45-0.80%). See `.tmp/reports/i1v2_l65_l67/result_log.md`.
+- **L67 portfolio inclusion**: COMPLETE (2026-05-17). 10-metric matrix unchanged at PORTFOLIO_CONDITIONAL across variants (current 7/10, +5% I1v2 5/10, +10% I1v2 6/10). I1v2 dilutes Sharpe slightly (standalone Sharpe +0.53 < portfolio +0.93) but reduces joint ruin 2-3×.
+- **Verdict:** I1v2 C6_smoothed is a **risk reducer not a return enhancer**. Deployment case rests on L65 joint-ruin improvement, not L67 score.
+- **Recommendation:** SHADOW-DEPLOY at 5% weight in `titan/strategies/ewmac_regime/`. Re-audit 2026-11-17. Live cutover only after 12mo paper validation + repeat of L65/L67 with refreshed window.
 
 ### §4.7 New lesson candidate — L70 (gate-via-regime is the rescue path for noise fragility)
 

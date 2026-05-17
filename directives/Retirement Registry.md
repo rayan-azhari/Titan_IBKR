@@ -79,7 +79,7 @@ If the framework gains the missing data infrastructure:
 
 | Strategy | Re-audit priority | Required data |
 |---|---|---|
-| ~~B2 Carver EWMAC~~ | **PARTIALLY REVIVED 2026-05-17 via I1v2.** B2e closed (noise fragility, L69). I1v2 multi-feature HMM regime gate on the same 11-symbol universe produced **C6_smoothed DEPLOY** (Sharpe +0.52, CI_lo +0.049, noise=best, sanctuary +1.10). First deployment-eligible cell in the B2 family. Recommended path: shadow port to `titan/strategies/ewmac_regime/` for 12mo paper validation, then re-audit 2026-11-17. L70 candidate: regime-gate-via-rich-features is the rescue path for L69. | n/a |
+| ~~B2 Carver EWMAC~~ | **PARTIALLY REVIVED 2026-05-17 via I1v2.** B2e closed (noise fragility, L69). I1v2 C6_smoothed: DEPLOY (Sharpe +0.52, CI_lo +0.049, noise=best, sanctuary +1.10). **L65 single PASS** at 5/10/15%; **L65 joint**: current 80/20 mix marginally fails on 2019-2025 window (P_kill 1.05%), I1v2 inclusion at 5%+ restores compliance (P_kill 0.45-0.80%). **L67**: PORTFOLIO_CONDITIONAL unchanged (Sharpe diluted, ruin reduced). **I1v2 is a risk reducer, not return enhancer.** Recommended: shadow port to `titan/strategies/ewmac_regime/` at 5% weight, 12mo paper validation, re-audit 2026-11-17. L70 added. | n/a |
 | A1 Residual momentum | High (academic literature strong) | WRDS CRSP/Compustat |
 | D2 Commodity carry | Medium | IBKR M2 contracts OR Refinitiv |
 | B4 TSMOM multi-asset | Medium | same as B2 |
