@@ -78,7 +78,7 @@ These strategies' V1-era pre-reg directives still exist in [directives/](../../d
 
 ## Retired strategies (V3.6/V3.7 RETIRED verdict)
 
-The following strategies were audited and RETIRED. **39 audits / 22 retired / 2 LIVE / 2 SHADOW** as of 2026-05-17. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry and [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md) for one-line "next time" lessons per retired strategy.
+The following strategies were audited and RETIRED. **40 audits / 21 retired / 1 MARGINAL_BY_ASSET (ml) / 2 LIVE / 2 SHADOW** as of 2026-05-17. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry and [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md) for one-line "next time" lessons per retired strategy.
 
 V3-era (data-infrastructure or methodology):
 

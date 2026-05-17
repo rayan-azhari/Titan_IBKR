@@ -32,7 +32,8 @@
 
 | Strategy | Retired | Verdict driver | One-line "next time" lesson |
 |---|---|---|---|
-| `ml` (EUR/USD H1 XGB meta-classifier) | **RETIRE 2026-05-17** (after retrain) | Retrained on current 28-col `build_features()` after fixing L71 drift. Sanctuary AUC 0.488 (worse than random) on 6,497-row 12mo held-out window despite IS AUC 0.636. Symmetric long/short rule degenerates to 96% short (no signal, just structural bet). L19 same-bar look-ahead annotation was incorrect -- pipeline is causally clean. | **L71 lesson stands. New lesson: in-sample AUC alone is NOT a deployment signal for meta-classifiers; sanctuary AUC + threshold-active rate are the gates. Try different label horizons / model classes / target definitions before deeming the line of research exhausted. EUR/USD H1 with 28-col TA + MTF context appears not to support a TBM meta-classifier edge.** |
+| `ml` (single-pair EUR/USD H1 24h XGB) | **RETIRE 2026-05-17** (single-pair / single-horizon path) | Retrained on current features, sanctuary AUC 0.488 on EUR/USD H1 24h alone -- worse than random. **Note: L61 multi-asset grid (see below) revised the architecture-wide verdict to MARGINAL_BY_ASSET. The EUR/USD 24h cell remains a retire, but the architecture is not closed.** | **Single-pair RETIRE necessary but not sufficient; always run multi-asset panel before closing strategy class. EUR/USD 24h is a per-cell retire, not a class retire.** |
+| ~~`ml` (architecture-wide)~~ | **REVISED to MARGINAL_BY_ASSET 2026-05-17** | L61 grid (16 assets × 3 horizons × 3 models): best cell 6h XGB pooled has 6/16 sanctuary AUC > 0.55, edge concentrated in risk-off cluster (IEF 0.589, EUR_GBP 0.588, EUR_USD 0.567, GLD 0.563, USD_CHF 0.562, EUR_CHF 0.562). Carry FX + crude oil don't predict. | **Edge exists at 6h horizon with XGBoost on safe-haven assets. Per-asset 5-axis audit on top-6 is the gated next step before deployment.** |
 
 ## V3-era systematic retires (B2-B4, E1, G4, A1, I1)
 
