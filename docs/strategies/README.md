@@ -47,6 +47,7 @@ slug, e.g. `gem-dual-momentum.md`. Each guide must contain at least:
 |---|---|---|---|---|---|
 | `gem-dual-momentum` | **LIVE on paper** (multi-strategy node since 2026-05-17 23:49 UTC) | CROSS_ASSET_MOMENTUM | **J5 `P_hl60_vt05`** (since 2026-05-16) | DEPLOY (5/5 axes + L65 + portfolio matrix 6/10 vs 60/40) | [gem-dual-momentum.md](gem-dual-momentum.md) |
 | `turtle-donchian` | **LIVE on paper (CAT-scoped)** (multi-strategy node since 2026-05-17 23:49 UTC) | DAILY_TREND | **C3_peak `(entry=45, exit=20)` on CAT** | L64 CONDITIONAL_WATCHPOINT + L65 joint PASS + portfolio matrix 7/10 vs 60/40 | (TODO: write guide) |
+| `ewmac_regime_i1v2_c6` | **SHADOW LIVE on paper** (multi-strategy node since 2026-05-17 17:23 UTC) | DAILY_TREND + regime gate | **C6_smoothed** (2-state HMM panel gate + 5d median smooth + 3-speed EWMAC) on 9 futures (ES/NQ/CL/BZ/HG/SI/GC/ZN/ZB) | DEPLOY (Sharpe +0.52, CI_lo +0.049, noise=best) + L65 single+joint PASS + L67 PORTFOLIO_CONDITIONAL unchanged. **Risk reducer.** 12mo paper-validation; re-audit 2026-11-17. | (TODO) |
 | `bond-gold` | LIVE on paper (V1-era config); V3.6 Phase 1 shadow config exists | CROSS_ASSET_MOMENTUM | V3.6 PROMOTED `(lookback=120, threshold=0.50)` — sidecar config ready | CONDITIONAL_WATCHPOINT (4/5 axes) | [bond-gold.md](bond-gold.md) |
 | `etf-trend` | Family of 7 variants with **mixed verdicts** | DAILY_TREND | TQQQ `(150, 5)` PROMOTED CONDITIONAL; SPY RETIRED; 5 unleveraged variants HIGH-conf bulk-retire (DBC/GLD spot-checks confirmed 2026-05-16) | Mixed (see family doc) | [etf-trend.md](etf-trend.md) |
 
@@ -77,7 +78,7 @@ These strategies' V1-era pre-reg directives still exist in [directives/](../../d
 
 ## Retired strategies (V3.6/V3.7 RETIRED verdict)
 
-The following strategies were audited and RETIRED. **37 audits / 21 retired** as of 2026-05-17. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry and [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md) for one-line "next time" lessons per retired strategy.
+The following strategies were audited and RETIRED. **38 audits / 21 retired / 2 LIVE / 2 SHADOW** as of 2026-05-17 17:23 UTC. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry and [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md) for one-line "next time" lessons per retired strategy.
 
 V3-era (data-infrastructure or methodology):
 

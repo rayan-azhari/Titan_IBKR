@@ -49,14 +49,16 @@ The framework went through three structural revisions in 2026-05-16, driven by u
 | Status | Count | Strategies |
 |---|---:|---|
 | **LIVE** | 2 | gem J5 (80%) + turtle CAT C3_peak (20%) — multi-strategy node since 2026-05-17 23:49 UTC |
-| **CONDITIONAL_WATCHPOINT** | (incl. above) | turtle CAT scoped, fx_carry long-yen scope, ic_equity_daily top-3 (deferred from current portfolio per L67 expansion) |
-| **SHADOW** | 1 | bond_gold (V3.6 PROMOTED params; live runs V1 config) |
-| **RETIRED** | 21 | mr_audjpy, mr_fx, mtf, ic_mtf, gold_macro, gld_confluence, 6 etf_trend variants, **B2 family (B2/B2b/B2c/B2d/I1v1/B2e)**, **B5 intraday momentum**, B4/D2/E1/G4/A1 from V3 era |
-| **Total audits run** | 37 | See `.tmp/dashboard/dashboard.html` |
+| **SHADOW (paper-validation)** | 2 | bond_gold (V3.6 PROMOTED params; live runs V1) + **ewmac_regime_i1v2_c6** (LIVE shadow since 2026-05-17, 9 futures, 12mo paper validation) |
+| **CONDITIONAL_WATCHPOINT** | (incl. above) | turtle CAT scoped, fx_carry long-yen scope, ic_equity_daily top-3 (deferred per L67 expansion) |
+| **RETIRED** | 21 | mr_audjpy, mr_fx, mtf, ic_mtf, gold_macro, gld_confluence, 6 etf_trend variants, B2 family (PARTIALLY REVIVED via I1v2), B5 intraday momentum, B4/D2/E1/G4/A1 from V3 era |
+| **Total audits run** | 38 | See `.tmp/dashboard/dashboard.html` |
 
-**Latest closures (2026-05-17):**
-- **B5** intraday momentum on SPY/QQQ/IWM 2y IBKR M5 → panel median Sharpe −0.87, 0% positive, signal REVERSED.
-- **B2e** Carver EWMAC on IBKR cross-asset 11-symbol 9y → L52 sweep no plateau, L52-override audit confirmed no cell promotes. Failure mode = **noise fragility (L69)**, NOT regime artifact — partially falsifies B2b's L48 universal-decline claim. Motivates I1 HMM v2.
+**Latest milestones (2026-05-17):**
+- **B5** RETIRE on SPY/QQQ/IWM 2y IBKR M5 (panel median SR −0.87, signal reversed).
+- **B2e** L52 sweep stop + L52-override audit → noise fragility (L69), partial rescue motivated by I1v2.
+- **I1v2 C6_smoothed DEPLOY** verdict (Sharpe +0.52, CI_lo +0.049, noise=best) — first B2-family deployment-eligible cell. L65 single PASS + L65 joint PASS at 5%+ weight + L67 unchanged at PORTFOLIO_CONDITIONAL. **Risk reducer, not return enhancer.**
+- **I1v2 SHADOW LIVE deployed** (2026-05-17 17:23 UTC) on 9-symbol futures basket (ES/NQ/CL/BZ/HG/SI/GC/ZN/ZB). 6E/6J dropped — paper account lacks CME FX futures subscriptions. `shadow_mode=True`, `trading=False`. 12mo paper-validation clock started. Re-audit 2026-11-17.
 
 ---
 
