@@ -51,9 +51,8 @@ The framework went through three structural revisions in 2026-05-16, driven by u
 | **LIVE** | 2 | gem J5 (80%) + turtle CAT C3_peak (20%) — multi-strategy node since 2026-05-17 23:49 UTC |
 | **SHADOW (paper-validation)** | 2 | bond_gold (V3.6 PROMOTED params; live runs V1) + **ewmac_regime_i1v2_c6** (LIVE shadow since 2026-05-17, 9 futures, 12mo paper validation) |
 | **CONDITIONAL_WATCHPOINT** | (incl. above) | turtle CAT scoped, fx_carry long-yen scope, ic_equity_daily top-3 (deferred per L67 expansion) |
-| **RETIRED** | 21 | mr_audjpy, mr_fx, mtf, ic_mtf, gold_macro, gld_confluence, 6 etf_trend variants, B2 family (PARTIALLY REVIVED via I1v2), B5 intraday momentum, B4/D2/E1/G4/A1 from V3 era |
-| **MARGINAL_BY_ASSET** | 1 | **ml** (Wave C L61 grid: 6h XGB pooled has 6/16 sanctuary AUC > 0.55 on risk-off cluster — IEF, EUR_GBP, EUR_USD, GLD, USD_CHF, EUR_CHF. Per-asset 5-axis audit gated next step.) |
-| **Total audits run** | 40 | See `.tmp/dashboard/dashboard.html` |
+| **RETIRED** | 22 | mr_audjpy, mr_fx, mtf, ic_mtf, gold_macro, gld_confluence, 6 etf_trend variants, B2 family (PARTIALLY REVIVED via I1v2), B5 intraday momentum, **ml (final: L61 grid + top-6 per-asset 5-axis both fail; AUC ≠ Sharpe, L72)**, B4/D2/E1/G4/A1 from V3 era |
+| **Total audits run** | 41 | See `.tmp/dashboard/dashboard.html` |
 
 **Latest milestones (2026-05-17):**
 - **B5** RETIRE on SPY/QQQ/IWM 2y IBKR M5 (panel median SR −0.87, signal reversed).
