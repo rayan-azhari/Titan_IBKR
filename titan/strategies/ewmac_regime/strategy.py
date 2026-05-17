@@ -321,19 +321,25 @@ class EwmacRegimeStrategy(Strategy):
     ) -> pd.DataFrame | None:
         """Stack per-symbol close history into a DataFrame indexed by date.
 
-        Returns None if any asset has too little history.
+        Tolerant of missing assets: if an asset in `asset_order` has no
+        corresponding subscribed instrument, it is silently skipped. The
+        gate function (compute_panel_regime_gate_frozen) handles a partial
+        column set correctly. Missing assets simply don't contribute to
+        the portfolio. Returns None if NO assets have history.
         """
         cols = {}
         for asset in asset_order:
             sym = self._sym_for_asset(asset)
             if sym is None:
-                return None
+                continue  # asset not subscribed (e.g., 6E/6J without TWS sub)
             hist = self._closes.get(sym, {})
             if not hist:
-                return None
+                continue
             s = pd.Series(hist).sort_index()
             s = s[s.index <= asof]
             cols[asset] = s
+        if not cols:
+            return None
         df = pd.DataFrame(cols).sort_index()
         df = df.dropna(how="any").ffill(limit=5)
         return df if len(df) > 0 else None

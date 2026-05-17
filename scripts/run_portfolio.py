@@ -916,20 +916,18 @@ STRATEGY_REGISTRY["ewmac_regime_i1v2_c6"] = {
     "trading": False,
     "weight": 0.0,
     "contracts": [
-        # 11-symbol B2e universe -- IBKR continuous front-month futures.
-        # CME Globex:
+        # 9 of 11 B2e universe -- IBKR continuous front-month futures.
+        # 6E/6J (CME FX) dropped at first cutover (2026-05-17): paper account
+        # cannot resolve their CONTFUT contracts. Audit impact is minimal:
+        # 6J trend_friendly = {} (never trades), 6E = {0} (crisis-only).
+        # Once a TWS subscription is added, restore 6E/6J + re-freeze.
         IBContract(secType="CONTFUT", symbol="ES", exchange="CME", currency="USD"),
         IBContract(secType="CONTFUT", symbol="NQ", exchange="CME", currency="USD"),
-        IBContract(secType="CONTFUT", symbol="6E", exchange="CME", currency="USD"),
-        IBContract(secType="CONTFUT", symbol="6J", exchange="CME", currency="USD"),
-        # NYMEX (energies):
         IBContract(secType="CONTFUT", symbol="CL", exchange="NYMEX", currency="USD"),
         IBContract(secType="CONTFUT", symbol="BZ", exchange="NYMEX", currency="USD"),
-        # COMEX (metals):
         IBContract(secType="CONTFUT", symbol="HG", exchange="COMEX", currency="USD"),
         IBContract(secType="CONTFUT", symbol="SI", exchange="COMEX", currency="USD"),
         IBContract(secType="CONTFUT", symbol="GC", exchange="COMEX", currency="USD"),
-        # CBOT (Treasuries):
         IBContract(secType="CONTFUT", symbol="ZN", exchange="CBOT", currency="USD"),
         IBContract(secType="CONTFUT", symbol="ZB", exchange="CBOT", currency="USD"),
     ],
@@ -941,10 +939,11 @@ STRATEGY_REGISTRY["ewmac_regime_i1v2_c6"] = {
         # at on_start; these knobs match for clarity but are not authoritative).
         "frozen_artefact_path": "data/i1v2_c6_frozen.json",
         "regime_panel_path": "data/i1_regime_panel.parquet",
-        # NautilusTrader instrument-id strings -- matches IBContract specs above.
+        # 9-asset subset of the frozen artefact's 11 — strategy is tolerant
+        # of missing assets (computes signals on the subset that has bars).
         "instrument_ids_str": (
             "ES.CME,NQ.CME,CL.NYMEX,BZ.NYMEX,HG.COMEX,SI.COMEX,GC.COMEX,"
-            "ZN.CBOT,ZB.CBOT,6E.CME,6J.CME"
+            "ZN.CBOT,ZB.CBOT"
         ),
     },
 }
