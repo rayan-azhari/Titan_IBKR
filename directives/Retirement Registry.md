@@ -79,7 +79,7 @@ If the framework gains the missing data infrastructure:
 
 | Strategy | Re-audit priority | Required data |
 |---|---|---|
-| B2 Carver EWMAC | High (V3.7 + ERC validates basket value) | 8-12 futures per-contract roll-aware |
+| ~~B2 Carver EWMAC~~ | **CLOSED 2026-05-17** (B2e IBKR x-asset 9y: full audit run despite L52 sweep stop. No cell promotes under strict 5-axis. C8 gross DEPLOYs, C2/C4 net CI_lo>0 but noise=mid not best. Failure mode = noise fragility, NOT regime artifact. L48 universal-decline thesis partially falsified — signal positive cross-source; what fails is worst-case noise robustness. Path forward: I1 per-asset regime gate.) | n/a |
 | A1 Residual momentum | High (academic literature strong) | WRDS CRSP/Compustat |
 | D2 Commodity carry | Medium | IBKR M2 contracts OR Refinitiv |
 | B4 TSMOM multi-asset | Medium | same as B2 |
