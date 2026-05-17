@@ -32,7 +32,7 @@
 
 | Strategy | Retired | Verdict driver | One-line "next time" lesson |
 |---|---|---|---|
-| `ml` (EUR/USD H1 XGB meta-classifier) | **RETIRE_BLOCKED 2026-05-17** | Feature-pipeline drift (12 of 20 model features absent from current `build_features()`); strategy non-runnable. L19 same-bar look-ahead annotation was incorrect -- pipeline is causally clean. | **A frozen ML artefact is a build artefact of its feature pipeline -- treat it like a compiled binary, not immutable data. Embed feature_names in the joblib + add a CI integration test that loads each models/*.joblib and runs a 1-row predict on current build_features().** (L71) |
+| `ml` (EUR/USD H1 XGB meta-classifier) | **RETIRE 2026-05-17** (after retrain) | Retrained on current 28-col `build_features()` after fixing L71 drift. Sanctuary AUC 0.488 (worse than random) on 6,497-row 12mo held-out window despite IS AUC 0.636. Symmetric long/short rule degenerates to 96% short (no signal, just structural bet). L19 same-bar look-ahead annotation was incorrect -- pipeline is causally clean. | **L71 lesson stands. New lesson: in-sample AUC alone is NOT a deployment signal for meta-classifiers; sanctuary AUC + threshold-active rate are the gates. Try different label horizons / model classes / target definitions before deeming the line of research exhausted. EUR/USD H1 with 28-col TA + MTF context appears not to support a TBM meta-classifier edge.** |
 
 ## V3-era systematic retires (B2-B4, E1, G4, A1, I1)
 

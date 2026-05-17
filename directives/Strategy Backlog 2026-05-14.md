@@ -32,7 +32,7 @@ A menu of novel strategy ideas not yet implemented in `titan/strategies/`. Every
 | B3 | Donchian + pyramiding Turtle-plus | DAILY_TREND | Turtle.md + Strategic Pyramiding doc | 3d | **DATA**: same as B2 |
 | B4 | TSMOM 10-15 futures | DAILY_TREND | Moskowitz-Ooi-Pedersen 2012 | 4d | ✅ DONE (RETIRED on 24-commodity yfinance; sign of L37 confirmed but magnitude +0.16 << MOP's +1.0). Plateau FAIL. See L39, L40 — fixable with multi-asset universe + IBKR per-contract roll-aware data. |
 | B5 | **[NEW] Intraday momentum** (first-30m → last-30m) | INTRADAY_BREAKOUT | Gao, Han, Li & Zhou, *JFE* 2018 | 2d | ✅ DONE 2026-05-17 (RETIRED: SPY/QQQ/IWM panel median Sharpe -0.87, 0% positive on 2y IBKR M5, signal REVERSED — matches academic post-2014 decay) |
-| ml | EUR/USD H1 XGB meta-classifier | ML_CLASSIFIER | TBM (López de Prado) + multi-feature TA | (rebuilt) | ✅ DONE 2026-05-17 (Wave C **RETIRE_BLOCKED**: feature-pipeline drift — 12 of 20 model features absent from current `build_features()`. L71 added.) |
+| ml | EUR/USD H1 XGB meta-classifier | ML_CLASSIFIER | TBM (López de Prado) + multi-feature TA | (rebuilt) | ✅ DONE 2026-05-17 (Wave C **RETIRED**: feature-pipeline drift fixed via retrain on current 28-col features, but sanctuary AUC 0.488 (worse than random) → no OOS edge. L71 added. EUR/USD H1 TBM meta-classifier line of research closed unless different label horizon / model class is tried.) |
 | B6 | **[NEW] Momentum-crash hedge** (Daniel-Moskowitz dynamic scaling) | META_LABELING | Daniel & Moskowitz, *JFE* 2016 | 2d | Specification-sensitive |
 
 ## C. Mean reversion / pairs

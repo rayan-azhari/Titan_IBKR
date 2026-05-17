@@ -59,7 +59,7 @@ MODELS_DIR = PROJECT_ROOT / "models"
 REPORTS_DIR = PROJECT_ROOT / ".tmp" / "reports" / "ml_wave_c_audit"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL_PATH = MODELS_DIR / "meta_model_EURUSD_H1_20260403_104654.joblib"
+MODEL_PATH = MODELS_DIR / "meta_model_EURUSD_H1_20260517_154132.joblib"
 DATA_FILE = DATA_DIR / "EUR_USD_H1.parquet"
 
 PERIODS_PER_YEAR = BARS_PER_YEAR["H1"]
@@ -80,34 +80,47 @@ def _load_h1() -> pd.DataFrame:
 
 
 def _compute_signals(df: pd.DataFrame, model_artefact: dict) -> pd.Series:
-    """Run the live meta-classifier on every row and return the realised
-    signal series.
+    """Run the meta-classifier and convert proba to a (-1, 0, +1) signal.
 
-    signal[t] = primary_signal[t] * (predict_proba[t] > threshold).
-    Then we shift by 1 so position effective at close[t] earns return[t->t+1]
-    (V3.6 causality: position uses info up to close[t-1] when earning the
-    next-bar return).
+    The classifier predicts P(TP-first), so:
+        proba > threshold        -> +1 (long)
+        proba < (1 - threshold)  -> -1 (short)
+        otherwise                ->  0 (no position)
+
+    Then .shift(1) for V3.6 causality (position effective at close[t]
+    earns the return from t -> t+1).
     """
     model = model_artefact["model"]
     threshold = float(model_artefact["threshold"])
     feature_names = list(model_artefact["feature_names"])
-    feats = build_features(df, context_data={}, cfg=None)
-    # Restrict to the model's feature set + drop rows with NaN.
+    # For audit context (H4/D), reuse what's available -- we replicate the
+    # retrain script's context if the data exists, else fall back to empty.
+    ctx: dict[str, pd.DataFrame] = {}
+    for tf in ("H4", "D"):
+        fp = PROJECT_ROOT / "data" / f"EUR_USD_{tf}.parquet"
+        if fp.exists():
+            cf = pd.read_parquet(fp)
+            if "timestamp" in cf.columns:
+                cf["timestamp"] = pd.to_datetime(cf["timestamp"]).dt.tz_localize(None)
+                cf = cf.set_index("timestamp")
+            else:
+                cf.index = pd.to_datetime(cf.index).tz_localize(None)
+            ctx[tf] = cf.sort_index().dropna(subset=["close"])
+    feats = build_features(df, context_data=ctx, cfg=None)
     missing = [c for c in feature_names if c not in feats.columns]
     if missing:
         raise RuntimeError(f"build_features() missing required columns: {missing}")
     X = feats[feature_names].copy()
-    primary = feats["primary_signal"].astype(float)
-    clean_mask = X.notna().all(axis=1) & primary.notna()
+    clean_mask = X.notna().all(axis=1)
     X_clean = X.loc[clean_mask]
-    primary_clean = primary.loc[clean_mask]
     if X_clean.empty:
         raise RuntimeError("All feature rows are NaN; cannot run model.")
-    proba = pd.Series(0.0, index=X.index, dtype=float)
+    proba = pd.Series(0.5, index=X.index, dtype=float)
     proba.loc[X_clean.index] = model.predict_proba(X_clean)[:, 1]
-    decision = (proba > threshold).astype(float)
-    signal = (primary_clean * decision.reindex(primary_clean.index).fillna(0.0))
-    # Causal shift: act on close[t-1]'s signal at close[t].
+    signal = pd.Series(0.0, index=X.index, dtype=float)
+    signal.loc[proba > threshold] = 1.0
+    signal.loc[proba < (1.0 - threshold)] = -1.0
+    # Causal shift.
     signal = signal.shift(1).reindex(df.index).fillna(0.0)
     return signal.rename("ml_signal")
 
@@ -161,10 +174,11 @@ def main() -> None:
 
     print(f"\nLoading model: {MODEL_PATH.name}")
     art = joblib.load(MODEL_PATH)
+    train_auc = float(art.get("train_auc", art.get("avg_auc", float("nan"))))
+    sanc_auc = float(art.get("sanctuary_auc", float("nan")))
     print(
         f"  trained_at={art['trained_at']}, threshold={art['threshold']}, "
-        f"avg_auc={float(art['avg_auc']):.4f}, "
-        f"avg_win_rate={float(art['avg_win_rate_meta']):.4f}"
+        f"train_auc={train_auc:.4f}, sanctuary_auc={sanc_auc:.4f}"
     )
 
     print("\n[1] Computing signal series (model predictions × primary signal, "
