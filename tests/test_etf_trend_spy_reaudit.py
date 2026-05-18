@@ -99,8 +99,7 @@ def test_position_shift_discipline() -> None:
     )
     nonzero = rets[rets.abs() > 1e-12]
     assert len(nonzero) == 0, (
-        f"shift discipline broken: {len(nonzero)} non-zero gross returns "
-        f"on flat-then-spike series"
+        f"shift discipline broken: {len(nonzero)} non-zero gross returns on flat-then-spike series"
     )
 
 

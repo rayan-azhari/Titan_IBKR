@@ -44,10 +44,10 @@ class MrAudjpyConfig:
     sweep here: tier_sizes, regime filter, session windows, NY close.
     """
 
-    vwap_anchor: int = 24          # H1 bars (24 = 1 trading day)
-    pct_window: int = 500          # rolling percentile window for bands
-    entry_pct: float = 0.95        # entry threshold (single-tier, conservative)
-    reversion_pct: float = 0.50    # exit threshold (50% reversion to VWAP)
+    vwap_anchor: int = 24  # H1 bars (24 = 1 trading day)
+    pct_window: int = 500  # rolling percentile window for bands
+    entry_pct: float = 0.95  # entry threshold (single-tier, conservative)
+    reversion_pct: float = 0.50  # exit threshold (50% reversion to VWAP)
     apply_costs: bool = True
     cost_bps_per_turnover: float = 1.5  # 1.5 bps FX spread + slip (matches V3.6 FX model)
 
@@ -59,9 +59,7 @@ def _rolling_vwap(close: pd.Series, volume: pd.Series, *, anchor: int) -> pd.Ser
     return pv / v
 
 
-def mr_audjpy_returns(
-    bars_df: pd.DataFrame, *, cfg: MrAudjpyConfig | None = None
-) -> pd.Series:
+def mr_audjpy_returns(bars_df: pd.DataFrame, *, cfg: MrAudjpyConfig | None = None) -> pd.Series:
     """Per-bar net log-return of the simplified VWAP-MR signal on AUD/JPY H1.
 
     Mechanism (single-tier, no grid, no regime filter):
@@ -136,9 +134,7 @@ def mr_audjpy_returns(
     return gross.rename("ret")
 
 
-def mr_audjpy_assert_causal(
-    bars_df: pd.DataFrame, *, cfg: MrAudjpyConfig | None = None
-) -> None:
+def mr_audjpy_assert_causal(bars_df: pd.DataFrame, *, cfg: MrAudjpyConfig | None = None) -> None:
     """L04 smoke test — corrupting future bars must not change past returns."""
     if cfg is None:
         cfg = MrAudjpyConfig()

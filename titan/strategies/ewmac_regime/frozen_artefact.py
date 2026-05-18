@@ -76,8 +76,7 @@ def load_frozen_artefact(path: Path | str | None = None) -> FrozenI1v2C6:
 
     # trend_friendly_per_asset: JSON dumps sets as lists; convert back.
     trend_friendly: dict[str, set[int]] = {
-        asset: {int(s) for s in states}
-        for asset, states in raw["trend_friendly_per_asset"].items()
+        asset: {int(s) for s in states} for asset, states in raw["trend_friendly_per_asset"].items()
     }
 
     return FrozenI1v2C6(

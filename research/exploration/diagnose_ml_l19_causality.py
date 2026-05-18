@@ -224,8 +224,9 @@ def main() -> None:
         any_leaks = any(v > 1e-9 for v in finite_diffs.values())
         if any_leaks:
             print("    [FAIL] Some feature columns leak future-bar info into past rows.")
-            leaks = sorted([(k, v) for k, v in finite_diffs.items() if v > 1e-9],
-                           key=lambda kv: -kv[1])[:10]
+            leaks = sorted(
+                [(k, v) for k, v in finite_diffs.items() if v > 1e-9], key=lambda kv: -kv[1]
+            )[:10]
             for col, d in leaks:
                 print(f"      - {col}: {d:.6e}")
         else:
@@ -238,8 +239,10 @@ def main() -> None:
     if "error" in tbm:
         print(f"    [skip] {tbm['error']}")
     else:
-        print(f"    {tbm['n_different']} / {tbm['n_compared']} past labels changed "
-              f"after corrupting last 50 close bars  -- {tbm['verdict']}")
+        print(
+            f"    {tbm['n_different']} / {tbm['n_compared']} past labels changed "
+            f"after corrupting last 50 close bars  -- {tbm['verdict']}"
+        )
 
     print("\n[3] Strategy inference alignment:")
     print(f"    {test_strategy_inference_alignment()}")

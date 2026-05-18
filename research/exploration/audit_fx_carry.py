@@ -101,7 +101,7 @@ def assert_causal_fx_carry(df: pd.DataFrame) -> None:
     cutoff = len(corrupted) - 20
     corrupted.iloc[cutoff:, corrupted.columns.get_loc("close")] *= 100.0
     perturbed = fx_carry_returns(corrupted, sma_period=50)
-    diff = (base.iloc[:cutoff - 100] - perturbed.iloc[:cutoff - 100]).abs().max()
+    diff = (base.iloc[: cutoff - 100] - perturbed.iloc[: cutoff - 100]).abs().max()
     assert diff < 1e-12, f"L21 fail: max diff {diff}"
     print(f"[fx_carry] L21 PASS (diff={diff:.2e})")
 
@@ -113,8 +113,10 @@ def main() -> None:
 
     # Load live pair.
     live_df = _load_d(LIVE_PAIR)
-    print(f"\n[load] {LIVE_PAIR}: {len(live_df)} daily bars, "
-          f"{live_df.index[0].date()} -> {live_df.index[-1].date()}")
+    print(
+        f"\n[load] {LIVE_PAIR}: {len(live_df)} daily bars, "
+        f"{live_df.index[0].date()} -> {live_df.index[-1].date()}"
+    )
 
     assert_causal_fx_carry(live_df)
 
@@ -128,9 +130,7 @@ def main() -> None:
         for vt in [0.06, 0.08, 0.10, 0.12]:
             ret = fx_carry_returns(live_df, sma_period=sma, vol_target=vt)
             sr = float(sharpe(ret, periods_per_year=BARS_PER_YEAR["D"]))
-            ci_lo, ci_hi = bootstrap_sharpe_ci(
-                ret, periods_per_year=BARS_PER_YEAR["D"], seed=42
-            )
+            ci_lo, ci_hi = bootstrap_sharpe_ci(ret, periods_per_year=BARS_PER_YEAR["D"], seed=42)
             mdd = float(max_drawdown(ret))
             sweep_results.append((sma, vt, sr, ci_lo, ci_hi, mdd))
             print(f"{sma:>5d} {vt:>6.2f} {sr:>+9.4f} {ci_lo:>+9.3f} {mdd:>+9.2%}")
@@ -139,7 +139,9 @@ def main() -> None:
     live_ret = fx_carry_returns(live_df, sma_period=50, vol_target=0.08)
     live_sr = float(sharpe(live_ret, periods_per_year=BARS_PER_YEAR["D"]))
     live_ci = bootstrap_sharpe_ci(live_ret, periods_per_year=BARS_PER_YEAR["D"], seed=42)
-    print(f"\n[live config (sma=50, vt=0.08)] Sharpe={live_sr:+.4f}, CI=[{live_ci[0]:+.3f}, {live_ci[1]:+.3f}]")
+    print(
+        f"\n[live config (sma=50, vt=0.08)] Sharpe={live_sr:+.4f}, CI=[{live_ci[0]:+.3f}, {live_ci[1]:+.3f}]"
+    )
     print("NOTE: Pure-price audit ignores swap-premium component.")
     print("      Carry premium (AUD-JPY rate diff ~3-4%) adds ~+0.6 SR if priced.")
 
@@ -163,16 +165,19 @@ def main() -> None:
     valid = [s for s in panel_sharpes.values() if not np.isnan(s)]
     panel_median = float(np.median(valid)) if valid else float("nan")
     panel_mean = float(np.mean(valid)) if valid else float("nan")
-    sorted_panel = sorted([(p, s) for p, s in panel_sharpes.items() if not np.isnan(s)],
-                          key=lambda x: x[1])
+    sorted_panel = sorted(
+        [(p, s) for p, s in panel_sharpes.items() if not np.isnan(s)], key=lambda x: x[1]
+    )
     live_rank = next((i for i, (p, _) in enumerate(sorted_panel) if p == LIVE_PAIR), -1)
     live_pct = (live_rank + 1) / len(sorted_panel) * 100 if sorted_panel else 0
     print(f"\n  panel median Sharpe = {panel_median:+.4f}")
     print(f"  panel mean Sharpe = {panel_mean:+.4f}")
     print(f"  {LIVE_PAIR} percentile within panel: {live_pct:.0f}%")
     h6_supported = panel_median >= 0 and live_pct <= 75
-    print(f"  H6 (L61 generalisation) gate (median>=0 AND live<=75%ile): "
-          f"{'SUPPORTED' if h6_supported else 'REJECTED'}")
+    print(
+        f"  H6 (L61 generalisation) gate (median>=0 AND live<=75%ile): "
+        f"{'SUPPORTED' if h6_supported else 'REJECTED'}"
+    )
 
     # ─────────────────────────────────────────────────────────────────
     # L66 baseline: CARRY class -> cash (zero) + verify direction
@@ -191,13 +196,19 @@ def main() -> None:
             print(f"  weight={weight:.0%}: insufficient data")
             continue
         ruin = assess_strategy_ruin(
-            live_ret, deployment_weight=weight,
-            portfolio_kill_threshold=0.15, horizon_bars=252,
-            block_size=21, n_paths=2000, seed=42,
+            live_ret,
+            deployment_weight=weight,
+            portfolio_kill_threshold=0.15,
+            horizon_bars=252,
+            block_size=21,
+            n_paths=2000,
+            seed=42,
         )
-        print(f"  weight={weight:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
-              f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, "
-              f"passes={ruin.passes()}")
+        print(
+            f"  weight={weight:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
+            f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, "
+            f"passes={ruin.passes()}"
+        )
 
     # ─────────────────────────────────────────────────────────────────
     # Tail metrics
@@ -213,14 +224,20 @@ def main() -> None:
     print("VERDICT")
     print("=" * 88)
     if not baseline_pass:
-        print(f"RETIRE: live config Sharpe {live_sr:+.4f} fails baseline gate "
-              f"(needs > 0 with CI_lo > -0.5).")
+        print(
+            f"RETIRE: live config Sharpe {live_sr:+.4f} fails baseline gate "
+            f"(needs > 0 with CI_lo > -0.5)."
+        )
     elif not h6_supported:
-        print(f"L61 SCOPE-LOCK or RETIRE: panel median {panel_median:+.4f} "
-              f"with {LIVE_PAIR} at {live_pct:.0f}%ile fails L61 generalisation.")
+        print(
+            f"L61 SCOPE-LOCK or RETIRE: panel median {panel_median:+.4f} "
+            f"with {LIVE_PAIR} at {live_pct:.0f}%ile fails L61 generalisation."
+        )
     else:
-        print("CONDITIONAL_WATCHPOINT candidate: positive Sharpe + L61 panel "
-              "supports generalisation. Joint L65 with GEM+turtle still needed.")
+        print(
+            "CONDITIONAL_WATCHPOINT candidate: positive Sharpe + L61 panel "
+            "supports generalisation. Joint L65 with GEM+turtle still needed."
+        )
     print("\nCarry-premium caveat (L66): Pure-price audit does NOT include the")
     print("swap premium (~+0.6 SR from rate differential). The strategy's TRUE")
     print("economic Sharpe is likely higher than the pure-price test shows.")

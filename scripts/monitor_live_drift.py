@@ -77,6 +77,7 @@ def _research_baseline_returns() -> pd.Series:
         gem_j5_returns,
         turtle_cat_returns_daily,
     )
+
     gem = gem_j5_returns().dropna()
     turtle = turtle_cat_returns_daily().dropna()
     return build_portfolio(
@@ -90,8 +91,11 @@ def _latest_account_state() -> dict | None:
     try:
         result = subprocess.run(
             ["docker", "logs", "--tail", "200", "titan-portfolio"],
-            capture_output=True, text=True, timeout=15,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
         )
         logs = result.stdout.splitlines()
     except Exception as e:  # noqa: BLE001
@@ -176,11 +180,17 @@ def main() -> int:
     print(f"  live return history: {n_live} bars")
     if n_live < 5:
         print("  insufficient live history for CUSUM (need >= 5 bars) -- recording NAV and exiting")
-        CUSUM_STATE.write_text(json.dumps({
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "status": "insufficient_history",
-            "n_live": n_live,
-        }, indent=2), encoding="utf-8")
+        CUSUM_STATE.write_text(
+            json.dumps(
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "status": "insufficient_history",
+                    "n_live": n_live,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         return 0
 
     # 3. Load research baseline.
@@ -189,11 +199,14 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         print(f"  [error] failed to load research baseline: {e}")
         return 1
-    print(f"  research baseline: {len(baseline)} bars, mean={baseline.mean():.6f}, std={baseline.std():.6f}")
+    print(
+        f"  research baseline: {len(baseline)} bars, mean={baseline.mean():.6f}, std={baseline.std():.6f}"
+    )
 
     # 4. Run CUSUM.
     res = run_cusum_drift(
-        live_returns, baseline,
+        live_returns,
+        baseline,
         k_slack=CUSUM_K_SLACK,
         h_threshold=CUSUM_H_THRESHOLD,
     )
@@ -231,12 +244,13 @@ def main() -> int:
             fh.write(json.dumps(alert) + "\n")
         try:
             from titan.utils.notification import notify_health
+
             notify_health(
                 f"CUSUM LOWER BREACH: live drift below research baseline "
                 f"(lower={res.lower_cusum:.2f}, threshold={CUSUM_H_THRESHOLD})",
                 severity="critical",
                 detail=f"n_live={n_live}, live_mean={res.live_mean:.6f}, "
-                       f"baseline_mean={res.oos_mean:.6f}. Re-audit recommended.",
+                f"baseline_mean={res.oos_mean:.6f}. Re-audit recommended.",
             )
         except Exception:  # noqa: BLE001
             pass

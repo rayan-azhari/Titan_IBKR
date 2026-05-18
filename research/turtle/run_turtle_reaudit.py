@@ -65,8 +65,16 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 SANCTUARY_MONTHS = 12
 PRIMARY_TICKER = "CAT"
 ROBUSTNESS_PANEL = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL",
-    "XOM", "CVX", "JNJ", "PG", "MU",
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "GOOGL",
+    "XOM",
+    "CVX",
+    "JNJ",
+    "PG",
+    "MU",
 ]
 
 # S2 frozen cell grid (per pre-reg).
@@ -153,16 +161,12 @@ def main() -> None:
     print("=" * 72)
 
     bars = _load_h1(PRIMARY_TICKER)
-    print(
-        f"[load] {PRIMARY_TICKER} H1, {bars.shape[0]} bars "
-        f"({bars.index[0]} -> {bars.index[-1]})"
-    )
+    print(f"[load] {PRIMARY_TICKER} H1, {bars.shape[0]} bars ({bars.index[0]} -> {bars.index[-1]})")
 
     sanc = slice_sanctuary(bars, months=SANCTUARY_MONTHS)
     visible = sanc.visible
     print(
-        f"[sanctuary] visible: {visible.shape[0]} bars "
-        f"({visible.index[0]} -> {visible.index[-1]})"
+        f"[sanctuary] visible: {visible.shape[0]} bars ({visible.index[0]} -> {visible.index[-1]})"
     )
     print(
         f"[sanctuary] held out: {sanc.sanctuary.shape[0]} bars "
@@ -196,7 +200,9 @@ def main() -> None:
         full = turtle_returns(visible, cfg=cfg)
         stitched = _stitched_oos_returns(full, folds)
         sr = float(sharpe(stitched, periods_per_year=PERIODS_PER_YEAR_H1_EQ))
-        ci_lo, ci_hi = bootstrap_sharpe_ci(stitched, periods_per_year=PERIODS_PER_YEAR_H1_EQ, seed=42)
+        ci_lo, ci_hi = bootstrap_sharpe_ci(
+            stitched, periods_per_year=PERIODS_PER_YEAR_H1_EQ, seed=42
+        )
         pass1_returns[name] = stitched
         pass1_sharpes[name] = sr
         pass1_cis[name] = (ci_lo, ci_hi)
@@ -211,9 +217,7 @@ def main() -> None:
     print("-" * 72)
     plateau_sharpes = [pass1_sharpes[c] for c in PLATEAU_CELLS]
     plateau_mean = float(np.mean(plateau_sharpes))
-    plateau_spread = (
-        (max(plateau_sharpes) - min(plateau_sharpes)) / max(abs(plateau_mean), 1e-9)
-    )
+    plateau_spread = (max(plateau_sharpes) - min(plateau_sharpes)) / max(abs(plateau_mean), 1e-9)
     for c, s in zip(PLATEAU_CELLS, plateau_sharpes, strict=True):
         print(f"  {c:>20s}  sharpe={s:+.4f}")
     print(f"  spread = {plateau_spread * 100:.2f}%  (H1 gate: 50%; L27 strict: 30%)")
@@ -222,7 +226,9 @@ def main() -> None:
     if not plateau_h1_pass:
         print("  L52 H1 FAILED -- IS plateau did NOT hold OOS. Aborting Pass 2.")
         _write_minimal_report(
-            pass1_sharpes, pass1_cis, plateau_spread,
+            pass1_sharpes,
+            pass1_cis,
+            plateau_spread,
             verdict_global="RETIRED (L52 H1 plateau failed)",
         )
         return
@@ -242,7 +248,9 @@ def main() -> None:
     if not any_can_clear:
         print("  L53 -- no cell can plausibly clear CI_lo > 0. Skipping Pass 2.")
         _write_minimal_report(
-            pass1_sharpes, pass1_cis, plateau_spread,
+            pass1_sharpes,
+            pass1_cis,
+            plateau_spread,
             verdict_global="RETIRED (L53 no cell can clear CI_lo)",
         )
         return
@@ -259,7 +267,9 @@ def main() -> None:
         full_for_sanc = turtle_returns(bars, cfg=cfg)
         sanc_ret = full_for_sanc.loc[sanc.sanctuary_start :]
         sanctuary_returns_by_cell[name] = sanc_ret
-        sanctuary_sharpes_by_cell[name] = float(sharpe(sanc_ret, periods_per_year=PERIODS_PER_YEAR_H1_EQ))
+        sanctuary_sharpes_by_cell[name] = float(
+            sharpe(sanc_ret, periods_per_year=PERIODS_PER_YEAR_H1_EQ)
+        )
         div = sanctuary_divergence_test(
             historical_returns=pass1_returns[name].dropna(),
             sanctuary_returns=sanc_ret.dropna(),
@@ -531,7 +541,9 @@ def _write_full_report(
     lines.append(f"| **panel median** | **{panel_median:+.4f}** |")
     lines.append(f"| **CAT percentile** | **{cat_percentile:.0f}%** |")
     lines.append("")
-    lines.append(f"H6 (panel median >= 0 AND CAT %ile <= 75): **{'SUPPORTED' if h6_supported else 'REJECTED'}**")
+    lines.append(
+        f"H6 (panel median >= 0 AND CAT %ile <= 75): **{'SUPPORTED' if h6_supported else 'REJECTED'}**"
+    )
     lines.append("")
     lines.append("## §4.7 Falsification hypothesis verdicts")
     lines.append("")

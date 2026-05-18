@@ -55,7 +55,7 @@ SANCTUARY_MONTHS = 24
 
 # Per-symbol live config — mirrors `config/etf_trend_<sym>.toml`.
 LIVE_CONFIG = {
-    "DBC": {"slow_ma": 75,  "exit_confirm_days": 1},
+    "DBC": {"slow_ma": 75, "exit_confirm_days": 1},
     "GLD": {"slow_ma": 250, "exit_confirm_days": 5},
 }
 
@@ -148,8 +148,10 @@ def run_spotcheck(symbol: str) -> None:
     excluded = ("C2_gross",)
 
     closes = load_universe(symbol)
-    print(f"[load] {symbol}: {closes.shape[0]} bars "
-          f"({closes.index[0].date()} -> {closes.index[-1].date()})")
+    print(
+        f"[load] {symbol}: {closes.shape[0]} bars "
+        f"({closes.index[0].date()} -> {closes.index[-1].date()})"
+    )
 
     sanc = slice_sanctuary(closes, months=SANCTUARY_MONTHS)
     visible = sanc.visible
@@ -182,8 +184,10 @@ def run_spotcheck(symbol: str) -> None:
         pass1_returns[name] = stitched
         pass1_sharpes[name] = sr
         pass1_cis[name] = (ci_lo, ci_hi)
-        print(f"  {name:>20s}  sharpe={sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  "
-              f"n_oos={len(stitched.dropna())}")
+        print(
+            f"  {name:>20s}  sharpe={sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  "
+            f"n_oos={len(stitched.dropna())}"
+        )
 
     # L52 plateau pre-flight.
     plateau_sharpes = [pass1_sharpes[c] for c in plateau_cells]
@@ -193,7 +197,9 @@ def run_spotcheck(symbol: str) -> None:
 
     # L53 early gate.
     any_can_clear, gate_per_cell = pass1_can_clear_any_cell(
-        pass1_returns, periods_per_year=252, block_size=mc_cfg.block_size_bars,
+        pass1_returns,
+        periods_per_year=252,
+        block_size=mc_cfg.block_size_bars,
     )
     print(f"[L53] any_can_clear={any_can_clear}")
 
@@ -215,13 +221,16 @@ def run_spotcheck(symbol: str) -> None:
             sanctuary_returns=full.loc[sanc.sanctuary_start :].dropna(),
             periods_per_year=252,
         )
-        sanc_pct_by_cell[name] = float(div.percentile) if np.isfinite(div.percentile) else float("nan")
+        sanc_pct_by_cell[name] = (
+            float(div.percentile) if np.isfinite(div.percentile) else float("nan")
+        )
         sanc_lucky_by_cell[name] = bool(div.lucky_flag)
 
     def benchmark_for_mc(df: pd.DataFrame, _sym: str = symbol) -> pd.Series:
         renamed = df.rename(columns={"close": _sym})
         return buy_and_hold_binary_returns(
-            renamed, cfg=EtfTrendBinaryConfig(symbol=_sym),
+            renamed,
+            cfg=EtfTrendBinaryConfig(symbol=_sym),
         )
 
     cell_rows: list[CellRow] = []
@@ -229,7 +238,9 @@ def run_spotcheck(symbol: str) -> None:
         sr_pass1 = pass1_sharpes[name]
         ci_lo, ci_hi = pass1_cis[name]
 
-        def strategy_for_mc(df: pd.DataFrame, _name: str = name, _cfg: EtfTrendBinaryConfig = cfg) -> pd.Series:
+        def strategy_for_mc(
+            df: pd.DataFrame, _name: str = name, _cfg: EtfTrendBinaryConfig = cfg
+        ) -> pd.Series:
             renamed = df.rename(columns={"close": _cfg.symbol})
             return etf_trend_binary_returns(renamed, cfg=_cfg)
 
@@ -260,7 +271,10 @@ def run_spotcheck(symbol: str) -> None:
             return etf_trend_binary_returns(closes_subset, cfg=_cfg)
 
         noise_res = run_noise_robustness(
-            visible, strategy_for_noise, periods_per_year=252, cfg=NoiseConfig(),
+            visible,
+            strategy_for_noise,
+            periods_per_year=252,
+            cfg=NoiseConfig(),
         )
 
         synthetic_mc_p = 0.0 if rel_mc.passes else 1.0
@@ -278,9 +292,12 @@ def run_spotcheck(symbol: str) -> None:
 
         cell_rows.append(
             CellRow(
-                name=name, cfg=cfg,
+                name=name,
+                cfg=cfg,
                 n_oos_bars=len(pass1_returns[name].dropna()),
-                sharpe=sr_pass1, ci_lo=ci_lo, ci_hi=ci_hi,
+                sharpe=sr_pass1,
+                ci_lo=ci_lo,
+                ci_hi=ci_hi,
                 dsr_prob=dsr.dsr_prob,
                 rel_mc_median_dd_reduction=rel_mc.median_dd_reduction,
                 rel_mc_p_strategy_better=rel_mc.p_strategy_better,
@@ -292,24 +309,27 @@ def run_spotcheck(symbol: str) -> None:
                 verdict=decision.verdict.value,
             )
         )
-        print(f"  {name:>20s}  verdict={decision.verdict.value}  CI_lo={ci_lo:+.3f}  "
-              f"rel_dd={rel_mc.median_dd_reduction:.3f}  rel_pass={rel_mc.passes}  "
-              f"noise={decision.noise_axis}")
+        print(
+            f"  {name:>20s}  verdict={decision.verdict.value}  CI_lo={ci_lo:+.3f}  "
+            f"rel_dd={rel_mc.median_dd_reduction:.3f}  rel_pass={rel_mc.passes}  "
+            f"noise={decision.noise_axis}"
+        )
 
     # Selection.
     eligible = [
-        r for r in cell_rows
+        r
+        for r in cell_rows
         if r.name not in excluded and r.verdict in ("DEPLOY", "CONDITIONAL_WATCHPOINT")
     ]
     selected = max(eligible, key=lambda r: r.ci_lo) if eligible else None
     if selected is not None and selected.ci_lo <= 0:
-        verdict_global = (
-            f"NOT PROMOTED — {selected.name} ({selected.verdict}) but CI_lo={selected.ci_lo:+.3f} <= 0"
-        )
+        verdict_global = f"NOT PROMOTED — {selected.name} ({selected.verdict}) but CI_lo={selected.ci_lo:+.3f} <= 0"
     elif selected is None:
         verdict_global = "CONFIRMS BULK-RETIRE — no cell promotable (L56 generalises)"
     else:
-        verdict_global = f"REFUTES BULK-RETIRE — {selected.name} verdict={selected.verdict}, keep live"
+        verdict_global = (
+            f"REFUTES BULK-RETIRE — {selected.name} verdict={selected.verdict}, keep live"
+        )
 
     print("\n" + "=" * 72)
     print(f"FINAL VERDICT: {verdict_global}")
@@ -318,8 +338,13 @@ def run_spotcheck(symbol: str) -> None:
     _write_report(reports_dir, symbol, plateau_spread, cell_rows, verdict_global)
 
 
-def _write_report(reports_dir: Path, symbol: str, plateau_spread: float,
-                   cell_rows: list[CellRow], verdict_global: str) -> None:
+def _write_report(
+    reports_dir: Path,
+    symbol: str,
+    plateau_spread: float,
+    cell_rows: list[CellRow],
+    verdict_global: str,
+) -> None:
     fp = reports_dir / "result_log.md"
     c1 = next(r for r in cell_rows if r.name == "C1_live")
 
@@ -345,7 +370,9 @@ def _write_report(reports_dir: Path, symbol: str, plateau_spread: float,
     lines.append("")
     lines.append("## §4.3 5-axis matrix (L17 rel-MC vs B&H)")
     lines.append("")
-    lines.append("| Cell | Sharpe | CI_lo | Rel-MC DD red | P(strat better) | Rel-MC pass | Sanc Sharpe | Sanc %ile | Lucky | Noise axis | Verdict |")
+    lines.append(
+        "| Cell | Sharpe | CI_lo | Rel-MC DD red | P(strat better) | Rel-MC pass | Sanc Sharpe | Sanc %ile | Lucky | Noise axis | Verdict |"
+    )
     lines.append("|---|---:|---:|---:|---:|:---:|---:|---:|:---:|:---:|---|")
     for r in cell_rows:
         lines.append(

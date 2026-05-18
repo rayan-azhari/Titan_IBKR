@@ -52,9 +52,7 @@ ACCOUNT_STATE_RE = re.compile(
     r"balances=\[AccountBalance\(total=(?P<total>[\d_\.]+) (?P<ccy>\w+),"
     r" locked=(?P<locked>[\d_\.]+) \w+, free=(?P<free>[\d_\.]+) \w+\)\]"
 )
-STRATEGY_RUNNING_RE = re.compile(
-    r"(?P<strategy>TITAN-PORTFOLIO\.\w+Strategy): RUNNING"
-)
+STRATEGY_RUNNING_RE = re.compile(r"(?P<strategy>TITAN-PORTFOLIO\.\w+Strategy): RUNNING")
 ERROR_RE = re.compile(r"\[(ERROR|FATAL)\].*?(?P<msg>[^\[\]]+?)(?:\[|$)")
 
 
@@ -62,9 +60,16 @@ def _get_container_status() -> dict:
     """Get container uptime + state."""
     try:
         result = subprocess.run(
-            ["docker", "inspect", "titan-portfolio",
-             "--format", "{{.State.Status}} | {{.State.StartedAt}} | {{.RestartCount}}"],
-            capture_output=True, text=True, timeout=10,
+            [
+                "docker",
+                "inspect",
+                "titan-portfolio",
+                "--format",
+                "{{.State.Status}} | {{.State.StartedAt}} | {{.RestartCount}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode != 0:
             return {"status": "missing", "raw": result.stderr.strip()}
@@ -83,8 +88,11 @@ def _get_recent_logs(lines: int = 500) -> list[str]:
     try:
         result = subprocess.run(
             ["docker", "logs", "--tail", str(lines), "titan-portfolio"],
-            capture_output=True, text=True, timeout=15,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
         )
         return result.stdout.splitlines() + result.stderr.splitlines()
     except Exception as e:  # noqa: BLE001
@@ -148,9 +156,11 @@ def main() -> int:
     print(f"  container: {container.get('status')}")
     if summary["account"]:
         acc = summary["account"]
-        print(f"  account: {acc['account_id']} | "
-              f"total={acc['balance_total']:.2f} {acc['currency']} | "
-              f"locked={acc['locked']:.2f} | free={acc['free']:.2f}")
+        print(
+            f"  account: {acc['account_id']} | "
+            f"total={acc['balance_total']:.2f} {acc['currency']} | "
+            f"locked={acc['locked']:.2f} | free={acc['free']:.2f}"
+        )
     print(f"  strategies running: {list(summary['strategies'].keys())}")
     print(f"  errors_recent: {len(summary['errors_recent'])}")
 

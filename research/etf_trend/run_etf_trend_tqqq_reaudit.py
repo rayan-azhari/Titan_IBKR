@@ -62,7 +62,9 @@ CELLS: dict[str, EtfTrendTqqqConfig] = {
     "P_ec3": EtfTrendTqqqConfig(slow_ma=150, exit_confirm_days=3),
     "P_ec5": EtfTrendTqqqConfig(slow_ma=150, exit_confirm_days=5),
     "P_ec10": EtfTrendTqqqConfig(slow_ma=150, exit_confirm_days=10),
-    "C2_live_proxy": EtfTrendTqqqConfig(slow_ma=200, exit_confirm_days=1),  # nearest to live (175,1)
+    "C2_live_proxy": EtfTrendTqqqConfig(
+        slow_ma=200, exit_confirm_days=1
+    ),  # nearest to live (175,1)
     "C3_buy_and_hold": EtfTrendTqqqConfig(slow_ma=150, exit_confirm_days=1),
     "C4_gross_no_costs": EtfTrendTqqqConfig(slow_ma=150, exit_confirm_days=1, apply_costs=False),
 }
@@ -128,14 +130,18 @@ def main() -> None:
     print("=" * 72)
 
     closes = load_universe()
-    print(f"[load] QQQ+TQQQ: {closes.shape[0]} bars "
-          f"({closes.index[0].date()} -> {closes.index[-1].date()})")
+    print(
+        f"[load] QQQ+TQQQ: {closes.shape[0]} bars "
+        f"({closes.index[0].date()} -> {closes.index[-1].date()})"
+    )
 
     sanc = slice_sanctuary(closes, months=SANCTUARY_MONTHS)
     visible = sanc.visible
     print(f"[sanctuary] visible: {visible.shape[0]} bars")
-    print(f"[sanctuary] held out: {sanc.sanctuary.shape[0]} bars "
-          f"({sanc.sanctuary_start.date()} -> {sanc.sanctuary_end.date()})")
+    print(
+        f"[sanctuary] held out: {sanc.sanctuary.shape[0]} bars "
+        f"({sanc.sanctuary_start.date()} -> {sanc.sanctuary_end.date()})"
+    )
 
     etf_trend_tqqq_assert_causal(closes, cfg=CELLS[CANONICAL_CELL])
     print("[causality] assert_causal: PASS")
@@ -144,8 +150,10 @@ def main() -> None:
     wfo_cfg = class_def.wfo
     mc_cfg = class_def.mc
     folds = build_folds(visible.index, wfo_cfg, bars_per_year=252)
-    print(f"[wfo] {len(folds)} folds (mode={wfo_cfg.is_mode}, "
-          f"is_min={wfo_cfg.is_min_years}y, oos={wfo_cfg.oos_years}y)")
+    print(
+        f"[wfo] {len(folds)} folds (mode={wfo_cfg.is_mode}, "
+        f"is_min={wfo_cfg.is_min_years}y, oos={wfo_cfg.oos_years}y)"
+    )
     if not folds:
         print("[wfo] No folds — abort.")
         return
@@ -165,8 +173,10 @@ def main() -> None:
         pass1_returns[name] = stitched
         pass1_sharpes[name] = sr
         pass1_cis[name] = (ci_lo, ci_hi)
-        print(f"  {name:>20s}  sharpe={sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  "
-              f"n_oos={len(stitched.dropna())}")
+        print(
+            f"  {name:>20s}  sharpe={sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  "
+            f"n_oos={len(stitched.dropna())}"
+        )
 
     # ── L52 plateau pre-flight ────────────────────────────────────────────
     print("\n" + "-" * 72)
@@ -177,8 +187,10 @@ def main() -> None:
     plateau_spread = (max(plateau_sharpes) - min(plateau_sharpes)) / max(abs(plateau_mean), 1e-9)
     for c, s in zip(PLATEAU_CELLS, plateau_sharpes, strict=True):
         print(f"  {c:>20s}  sharpe={s:+.4f}")
-    print(f"  spread = {plateau_spread * 100:.2f}%  (H1 gate: 30%; "
-          "Wave A.2-confirm uses strict L27 since this is a leveraged-ETF audit)")
+    print(
+        f"  spread = {plateau_spread * 100:.2f}%  (H1 gate: 30%; "
+        "Wave A.2-confirm uses strict L27 since this is a leveraged-ETF audit)"
+    )
     plateau_pass = plateau_spread <= 0.30
 
     # NOTE: even if plateau fails, we run Pass 2 anyway for the L17 rel-MC
@@ -190,7 +202,9 @@ def main() -> None:
     print("L53 early gate")
     print("-" * 72)
     any_can_clear, gate_per_cell = pass1_can_clear_any_cell(
-        pass1_returns, periods_per_year=252, block_size=mc_cfg.block_size_bars,
+        pass1_returns,
+        periods_per_year=252,
+        block_size=mc_cfg.block_size_bars,
     )
     for name, gr in gate_per_cell.items():
         marker = "RUN P2" if gr.can_clear else "skip"
@@ -214,7 +228,9 @@ def main() -> None:
             sanctuary_returns=sanc_ret.dropna(),
             periods_per_year=252,
         )
-        sanctuary_pct_by_cell[name] = float(div.percentile) if np.isfinite(div.percentile) else float("nan")
+        sanctuary_pct_by_cell[name] = (
+            float(div.percentile) if np.isfinite(div.percentile) else float("nan")
+        )
         sanctuary_lucky_by_cell[name] = bool(div.lucky_flag)
 
     # Benchmark: B&H TQQQ on the synthetic path.
@@ -229,8 +245,9 @@ def main() -> None:
         sr_pass1 = pass1_sharpes[name]
         ci_lo, ci_hi = pass1_cis[name]
 
-        def strategy_for_mc(df: pd.DataFrame, _name: str = name,
-                            _cfg: EtfTrendTqqqConfig = cfg) -> pd.Series:
+        def strategy_for_mc(
+            df: pd.DataFrame, _name: str = name, _cfg: EtfTrendTqqqConfig = cfg
+        ) -> pd.Series:
             renamed = pd.DataFrame({"QQQ": df["close"], "TQQQ": df["TQQQ"]})
             if _name == "C3_buy_and_hold":
                 return buy_and_hold_tqqq_returns(renamed, cfg=_cfg)
@@ -258,12 +275,16 @@ def main() -> None:
             n_trials=len(PLATEAU_CELLS),
         )
 
-        def strategy_for_noise(closes_subset: pd.DataFrame, _name: str = name,
-                               _cfg: EtfTrendTqqqConfig = cfg) -> pd.Series:
+        def strategy_for_noise(
+            closes_subset: pd.DataFrame, _name: str = name, _cfg: EtfTrendTqqqConfig = cfg
+        ) -> pd.Series:
             return _returns_for_cell(closes_subset, _name, _cfg)
 
         noise_res = run_noise_robustness(
-            visible, strategy_for_noise, periods_per_year=252, cfg=NoiseConfig(),
+            visible,
+            strategy_for_noise,
+            periods_per_year=252,
+            cfg=NoiseConfig(),
         )
 
         synthetic_mc_p = 0.0 if rel_mc.passes else 1.0
@@ -281,10 +302,13 @@ def main() -> None:
 
         cell_rows.append(
             CellRow(
-                name=name, cfg=cfg,
+                name=name,
+                cfg=cfg,
                 is_bh=(name == "C3_buy_and_hold"),
                 n_oos_bars=len(pass1_returns[name].dropna()),
-                sharpe=sr_pass1, ci_lo=ci_lo, ci_hi=ci_hi,
+                sharpe=sr_pass1,
+                ci_lo=ci_lo,
+                ci_hi=ci_hi,
                 dsr_prob=dsr.dsr_prob,
                 rel_mc_median_dd_reduction=rel_mc.median_dd_reduction,
                 rel_mc_p_strategy_better=rel_mc.p_strategy_better,
@@ -297,13 +321,16 @@ def main() -> None:
                 verdict=decision.verdict.value,
             )
         )
-        print(f"  {name:>20s}  verdict={decision.verdict.value}  CI_lo={ci_lo:+.3f}  "
-              f"rel_dd={rel_mc.median_dd_reduction:.3f}  rel_pass={rel_mc.passes}  "
-              f"noise={decision.noise_axis}")
+        print(
+            f"  {name:>20s}  verdict={decision.verdict.value}  CI_lo={ci_lo:+.3f}  "
+            f"rel_dd={rel_mc.median_dd_reduction:.3f}  rel_pass={rel_mc.passes}  "
+            f"noise={decision.noise_axis}"
+        )
 
     # Selection.
     eligible = [
-        r for r in cell_rows
+        r
+        for r in cell_rows
         if r.name not in EXCLUDED_FROM_PROMOTION
         and r.verdict in ("DEPLOY", "CONDITIONAL_WATCHPOINT")
     ]
@@ -396,7 +423,9 @@ def _write_report(plateau_spread, plateau_pass, cell_rows, verdict_global, l56_c
         lines.append(f"- Canonical rel_mc.passes = {canonical.rel_mc_passes}")
         lines.append(f"- Canonical noise axis = {canonical.noise_axis}")
         lines.append("TQQQ may genuinely add value over B&H under bootstrap (likely because the")
-        lines.append("3x leverage decay makes B&H so catastrophic). Audit remaining variants individually.")
+        lines.append(
+            "3x leverage decay makes B&H so catastrophic). Audit remaining variants individually."
+        )
     lines.append("")
     lines.append("## §4.5 Comparison to SPY audit")
     lines.append("")
@@ -411,7 +440,9 @@ def _write_report(plateau_spread, plateau_pass, cell_rows, verdict_global, l56_c
     lines.append("")
     lines.append("## §4.6 Cost drag")
     lines.append("")
-    lines.append(f"C4 (gross, no costs): OOS Sharpe {gross.sharpe:+.3f}; gap to net = {gross.sharpe - canonical.sharpe:+.3f}")
+    lines.append(
+        f"C4 (gross, no costs): OOS Sharpe {gross.sharpe:+.3f}; gap to net = {gross.sharpe - canonical.sharpe:+.3f}"
+    )
     fp.write_text("\n".join(lines), encoding="utf-8")
     print(f"\n[write] {fp.relative_to(PROJECT_ROOT)}")
 

@@ -82,9 +82,7 @@ def _load_h1(symbol: str) -> pd.DataFrame:
     return df[["open", "high", "low", "close"]].astype(float)
 
 
-def turtle_strategy_fn(
-    bars: pd.DataFrame, *, entry_period: int, exit_period: int
-) -> pd.Series:
+def turtle_strategy_fn(bars: pd.DataFrame, *, entry_period: int, exit_period: int) -> pd.Series:
     """Per-bar net return of the Donchian breakout signal (long-only, binary).
 
     Causality (L18 + L21):
@@ -152,10 +150,7 @@ def assert_causal_turtle(bars: pd.DataFrame) -> None:
 
 def main(ticker: str = DEFAULT_TICKER) -> None:
     bars = _load_h1(ticker)
-    print(
-        f"[turtle-sweep] universe: {ticker} H1, range "
-        f"{bars.index[0]} -> {bars.index[-1]}"
-    )
+    print(f"[turtle-sweep] universe: {ticker} H1, range {bars.index[0]} -> {bars.index[-1]}")
     print(f"[turtle-sweep] total bars: {bars.shape[0]}")
 
     assert_causal_turtle(bars)
@@ -177,7 +172,9 @@ def main(ticker: str = DEFAULT_TICKER) -> None:
         "exit_period": [10, 20, 30, 45],
     }
     n_cells = len(grid["entry_period"]) * len(grid["exit_period"])
-    print(f"[turtle-sweep] running sweep over {n_cells} cells, periods_per_year={PERIODS_PER_YEAR_H1_EQ}...")
+    print(
+        f"[turtle-sweep] running sweep over {n_cells} cells, periods_per_year={PERIODS_PER_YEAR_H1_EQ}..."
+    )
 
     res = run_parameter_sweep(
         is_bars,
@@ -223,8 +220,12 @@ def main(ticker: str = DEFAULT_TICKER) -> None:
     )
     if target is not None and np.isfinite(res.sharpes[target]):
         canonical_sr = res.sharpes[target]
-        print(f"\n[turtle-sweep] LIVE canonical (entry=45, exit=30): IS Sharpe = {canonical_sr:.3f}")
-        print(f"  (Note: Wave B triage Sharpe +1.60 used 24/7 FX annualisation; with US equity H1 RTH (1764), expect ~+{canonical_sr:.2f}.)")
+        print(
+            f"\n[turtle-sweep] LIVE canonical (entry=45, exit=30): IS Sharpe = {canonical_sr:.3f}"
+        )
+        print(
+            f"  (Note: Wave B triage Sharpe +1.60 used 24/7 FX annualisation; with US equity H1 RTH (1764), expect ~+{canonical_sr:.2f}.)"
+        )
         finite_mask = np.isfinite(res.sharpes)
         if finite_mask.any():
             best_idx = int(np.argmax(np.where(finite_mask, res.sharpes, -np.inf)))
@@ -235,11 +236,17 @@ def main(ticker: str = DEFAULT_TICKER) -> None:
                 gap = (best_sr - canonical_sr) / abs(canonical_sr) * 100
                 print(f"[turtle-sweep] best-vs-canonical gap: {gap:+.1f}%")
 
-    report = format_plateau_report(res, candidates, audit_label=f"turtle {ticker} V1-era RE-AUDIT SWEEP")
+    report = format_plateau_report(
+        res, candidates, audit_label=f"turtle {ticker} V1-era RE-AUDIT SWEEP"
+    )
     (REPORTS_DIR / "plateau_report.md").write_text(report, encoding="utf-8")
     (REPORTS_DIR / "sharpe_surface.csv").write_text(surf.to_csv(), encoding="utf-8")
-    (REPORTS_DIR / "cells_long.csv").write_text(res.to_dataframe().to_csv(index=False), encoding="utf-8")
-    print(f"\n[turtle-sweep] wrote: {(REPORTS_DIR / 'plateau_report.md').relative_to(PROJECT_ROOT)}")
+    (REPORTS_DIR / "cells_long.csv").write_text(
+        res.to_dataframe().to_csv(index=False), encoding="utf-8"
+    )
+    print(
+        f"\n[turtle-sweep] wrote: {(REPORTS_DIR / 'plateau_report.md').relative_to(PROJECT_ROOT)}"
+    )
 
 
 if __name__ == "__main__":

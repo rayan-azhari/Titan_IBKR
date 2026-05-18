@@ -68,6 +68,7 @@ def orb_trades(df: pd.DataFrame) -> pd.DataFrame:
     date, side, entry_price, exit_price, ret (net of cost).
     """
     import datetime as dt
+
     or_end = dt.time(10, 0)  # 09:30-10:00 = opening range
     entry_cutoff = dt.time(11, 0)
     exit_time = dt.time(15, 50)
@@ -77,15 +78,15 @@ def orb_trades(df: pd.DataFrame) -> pd.DataFrame:
         if len(day_bars) < 6:
             continue
         # Opening range = bars from 09:30 to 10:00 (exclusive)
-        or_bars = day_bars[(day_bars["et_time"] >= dt.time(9, 30)) &
-                          (day_bars["et_time"] < or_end)]
+        or_bars = day_bars[(day_bars["et_time"] >= dt.time(9, 30)) & (day_bars["et_time"] < or_end)]
         if len(or_bars) < 3:
             continue
         or_high = or_bars["high"].max()
         or_low = or_bars["low"].min()
         # Look for breakout between 10:00 and 11:00
-        breakout_bars = day_bars[(day_bars["et_time"] >= or_end) &
-                                (day_bars["et_time"] < entry_cutoff)]
+        breakout_bars = day_bars[
+            (day_bars["et_time"] >= or_end) & (day_bars["et_time"] < entry_cutoff)
+        ]
         if breakout_bars.empty:
             continue
         side = 0
@@ -106,8 +107,7 @@ def orb_trades(df: pd.DataFrame) -> pd.DataFrame:
         if side == 0:
             continue
         # Exit at 15:50 ET
-        exit_bars = day_bars[(day_bars["et_time"] >= exit_time) &
-                            (day_bars.index > entry_idx)]
+        exit_bars = day_bars[(day_bars["et_time"] >= exit_time) & (day_bars.index > entry_idx)]
         if exit_bars.empty:
             continue
         exit_price = float(exit_bars["close"].iloc[0])
@@ -118,14 +118,16 @@ def orb_trades(df: pd.DataFrame) -> pd.DataFrame:
         # 2x turnover (entry + exit) at 1bp each
         cost = 2 * COST_BPS_PER_TURNOVER / 10_000.0
         net_ret = gross_ret - cost
-        trades.append({
-            "date": trade_date,
-            "side": side,
-            "entry_price": entry_price,
-            "exit_price": exit_price,
-            "gross_ret": gross_ret,
-            "net_ret": net_ret,
-        })
+        trades.append(
+            {
+                "date": trade_date,
+                "side": side,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "gross_ret": gross_ret,
+                "net_ret": net_ret,
+            }
+        )
     return pd.DataFrame(trades)
 
 
@@ -172,13 +174,14 @@ def main() -> None:
 
     # Run on first ticker for L21 smoke
     df0 = _load_m5(TICKERS[0])
-    print(f"\n[load] {TICKERS[0]}: {len(df0)} M5 bars, "
-          f"{df0.index[0]} -> {df0.index[-1]}")
+    print(f"\n[load] {TICKERS[0]}: {len(df0)} M5 bars, {df0.index[0]} -> {df0.index[-1]}")
     assert_causal_orb(df0)
 
     # Per-ticker results
     print("\n--- L61 multi-ticker panel ---")
-    print(f"{'ticker':>7} {'n_trades':>10} {'win_rate':>10} {'per_trade_SR':>14} {'mean_ret':>12} {'std_ret':>10}")
+    print(
+        f"{'ticker':>7} {'n_trades':>10} {'win_rate':>10} {'per_trade_SR':>14} {'mean_ret':>12} {'std_ret':>10}"
+    )
     panel_sharpes = {}
     daily_returns_combined = {}  # date -> avg net_ret across tickers
     for tkr in TICKERS:
@@ -194,7 +197,9 @@ def main() -> None:
             mean_r = float(trades["net_ret"].mean())
             std_r = float(trades["net_ret"].std(ddof=1))
             panel_sharpes[tkr] = sr
-            print(f"  {tkr:>7s}  {n:>10d}  {win_rate:>9.2%}  {sr:>+13.4f}  {mean_r:>+11.4%} {std_r:>9.4%}")
+            print(
+                f"  {tkr:>7s}  {n:>10d}  {win_rate:>9.2%}  {sr:>+13.4f}  {mean_r:>+11.4%} {std_r:>9.4%}"
+            )
             # Build daily-aggregated returns for portfolio
             for _, row in trades.iterrows():
                 d = row["date"]
@@ -216,9 +221,9 @@ def main() -> None:
 
     # Build daily portfolio return (equal-weight across tickers)
     n_tickers = len(panel_sharpes)
-    daily_port_ret = pd.Series({
-        d: r / n_tickers for d, r in daily_returns_combined.items()
-    }).sort_index()
+    daily_port_ret = pd.Series(
+        {d: r / n_tickers for d, r in daily_returns_combined.items()}
+    ).sort_index()
     daily_port_ret.index = pd.to_datetime(daily_port_ret.index)
 
     print(f"\n--- ORB portfolio (equal-weight {n_tickers} tickers) ---")
@@ -232,12 +237,18 @@ def main() -> None:
         print("\n--- L65 ruin assessment (ORB portfolio) ---")
         for w in [0.05, 0.10, 0.15, 0.20]:
             ruin = assess_strategy_ruin(
-                daily_port_ret, deployment_weight=w,
+                daily_port_ret,
+                deployment_weight=w,
                 portfolio_kill_threshold=0.15,
-                horizon_bars=252, block_size=21, n_paths=2000, seed=42,
+                horizon_bars=252,
+                block_size=21,
+                n_paths=2000,
+                seed=42,
             )
-            print(f"  weight={w:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
-                  f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, passes={ruin.passes()}")
+            print(
+                f"  weight={w:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
+                f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, passes={ruin.passes()}"
+            )
     else:
         print(f"  Insufficient days ({len(daily_port_ret)}) for portfolio metrics")
 
@@ -246,12 +257,16 @@ def main() -> None:
     print("VERDICT")
     print("=" * 88)
     if panel_median <= 0 or pct_positive < 0.5:
-        print(f"RETIRE: panel median Sharpe {panel_median:+.4f} or {pct_positive:.0%} positive "
-              f"tickers fails generalisation gate. Signal layer doesn't generalise.")
+        print(
+            f"RETIRE: panel median Sharpe {panel_median:+.4f} or {pct_positive:.0%} positive "
+            f"tickers fails generalisation gate. Signal layer doesn't generalise."
+        )
     elif panel_median > 0 and pct_positive >= 0.5:
-        print(f"CONDITIONAL_WATCHPOINT candidate: panel median {panel_median:+.4f} "
-              f"and {pct_positive:.0%} positive tickers. ORB has weak-but-real edge across "
-              f"the live universe. Joint L65 vs current portfolio still needed before deploy.")
+        print(
+            f"CONDITIONAL_WATCHPOINT candidate: panel median {panel_median:+.4f} "
+            f"and {pct_positive:.0%} positive tickers. ORB has weak-but-real edge across "
+            f"the live universe. Joint L65 vs current portfolio still needed before deploy."
+        )
 
 
 if __name__ == "__main__":

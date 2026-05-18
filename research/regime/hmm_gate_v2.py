@@ -48,13 +48,11 @@ class PanelHMMGateConfig:
     require_broad_trend: bool = False
 
 
-def fit_panel_hmm(
-    panel_is: pd.DataFrame, *, cfg: PanelHMMGateConfig
-) -> hmm.GaussianHMM | None:
+def fit_panel_hmm(panel_is: pd.DataFrame, *, cfg: PanelHMMGateConfig) -> hmm.GaussianHMM | None:
     """Fit a multivariate Gaussian HMM on the IS regime panel."""
     clean = panel_is.dropna(how="any")
     if cfg.train_window_bars is not None:
-        clean = clean.iloc[-cfg.train_window_bars:]
+        clean = clean.iloc[-cfg.train_window_bars :]
     if len(clean) < max(cfg.n_states * 60, 252):
         return None
     obs = clean.to_numpy()
@@ -162,7 +160,9 @@ def compute_panel_regime_gate(
         per_asset_friendly: dict[str, set[int]] = {col: single_set for col in closes_df.columns}
     else:
         per_asset_friendly = identify_trend_friendly_per_asset(
-            state_path_is_series.to_numpy(), log_ret_is, cfg=cfg,
+            state_path_is_series.to_numpy(),
+            log_ret_is,
+            cfg=cfg,
         )
     if cfg.require_broad_trend:
         broad_mean_log_ret = log_ret.mean(axis=1).fillna(0.0)

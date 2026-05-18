@@ -52,7 +52,7 @@ def test_frozen_gate_matches_research_gate() -> None:
     parts = [_load_close(sym, fname) for sym, fname in UNIVERSE.items()]
     closes = pd.concat(parts, axis=1).sort_index()
     first_valid = closes.dropna(how="any").index
-    closes = closes.loc[first_valid[0]:].ffill(limit=5)
+    closes = closes.loc[first_valid[0] :].ffill(limit=5)
     panel = pd.read_parquet(PANEL_FP).sort_index().dropna(how="any")
 
     sanc = slice_sanctuary(closes, months=12)
@@ -69,13 +69,17 @@ def test_frozen_gate_matches_research_gate() -> None:
 
     # 1) Audit-time gate (refit).
     audit_gate = compute_panel_regime_gate(
-        closes_v, panel, cfg=cfg, is_end_idx=is_end_idx,
+        closes_v,
+        panel,
+        cfg=cfg,
+        is_end_idx=is_end_idx,
     )
 
     # 2) Frozen-runtime gate (load artefact, apply).
     art = load_frozen_artefact()
     runtime_gate = compute_panel_regime_gate_frozen(
-        closes_v, panel,
+        closes_v,
+        panel,
         hmm_model=art.hmm_model,
         trend_friendly_per_asset=art.trend_friendly_per_asset,
         smoothing_days=art.smoothing_days,
@@ -87,7 +91,7 @@ def test_frozen_gate_matches_research_gate() -> None:
         f"shape mismatch: audit={audit_gate.shape} vs runtime={runtime_gate.shape}"
     )
     assert (audit_gate.columns == runtime_gate.columns).all(), "column mismatch"
-    diff = (audit_gate.values - runtime_gate.values)
+    diff = audit_gate.values - runtime_gate.values
     max_abs = float(np.max(np.abs(diff)))
     mismatches_per_col = (audit_gate != runtime_gate).sum(axis=0)
     n_mismatch = int(mismatches_per_col.sum())

@@ -60,8 +60,7 @@ class EwmacRegimeConfig(StrategyConfig):
     """I1 v2 EWMAC + regime gate configuration -- maps to C6_smoothed."""
 
     instrument_ids_str: str = (
-        "ES.CME,NQ.CME,CL.NYMEX,BZ.IFEU,HG.COMEX,SI.COMEX,GC.COMEX,"
-        "ZN.CBOT,ZB.CBOT,6E.CME,6J.CME"
+        "ES.CME,NQ.CME,CL.NYMEX,BZ.IFEU,HG.COMEX,SI.COMEX,GC.COMEX,ZN.CBOT,ZB.CBOT,6E.CME,6J.CME"
     )
     bar_type_template: str = "{}-1-DAY-LAST-EXTERNAL"
 
@@ -139,9 +138,7 @@ class EwmacRegimeStrategy(Strategy):
         # Regime panel snapshot (last-read).
         self._panel: pd.DataFrame | None = None
         # Per-symbol synthetic position (notional USD, signed).
-        self._synthetic_notional: dict[str, float] = {
-            str(iid): 0.0 for iid in self._instrument_ids
-        }
+        self._synthetic_notional: dict[str, float] = {str(iid): 0.0 for iid in self._instrument_ids}
         # Last close per symbol used for MTM.
         self._last_close: dict[str, float] = {
             str(iid): float("nan") for iid in self._instrument_ids
@@ -167,6 +164,7 @@ class EwmacRegimeStrategy(Strategy):
 
         # Load frozen IS artefact (model + per-asset trend-friendly map).
         from titan.strategies.ewmac_regime.frozen_artefact import load_frozen_artefact
+
         artefact_fp = PROJECT_ROOT / self._cfg.frozen_artefact_path
         try:
             self._frozen = load_frozen_artefact(artefact_fp)
@@ -211,9 +209,7 @@ class EwmacRegimeStrategy(Strategy):
         if self._halted:
             return
         # Per-bar equity report (V3.6 contract). Kill-switch flattens.
-        _, halted = report_equity_and_check(
-            self, self._prm_id, bar, tracker=self._equity_tracker
-        )
+        _, halted = report_equity_and_check(self, self._prm_id, bar, tracker=self._equity_tracker)
         if halted:
             self._halted = True
             self._flatten_shadow()
@@ -268,7 +264,8 @@ class EwmacRegimeStrategy(Strategy):
 
         # Compute gate using frozen artefact.
         gate = compute_panel_regime_gate_frozen(
-            closes_df, self._panel,
+            closes_df,
+            self._panel,
             hmm_model=self._frozen.hmm_model,
             trend_friendly_per_asset=self._frozen.trend_friendly_per_asset,
             smoothing_days=self._frozen.smoothing_days,
@@ -291,14 +288,17 @@ class EwmacRegimeStrategy(Strategy):
         # target = forecast/target_forecast * (target_vol/instrument_vol_ann) * equity
         equity = (
             self._equity_tracker.current_equity()
-            if self._equity_tracker else self._cfg.initial_equity
+            if self._equity_tracker
+            else self._cfg.initial_equity
         )
         inst_vol_ann = self._instrument_vol(closes_df).iloc[-1]
         # Avoid div-by-zero.
         inst_vol_ann = inst_vol_ann.replace(0, np.nan)
         sized = (
-            gated_forecast / float(self._cfg.target_forecast)
-        ) * (self._cfg.target_vol_annual / inst_vol_ann) * equity
+            (gated_forecast / float(self._cfg.target_forecast))
+            * (self._cfg.target_vol_annual / inst_vol_ann)
+            * equity
+        )
         sized = sized.fillna(0.0)
         # Cap leverage per asset at 2x equity (sanity).
         sized = sized.clip(-2 * equity, 2 * equity)
@@ -319,7 +319,9 @@ class EwmacRegimeStrategy(Strategy):
         )
 
     def _build_closes_df(
-        self, asset_order: list[str], asof: pd.Timestamp,
+        self,
+        asset_order: list[str],
+        asof: pd.Timestamp,
     ) -> pd.DataFrame | None:
         """Stack per-symbol close history into a DataFrame indexed by date.
 
@@ -374,14 +376,19 @@ class EwmacRegimeStrategy(Strategy):
         cap = self._cfg.forecast_cap
         fdm = self._cfg.fdm if self._cfg.fdm > 0 else CARVER_FDM.get(len(speeds), 1.0)
         per_asset_combined = pd.DataFrame(
-            index=closes_df.index, columns=closes_df.columns, dtype=float,
+            index=closes_df.index,
+            columns=closes_df.columns,
+            dtype=float,
         )
         for asset in closes_df.columns:
             close = closes_df[asset]
             accum = []
             for s in speeds:
                 norm = _vol_normalised_ewmac(
-                    close, s[0], s[1], vol_lookback=self._cfg.vol_lookback_days,
+                    close,
+                    s[0],
+                    s[1],
+                    vol_lookback=self._cfg.vol_lookback_days,
                 )
                 scalar = float(CARVER_FORECAST_SCALARS.get(s, 1.0))
                 scaled = (norm * scalar).clip(-cap, cap)

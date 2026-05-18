@@ -912,7 +912,10 @@ REGISTRY: list[AuditEntry] = [
         ci_gate_verdict="FAIL -- all 6 pairs negative Sharpe under causal discipline (EUR/USD -1.21, GBP/USD -0.33, USD/JPY -0.54, AUD/USD -0.49, AUD/JPY -0.47, USD/CHF -0.46)",
         binding_constraint="L21 look-ahead bug in higher-TF alignment. V1 Phase 3 claimed OOS Sharpe +7.71 to +8.28; V1-style baseline (no causality discipline) recovers V1 claim at +6.6 to +14.3 Sharpe. Causal alignment (shift higher TF by 1 TF bar before joining to H1) destroys edge: -1.04 to -0.15 across pairs. Multi-TF composite (4 TFs x 2 signals) amplifies L21 inflation to 7-15 SR units (vs mtf's 2 SR).",
         deployment_status="RETIRED. Live ic_mtf was never Docker-deployed; no allocator action.",
-        new_lessons=["L62 (refined: Sharpe-gap classification)", "L63 (NEW: verify V1-style baseline recovers V1 claim BEFORE concluding fabrication)"],
+        new_lessons=[
+            "L62 (refined: Sharpe-gap classification)",
+            "L63 (NEW: verify V1-style baseline recovers V1 claim BEFORE concluding fabrication)",
+        ],
         notes="Wave B causality audit. Same L21 pattern as mtf (Wave A.5), 4-5x more severe due to multi-signal x multi-TF amplification. CRITICAL METHODOLOGY NOTE: my first run had a data-loader bug (FX H1 parquets store timestamp as a COLUMN with integer RangeIndex; my code interpreted integers as nanoseconds-from-1970, scrambling multi-TF alignment). User challenge 'check critically why catastrophic failure' caught it. Fixed loader -> V1-style reproduction recovered V1 claim -> L21 confirmed as the bug class. New lesson L63: verify V1-style baseline recovers V1 claim before drawing methodology conclusions; otherwise risk false-negative retire verdicts.",
     ),
     # ── turtle Wave B full audit (RETIRE, L60 + L52 + L46 + L61) ──────────

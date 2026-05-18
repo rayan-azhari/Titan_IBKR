@@ -121,16 +121,22 @@ def etf_trend_tqqq_returns(
 
 def main() -> None:
     closes = load_universe()
-    print(f"[tqqq-sweep] universe: QQQ + TQQQ, common range "
-          f"{closes.index[0].date()} -> {closes.index[-1].date()}, {closes.shape[0]} bars")
+    print(
+        f"[tqqq-sweep] universe: QQQ + TQQQ, common range "
+        f"{closes.index[0].date()} -> {closes.index[-1].date()}, {closes.shape[0]} bars"
+    )
 
     cutoff = closes.index[-1] - pd.DateOffset(months=SANCTUARY_MONTHS)
     is_closes = closes.loc[:cutoff]
     sanctuary_closes = closes.loc[cutoff:]
-    print(f"[tqqq-sweep] IS slice: {is_closes.shape[0]} bars "
-          f"({is_closes.index[0].date()} -> {is_closes.index[-1].date()})")
-    print(f"[tqqq-sweep] sanctuary (held out): {sanctuary_closes.shape[0]} bars "
-          f"({sanctuary_closes.index[0].date()} -> {sanctuary_closes.index[-1].date()})")
+    print(
+        f"[tqqq-sweep] IS slice: {is_closes.shape[0]} bars "
+        f"({is_closes.index[0].date()} -> {is_closes.index[-1].date()})"
+    )
+    print(
+        f"[tqqq-sweep] sanctuary (held out): {sanctuary_closes.shape[0]} bars "
+        f"({sanctuary_closes.index[0].date()} -> {sanctuary_closes.index[-1].date()})"
+    )
 
     grid = {
         "slow_ma": [50, 100, 150, 200, 250, 300],
@@ -183,8 +189,10 @@ def main() -> None:
         None,
     )
     if target_200 is not None and np.isfinite(res.sharpes[target_200]):
-        print(f"\n[tqqq-sweep] LIVE canonical proxy (slow_ma=200, exit_confirm_days=1; "
-              f"live uses 175): IS Sharpe = {res.sharpes[target_200]:.3f}")
+        print(
+            f"\n[tqqq-sweep] LIVE canonical proxy (slow_ma=200, exit_confirm_days=1; "
+            f"live uses 175): IS Sharpe = {res.sharpes[target_200]:.3f}"
+        )
 
     # Best cell.
     finite_mask = np.isfinite(res.sharpes)

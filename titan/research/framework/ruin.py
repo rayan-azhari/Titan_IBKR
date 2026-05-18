@@ -263,9 +263,7 @@ def assess_joint_ruin(
 
     weight_sum = sum(deployment_weights.values())
     if weight_sum > 1.0 + 1e-9:
-        raise ValueError(
-            f"Sum of deployment_weights={weight_sum:.3f} exceeds 1.0"
-        )
+        raise ValueError(f"Sum of deployment_weights={weight_sum:.3f} exceeds 1.0")
 
     portfolio_returns = pd.Series(0.0, index=common_idx)
     for name, ret in strategy_returns.items():

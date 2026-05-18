@@ -55,7 +55,9 @@ def _load_parquet(name: str, *, date_col: str = "timestamp") -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────────────
 
 
-def fx_carry_signal(closes: pd.DataFrame, *, sma_period: int = 50, vol_target: float = 0.08) -> pd.Series:
+def fx_carry_signal(
+    closes: pd.DataFrame, *, sma_period: int = 50, vol_target: float = 0.08
+) -> pd.Series:
     """Pure-research fx_carry: long when close > SMA(sma_period); flat else.
     Vol-target sizing via 20-day EWMA realised vol. 1.5 bps cost."""
     close = closes["close"]
@@ -80,7 +82,9 @@ def fx_carry_signal(closes: pd.DataFrame, *, sma_period: int = 50, vol_target: f
 # ─────────────────────────────────────────────────────────────────────
 
 
-def gold_macro_signal(closes: pd.DataFrame, *, slow_ma: int = 200, vol_target: float = 0.10) -> pd.Series:
+def gold_macro_signal(
+    closes: pd.DataFrame, *, slow_ma: int = 200, vol_target: float = 0.10
+) -> pd.Series:
     """Pure-research gold_macro signal-layer: long GLD when close > SMA(200).
     The full live config also requires positive real_rate + dollar composite;
     we test the bare SMA filter — if that's not positive, the composite adds
@@ -183,7 +187,7 @@ def run_triage() -> None:
     ci_lo, ci_hi = bootstrap_sharpe_ci(rets, periods_per_year=BARS_PER_YEAR["D"], seed=42)
     mdd = float(max_drawdown(rets))
     print("  AUD/JPY D, sma_period=50, vol_target=0.08, 14y")
-    print(f"  Sharpe = {sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  MaxDD = {mdd*100:+.1f}%")
+    print(f"  Sharpe = {sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  MaxDD = {mdd * 100:+.1f}%")
     print(f"  Verdict: {_verdict(sr, ci_lo)}")
     fx_carry_summary = (sr, ci_lo, ci_hi, mdd)
 
@@ -199,7 +203,7 @@ def run_triage() -> None:
     ci_lo, ci_hi = bootstrap_sharpe_ci(rets, periods_per_year=BARS_PER_YEAR["D"], seed=42)
     mdd = float(max_drawdown(rets))
     print("  GLD D, slow_ma=200, vol_target=0.10, 21y")
-    print(f"  Sharpe = {sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  MaxDD = {mdd*100:+.1f}%")
+    print(f"  Sharpe = {sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  MaxDD = {mdd * 100:+.1f}%")
     print(f"  Verdict: {_verdict(sr, ci_lo)}")
     gold_macro_summary = (sr, ci_lo, ci_hi, mdd)
 
@@ -217,7 +221,7 @@ def run_triage() -> None:
     ci_lo, ci_hi = bootstrap_sharpe_ci(rets, periods_per_year=BARS_PER_YEAR["H1"], seed=42)
     mdd = float(max_drawdown(rets))
     print("  CAT H1, entry_period=45, exit_period=30, 8y")
-    print(f"  Sharpe = {sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  MaxDD = {mdd*100:+.1f}%")
+    print(f"  Sharpe = {sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  MaxDD = {mdd * 100:+.1f}%")
     print(f"  Verdict: {_verdict(sr, ci_lo)}")
     turtle_summary = (sr, ci_lo, ci_hi, mdd)
 
@@ -225,9 +229,9 @@ def run_triage() -> None:
     csv_path = REPORTS_DIR / "triage_summary.csv"
     lines = [
         "strategy,Sharpe,CI95_lo,CI95_hi,MaxDD,verdict",
-        f"fx_carry_audjpy,{fx_carry_summary[0]:.4f},{fx_carry_summary[1]:.3f},{fx_carry_summary[2]:.3f},{fx_carry_summary[3]*100:.1f},{_verdict(*fx_carry_summary[:2])}",
-        f"gold_macro,{gold_macro_summary[0]:.4f},{gold_macro_summary[1]:.3f},{gold_macro_summary[2]:.3f},{gold_macro_summary[3]*100:.1f},{_verdict(*gold_macro_summary[:2])}",
-        f"turtle_cat_h1,{turtle_summary[0]:.4f},{turtle_summary[1]:.3f},{turtle_summary[2]:.3f},{turtle_summary[3]*100:.1f},{_verdict(*turtle_summary[:2])}",
+        f"fx_carry_audjpy,{fx_carry_summary[0]:.4f},{fx_carry_summary[1]:.3f},{fx_carry_summary[2]:.3f},{fx_carry_summary[3] * 100:.1f},{_verdict(*fx_carry_summary[:2])}",
+        f"gold_macro,{gold_macro_summary[0]:.4f},{gold_macro_summary[1]:.3f},{gold_macro_summary[2]:.3f},{gold_macro_summary[3] * 100:.1f},{_verdict(*gold_macro_summary[:2])}",
+        f"turtle_cat_h1,{turtle_summary[0]:.4f},{turtle_summary[1]:.3f},{turtle_summary[2]:.3f},{turtle_summary[3] * 100:.1f},{_verdict(*turtle_summary[:2])}",
     ]
     csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n[wave-b-triage] wrote: {csv_path.relative_to(PROJECT_ROOT)}")

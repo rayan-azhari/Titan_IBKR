@@ -181,8 +181,10 @@ def main() -> None:
         f"train_auc={train_auc:.4f}, sanctuary_auc={sanc_auc:.4f}"
     )
 
-    print("\n[1] Computing signal series (model predictions × primary signal, "
-          "1-bar shift for causality)...")
+    print(
+        "\n[1] Computing signal series (model predictions × primary signal, "
+        "1-bar shift for causality)..."
+    )
     signal = _compute_signals(df, art)
     rets = _strategy_returns(df, signal)
     n_active = int((signal != 0).sum())
@@ -207,12 +209,17 @@ def main() -> None:
     print("\n[3] V3.6 5-axis decision matrix on visible window...")
     headline_sr = float(sharpe(rets_visible, periods_per_year=PERIODS_PER_YEAR))
     ci_lo, ci_hi = bootstrap_sharpe_ci(
-        rets_visible, periods_per_year=PERIODS_PER_YEAR,
-        n_resamples=1000, seed=42,
+        rets_visible,
+        periods_per_year=PERIODS_PER_YEAR,
+        n_resamples=1000,
+        seed=42,
     )
     # DSR with N=1 (no parameter sweep -- single frozen cell).
     dsr = deflated_sharpe(
-        headline_sr, sr_var_across_trials=0.0, returns=rets_visible, n_trials=1,
+        headline_sr,
+        sr_var_across_trials=0.0,
+        returns=rets_visible,
+        n_trials=1,
     )
     cls = StrategyClass.INTRADAY_MICROSTRUCTURE
     d = defaults_for(cls)
@@ -224,24 +231,31 @@ def main() -> None:
         # the bootstrap-path's strategy returns. The model is INSIDE
         # _compute_signals; on synthetic data the model's predictions
         # reflect the synthetic feature distribution.
-        synth_full = pd.DataFrame({
-            "open": synth_df["close"],
-            "high": synth_df["close"],
-            "low": synth_df["close"],
-            "close": synth_df["close"],
-            "volume": 1.0,
-        })
+        synth_full = pd.DataFrame(
+            {
+                "open": synth_df["close"],
+                "high": synth_df["close"],
+                "low": synth_df["close"],
+                "close": synth_df["close"],
+                "volume": 1.0,
+            }
+        )
         synth_signal = _compute_signals(synth_full, art)
         return _strategy_returns(synth_full, synth_signal)
 
     mc = run_block_mc(
-        primary_close=primary_close, cfg=d.mc,
-        strategy_fn=_strategy_fn, periods_per_year=PERIODS_PER_YEAR,
-        seed=42, extra_series=None, n_workers=DEFAULT_MC_WORKERS,
+        primary_close=primary_close,
+        cfg=d.mc,
+        strategy_fn=_strategy_fn,
+        periods_per_year=PERIODS_PER_YEAR,
+        seed=42,
+        extra_series=None,
+        n_workers=DEFAULT_MC_WORKERS,
     )
     sanc_sh = (
         float(sharpe(rets_sanctuary, periods_per_year=PERIODS_PER_YEAR))
-        if len(rets_sanctuary) >= 50 else 0.0
+        if len(rets_sanctuary) >= 50
+        else 0.0
     )
     div = sanctuary_divergence_test(
         historical_returns=rets_visible,
@@ -251,22 +265,27 @@ def main() -> None:
     closes_v = primary_close.rename("close").to_frame()
 
     def _noise_fn(closes_df_local: pd.DataFrame) -> pd.Series:
-        synth_full = pd.DataFrame({
-            "open": closes_df_local["close"],
-            "high": closes_df_local["close"],
-            "low": closes_df_local["close"],
-            "close": closes_df_local["close"],
-            "volume": 1.0,
-        })
+        synth_full = pd.DataFrame(
+            {
+                "open": closes_df_local["close"],
+                "high": closes_df_local["close"],
+                "low": closes_df_local["close"],
+                "close": closes_df_local["close"],
+                "volume": 1.0,
+            }
+        )
         sig = _compute_signals(synth_full, art)
         return _strategy_returns(synth_full, sig)
 
     noise = run_noise_robustness(
-        closes_v, _noise_fn, periods_per_year=PERIODS_PER_YEAR,
+        closes_v,
+        _noise_fn,
+        periods_per_year=PERIODS_PER_YEAR,
         cfg=NoiseConfig(noise_levels=(0.1, 0.3, 0.5), n_trials=10, max_degradation=0.30),
     )
     inputs = DecisionInputs(
-        ci_lo=ci_lo, dsr_prob=dsr.dsr_prob,
+        ci_lo=ci_lo,
+        dsr_prob=dsr.dsr_prob,
         p_maxdd_gt_threshold=mc.p_maxdd_gt_threshold,
         pass_threshold_prob=mc.pass_threshold_prob,
         sanctuary_sharpe=sanc_sh,
@@ -278,14 +297,18 @@ def main() -> None:
     result = AuditResult(
         n_bars_visible=len(rets_visible),
         n_bars_sanctuary=len(rets_sanctuary),
-        n_active=n_active, fraction_active=frac_active,
+        n_active=n_active,
+        fraction_active=frac_active,
         headline_sharpe=round(headline_sr, 4),
-        ci_lo=round(ci_lo, 4), ci_hi=round(ci_hi, 4),
+        ci_lo=round(ci_lo, 4),
+        ci_hi=round(ci_hi, 4),
         dsr_prob=round(dsr.dsr_prob, 4),
         mc_p_maxdd_gt_threshold=round(mc.p_maxdd_gt_threshold, 4),
         mc_threshold_pct=round(mc.threshold_pct, 4),
         sanctuary_sharpe=round(sanc_sh, 4),
-        sanctuary_percentile=round(div.percentile, 4) if np.isfinite(div.percentile) else float("nan"),
+        sanctuary_percentile=round(div.percentile, 4)
+        if np.isfinite(div.percentile)
+        else float("nan"),
         noise_base=round(noise.base_sharpe, 4),
         noise_passes_mean=noise.passes,
         noise_passes_worst=noise.worst_case_passes,
@@ -297,11 +320,13 @@ def main() -> None:
     print(f"\n  Sharpe (ann.) = {result.headline_sharpe:+.4f}")
     print(f"  CI95          = [{result.ci_lo:+.3f}, {result.ci_hi:+.3f}]")
     print(f"  DSR           = {result.dsr_prob:.4f}")
-    print(f"  MC P(>{result.mc_threshold_pct*100:.0f}%) = {result.mc_p_maxdd_gt_threshold:.4f}")
+    print(f"  MC P(>{result.mc_threshold_pct * 100:.0f}%) = {result.mc_p_maxdd_gt_threshold:.4f}")
     print(f"  Sanc Sharpe   = {result.sanctuary_sharpe:+.4f}")
-    print(f"  Noise base    = {result.noise_base:+.4f} "
-          f"(mean_pass={result.noise_passes_mean}, worst_pass={result.noise_passes_worst}, "
-          f"axis={result.noise_axis})")
+    print(
+        f"  Noise base    = {result.noise_base:+.4f} "
+        f"(mean_pass={result.noise_passes_mean}, worst_pass={result.noise_passes_worst}, "
+        f"axis={result.noise_axis})"
+    )
     print(f"  Verdict       = {result.verdict}")
     print(f"  Rationale     = {result.rationale}")
 
@@ -311,10 +336,10 @@ def main() -> None:
         fh.write("# ml Wave C Audit Result Log -- signal layer (L58 protocol)\n\n")
         fh.write("**Run date:** 2026-05-17\n")
         fh.write(f"**Model:** `{MODEL_PATH.name}` (trained {art['trained_at']})\n")
-        fh.write(f"**Data:** `{DATA_FILE.name}` -- {len(df)} H1 bars "
-                 f"({df.index[0]} -> {df.index[-1]})\n")
-        fh.write(f"**Visible / Sanctuary:** {result.n_bars_visible} / "
-                 f"{result.n_bars_sanctuary}\n")
+        fh.write(
+            f"**Data:** `{DATA_FILE.name}` -- {len(df)} H1 bars ({df.index[0]} -> {df.index[-1]})\n"
+        )
+        fh.write(f"**Visible / Sanctuary:** {result.n_bars_visible} / {result.n_bars_sanctuary}\n")
         fh.write(f"**Active bars:** {result.n_active} ({result.fraction_active:.2%})\n\n")
         fh.write("## §4.1 5-axis matrix\n\n")
         fh.write("| Metric | Value |\n|---|---:|\n")
@@ -322,7 +347,9 @@ def main() -> None:
         fh.write(f"| CI95 lo | {result.ci_lo:+.4f} |\n")
         fh.write(f"| CI95 hi | {result.ci_hi:+.4f} |\n")
         fh.write(f"| DSR prob | {result.dsr_prob:.4f} |\n")
-        fh.write(f"| MC P(>{result.mc_threshold_pct*100:.0f}%) | {result.mc_p_maxdd_gt_threshold:.4f} |\n")
+        fh.write(
+            f"| MC P(>{result.mc_threshold_pct * 100:.0f}%) | {result.mc_p_maxdd_gt_threshold:.4f} |\n"
+        )
         fh.write(f"| Sanctuary Sharpe | {result.sanctuary_sharpe:+.4f} |\n")
         fh.write(f"| Noise base | {result.noise_base:+.4f} |\n")
         fh.write(f"| Noise mean_pass | {result.noise_passes_mean} |\n")

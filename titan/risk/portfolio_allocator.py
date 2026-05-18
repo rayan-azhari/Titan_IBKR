@@ -177,7 +177,8 @@ class PortfolioAllocator:
             self._weights = {sid: 1.0 / n_total for sid in all_sids}
             logger.info(
                 "[Allocator] Floor infeasible (n=%d, min_w=%.3f) -- equal-weighting.",
-                n_total, min_w,
+                n_total,
+                min_w,
             )
             return
 
@@ -188,8 +189,7 @@ class PortfolioAllocator:
             mature_w = {sid: budget_mature / len(raw_weights) for sid in raw_weights}
         else:
             mature_w = {
-                sid: max(0.0, w) * budget_mature / total_raw
-                for sid, w in raw_weights.items()
+                sid: max(0.0, w) * budget_mature / total_raw for sid, w in raw_weights.items()
             }
 
         # Water-fill for [min_w, max_w] subject to sum == budget_mature.
@@ -202,10 +202,7 @@ class PortfolioAllocator:
             if abs(diff) < 1e-12:
                 mature_w = capped
                 break
-            free = [
-                sid for sid, w in capped.items()
-                if min_w + 1e-12 < w < max_w - 1e-12
-            ]
+            free = [sid for sid, w in capped.items() if min_w + 1e-12 < w < max_w - 1e-12]
             if not free:
                 # Fully saturated -- accept whatever sum we ended at; the
                 # caller has chosen bounds that are not simultaneously
@@ -214,13 +211,15 @@ class PortfolioAllocator:
                 logger.warning(
                     "[Allocator] Bounds [%.3f, %.3f] not feasible with mature "
                     "budget %.3f -- accepting saturated weights (sum=%.3f).",
-                    min_w, max_w, budget_mature, sum(capped.values()),
+                    min_w,
+                    max_w,
+                    budget_mature,
+                    sum(capped.values()),
                 )
                 break
             per_free = diff / len(free)
             mature_w = {
-                sid: (capped[sid] + per_free if sid in free else capped[sid])
-                for sid in capped
+                sid: (capped[sid] + per_free if sid in free else capped[sid]) for sid in capped
             }
         else:  # noqa: PLW0120 -- iteration cap exhausted without break
             mature_w = capped

@@ -210,9 +210,7 @@ def _signal_to_position(z: pd.Series, threshold: float) -> pd.Series:
     return pd.Series(pos, index=z.index)
 
 
-def _strategy_returns(
-    position: pd.Series, h1_close: pd.Series
-) -> pd.Series:
+def _strategy_returns(position: pd.Series, h1_close: pd.Series) -> pd.Series:
     log_ret = np.log(h1_close / h1_close.shift(1)).fillna(0.0)
     held = position.shift(1).fillna(0.0)
     gross = held * log_ret
@@ -258,9 +256,7 @@ def run_pair(pair: str) -> dict[str, dict]:
     pos_b = _signal_to_position(z_b, threshold)
     ret_b = _strategy_returns(pos_b, h1_close)
     sr_b = float(sharpe(ret_b, periods_per_year=PERIODS_PER_YEAR_H1_FX))
-    ci_lo_b, ci_hi_b = bootstrap_sharpe_ci(
-        ret_b, periods_per_year=PERIODS_PER_YEAR_H1_FX, seed=42
-    )
+    ci_lo_b, ci_hi_b = bootstrap_sharpe_ci(ret_b, periods_per_year=PERIODS_PER_YEAR_H1_FX, seed=42)
 
     # Variant C: fully strict — causal alignment + IS-only sign + IS-only z.
     signs_c_is = _fit_ic_signs(parts_c, h1_close, slice_until=is_split)
@@ -315,20 +311,28 @@ def main() -> None:
                 f"  n_bars={res['n_h1_bars']}, is_split={res['is_split']}, "
                 f"threshold={res['threshold']}"
             )
-            print(f"  V1_style (look-ahead OK)  : Sharpe={res['V1_style_look_ahead']['sharpe']:+.4f}  "
-                  f"CI=[{res['V1_style_look_ahead']['ci_lo']:+.3f}, {res['V1_style_look_ahead']['ci_hi']:+.3f}]")
-            print(f"  causal align, full-sign  : Sharpe={res['causal_full_sign_fit']['sharpe']:+.4f}  "
-                  f"CI=[{res['causal_full_sign_fit']['ci_lo']:+.3f}, {res['causal_full_sign_fit']['ci_hi']:+.3f}]")
-            print(f"  STRICT causal+IS OOS     : Sharpe={res['strict_causal_IS_only_OOS']['sharpe']:+.4f}  "
-                  f"CI=[{res['strict_causal_IS_only_OOS']['ci_lo']:+.3f}, "
-                  f"{res['strict_causal_IS_only_OOS']['ci_hi']:+.3f}]  "
-                  f"(n_oos={res['strict_causal_IS_only_OOS']['n_oos']})")
+            print(
+                f"  V1_style (look-ahead OK)  : Sharpe={res['V1_style_look_ahead']['sharpe']:+.4f}  "
+                f"CI=[{res['V1_style_look_ahead']['ci_lo']:+.3f}, {res['V1_style_look_ahead']['ci_hi']:+.3f}]"
+            )
+            print(
+                f"  causal align, full-sign  : Sharpe={res['causal_full_sign_fit']['sharpe']:+.4f}  "
+                f"CI=[{res['causal_full_sign_fit']['ci_lo']:+.3f}, {res['causal_full_sign_fit']['ci_hi']:+.3f}]"
+            )
+            print(
+                f"  STRICT causal+IS OOS     : Sharpe={res['strict_causal_IS_only_OOS']['sharpe']:+.4f}  "
+                f"CI=[{res['strict_causal_IS_only_OOS']['ci_lo']:+.3f}, "
+                f"{res['strict_causal_IS_only_OOS']['ci_hi']:+.3f}]  "
+                f"(n_oos={res['strict_causal_IS_only_OOS']['n_oos']})"
+            )
             rows.append(res)
         except (FileNotFoundError, ValueError) as e:
             print(f"  [error] {e}")
 
     # CSV summary.
-    lines = ["pair,threshold,n_bars,V1_style_sharpe,V1_style_ci_lo,causal_full_sharpe,causal_full_ci_lo,strict_OOS_sharpe,strict_OOS_ci_lo"]
+    lines = [
+        "pair,threshold,n_bars,V1_style_sharpe,V1_style_ci_lo,causal_full_sharpe,causal_full_ci_lo,strict_OOS_sharpe,strict_OOS_ci_lo"
+    ]
     for r in rows:
         lines.append(
             f"{r['pair']},{r['threshold']:.2f},{r['n_h1_bars']},"

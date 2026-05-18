@@ -253,83 +253,97 @@ def evaluate_portfolio_vs_benchmark(
     # 1. Sharpe ratio (cash-relative)
     sr_p = float(sharpe(p, periods_per_year=periods_per_year))
     sr_b = float(sharpe(b, periods_per_year=periods_per_year))
-    res.metrics.append(MetricResult(
-        name="1. Sharpe (annualised)",
-        portfolio=sr_p,
-        benchmark=sr_b,
-        threshold="P > B by >= 0.10",
-        passes=(sr_p - sr_b) >= 0.10,
-    ))
+    res.metrics.append(
+        MetricResult(
+            name="1. Sharpe (annualised)",
+            portfolio=sr_p,
+            benchmark=sr_b,
+            threshold="P > B by >= 0.10",
+            passes=(sr_p - sr_b) >= 0.10,
+        )
+    )
 
     # 2. M^2 vol-matched Sharpe (Modigliani-Modigliani)
     sigma_b = float(b.std() * np.sqrt(periods_per_year))
     m2_p = sr_p * sigma_b  # annualised excess return at benchmark vol
     m2_b = sr_b * sigma_b
-    res.metrics.append(MetricResult(
-        name="2. M^2 vol-matched excess",
-        portfolio=m2_p,
-        benchmark=m2_b,
-        threshold="M2_P - M2_B >= 0.015",
-        passes=(m2_p - m2_b) >= 0.015,
-    ))
+    res.metrics.append(
+        MetricResult(
+            name="2. M^2 vol-matched excess",
+            portfolio=m2_p,
+            benchmark=m2_b,
+            threshold="M2_P - M2_B >= 0.015",
+            passes=(m2_p - m2_b) >= 0.015,
+        )
+    )
 
     # 3. Sortino
     sor_p = float(sortino(p, periods_per_year=periods_per_year))
     sor_b = float(sortino(b, periods_per_year=periods_per_year))
-    res.metrics.append(MetricResult(
-        name="3. Sortino",
-        portfolio=sor_p,
-        benchmark=sor_b,
-        threshold="P > B",
-        passes=sor_p > sor_b,
-    ))
+    res.metrics.append(
+        MetricResult(
+            name="3. Sortino",
+            portfolio=sor_p,
+            benchmark=sor_b,
+            threshold="P > B",
+            passes=sor_p > sor_b,
+        )
+    )
 
     # 4. Calmar
     cal_p = float(calmar(p, periods_per_year=periods_per_year))
     cal_b = float(calmar(b, periods_per_year=periods_per_year))
-    res.metrics.append(MetricResult(
-        name="4. Calmar",
-        portfolio=cal_p,
-        benchmark=cal_b,
-        threshold="P - B >= 0.30",
-        passes=(cal_p - cal_b) >= 0.30,
-    ))
+    res.metrics.append(
+        MetricResult(
+            name="4. Calmar",
+            portfolio=cal_p,
+            benchmark=cal_b,
+            threshold="P - B >= 0.30",
+            passes=(cal_p - cal_b) >= 0.30,
+        )
+    )
 
     # 5. MaxDD reduction
     dd_p = float(max_drawdown(p))
     dd_b = float(max_drawdown(b))
     dd_reduction = 1.0 - (dd_p / dd_b) if dd_b < -1e-9 else 0.0
-    res.metrics.append(MetricResult(
-        name="5. MaxDD reduction (1 - P/B)",
-        portfolio=dd_p,
-        benchmark=dd_b,
-        threshold="reduction >= 0.30",
-        passes=dd_reduction >= 0.30,
-    ))
+    res.metrics.append(
+        MetricResult(
+            name="5. MaxDD reduction (1 - P/B)",
+            portfolio=dd_p,
+            benchmark=dd_b,
+            threshold="reduction >= 0.30",
+            passes=dd_reduction >= 0.30,
+        )
+    )
 
     # 6. CVaR-95 reduction
     cv_p = float(cvar(p, alpha=alpha))
     cv_b = float(cvar(b, alpha=alpha))
     cv_reduction = 1.0 - (cv_p / cv_b) if cv_b < -1e-9 else 0.0
-    res.metrics.append(MetricResult(
-        name="6. CVaR-95 reduction",
-        portfolio=cv_p,
-        benchmark=cv_b,
-        threshold="reduction >= 0.25",
-        passes=cv_reduction >= 0.25,
-    ))
+    res.metrics.append(
+        MetricResult(
+            name="6. CVaR-95 reduction",
+            portfolio=cv_p,
+            benchmark=cv_b,
+            threshold="reduction >= 0.25",
+            passes=cv_reduction >= 0.25,
+        )
+    )
 
     # 7. CDaR-95 reduction
     cd_p = float(cdar(p, alpha=alpha))
     cd_b = float(cdar(b, alpha=alpha))
     cd_reduction = 1.0 - (cd_p / cd_b) if cd_b < -1e-9 else 0.0
-    res.metrics.append(MetricResult(
-        name="7. CDaR-95 reduction",
-        portfolio=cd_p,
-        benchmark=cd_b,
-        threshold="reduction >= 0.30",
-        passes=cd_reduction >= 0.30,
-    ))
+    res.metrics.append(
+        MetricResult(
+            name="7. CDaR-95 reduction",
+            portfolio=cd_p,
+            benchmark=cd_b,
+            threshold="reduction >= 0.30",
+            passes=cd_reduction >= 0.30,
+        )
+    )
 
     # 8. Risk-of-ruin (1-year P(NAV drawdown > 15%))
     rng = np.random.default_rng(42)
@@ -345,8 +359,8 @@ def evaluate_portfolio_vs_benchmark(
         n_blocks = (horizon + block_size - 1) // block_size
         n_avail = len(p_arr) - block_size + 1
         starts = rng.integers(0, n_avail, size=n_blocks)
-        path_p = np.concatenate([p_arr[s:s + block_size] for s in starts])[:horizon]
-        path_b = np.concatenate([b_arr[s:s + block_size] for s in starts])[:horizon]
+        path_p = np.concatenate([p_arr[s : s + block_size] for s in starts])[:horizon]
+        path_b = np.concatenate([b_arr[s : s + block_size] for s in starts])[:horizon]
         # Cumulative log-equity drawdown
         eq_p = np.cumsum(path_p)
         eq_b = np.cumsum(path_b)
@@ -358,13 +372,15 @@ def evaluate_portfolio_vs_benchmark(
             ror_b_count += 1
     ror_p = ror_p_count / n_paths
     ror_b = ror_b_count / n_paths
-    res.metrics.append(MetricResult(
-        name="8. P(NAV DD > 15% in 1y)",
-        portfolio=ror_p,
-        benchmark=ror_b,
-        threshold="P < B",
-        passes=ror_p < ror_b,
-    ))
+    res.metrics.append(
+        MetricResult(
+            name="8. P(NAV DD > 15% in 1y)",
+            portfolio=ror_p,
+            benchmark=ror_b,
+            threshold="P < B",
+            passes=ror_p < ror_b,
+        )
+    )
 
     # 9. Information Ratio (Grinold-Kahn)
     excess = p - b
@@ -372,13 +388,15 @@ def evaluate_portfolio_vs_benchmark(
         ir = float(excess.mean() / excess.std() * np.sqrt(periods_per_year))
     else:
         ir = 0.0
-    res.metrics.append(MetricResult(
-        name="9. Information Ratio",
-        portfolio=ir,
-        benchmark=0.0,
-        threshold="IR >= 0.30",
-        passes=ir >= 0.30,
-    ))
+    res.metrics.append(
+        MetricResult(
+            name="9. Information Ratio",
+            portfolio=ir,
+            benchmark=0.0,
+            threshold="IR >= 0.30",
+            passes=ir >= 0.30,
+        )
+    )
 
     # 10. Spearman rank stability of excess returns across MC paths
     # We test whether portfolio outperforms benchmark CONSISTENTLY across MC samples.
@@ -389,21 +407,23 @@ def evaluate_portfolio_vs_benchmark(
     benchmark_means = []
     for _ in range(n_samples):
         idx = rng2.integers(0, len(p) - sample_size)
-        e_sample = excess.iloc[idx:idx + sample_size]
-        b_sample = b.iloc[idx:idx + sample_size]
+        e_sample = excess.iloc[idx : idx + sample_size]
+        b_sample = b.iloc[idx : idx + sample_size]
         excess_means.append(e_sample.mean())
         benchmark_means.append(b_sample.mean())
     rho, _ = spearmanr(excess_means, benchmark_means)
     rho = float(rho) if not np.isnan(rho) else 0.0
     # We want the SIGN of excess to be POSITIVE in most samples (stability of outperformance)
     pct_positive_excess = float(np.mean([e > 0 for e in excess_means]))
-    res.metrics.append(MetricResult(
-        name="10. Excess > 0 stability %",
-        portfolio=pct_positive_excess,
-        benchmark=0.50,
-        threshold="pct >= 0.60",
-        passes=pct_positive_excess >= 0.60,
-    ))
+    res.metrics.append(
+        MetricResult(
+            name="10. Excess > 0 stability %",
+            portfolio=pct_positive_excess,
+            benchmark=0.50,
+            threshold="pct >= 0.60",
+            passes=pct_positive_excess >= 0.60,
+        )
+    )
 
     return res
 
@@ -424,7 +444,9 @@ def main() -> None:
     gem = gem_j5_returns().dropna()
     turtle_cat = turtle_cat_returns_daily().dropna()
     print(f"  GEM J5:     {len(gem)} daily bars, {gem.index[0].date()} -> {gem.index[-1].date()}")
-    print(f"  turtle CAT: {len(turtle_cat)} daily bars, {turtle_cat.index[0].date()} -> {turtle_cat.index[-1].date()}")
+    print(
+        f"  turtle CAT: {len(turtle_cat)} daily bars, {turtle_cat.index[0].date()} -> {turtle_cat.index[-1].date()}"
+    )
 
     # Benchmarks.
     bench_6040 = benchmark_6040_returns().dropna()
@@ -448,7 +470,8 @@ def main() -> None:
     print("TEST 1: Current portfolio (GEM 70% + turtle 20%) vs 60/40 SPY/IEF")
     print("=" * 100)
     eval1 = evaluate_portfolio_vs_benchmark(
-        portfolio_current, bench_6040,
+        portfolio_current,
+        bench_6040,
         portfolio_label="GEM(70%) + turtle(20%) + 10% cash",
         benchmark_label="60/40 SPY/IEF",
     )
@@ -461,7 +484,8 @@ def main() -> None:
     print("TEST 2: GEM alone at 100% vs 60/40 SPY/IEF (full history)")
     print("=" * 100)
     eval2 = evaluate_portfolio_vs_benchmark(
-        gem, bench_6040,
+        gem,
+        bench_6040,
         portfolio_label="GEM J5 (100%)",
         benchmark_label="60/40 SPY/IEF",
     )
@@ -474,7 +498,8 @@ def main() -> None:
     print("TEST 3: turtle CAT alone vs SPY (single-asset-equity baseline)")
     print("=" * 100)
     eval3 = evaluate_portfolio_vs_benchmark(
-        turtle_cat, bench_spy,
+        turtle_cat,
+        bench_spy,
         portfolio_label="turtle CAT (100%)",
         benchmark_label="SPY buy-and-hold",
     )
@@ -487,7 +512,8 @@ def main() -> None:
     print("TEST 4 (sanity): 60/40 vs SPY")
     print("=" * 100)
     eval4 = evaluate_portfolio_vs_benchmark(
-        bench_6040, bench_spy,
+        bench_6040,
+        bench_spy,
         portfolio_label="60/40 SPY/IEF",
         benchmark_label="SPY buy-and-hold",
     )

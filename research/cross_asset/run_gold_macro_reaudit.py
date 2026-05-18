@@ -197,9 +197,7 @@ def main() -> None:
     print("-" * 72)
     plateau_sharpes = [pass1_sharpes[c] for c in PLATEAU_CELLS]
     plateau_mean = float(np.mean(plateau_sharpes))
-    plateau_spread = (
-        (max(plateau_sharpes) - min(plateau_sharpes)) / max(abs(plateau_mean), 1e-9)
-    )
+    plateau_spread = (max(plateau_sharpes) - min(plateau_sharpes)) / max(abs(plateau_mean), 1e-9)
     for c, s in zip(PLATEAU_CELLS, plateau_sharpes, strict=True):
         print(f"  {c:>20s}  sharpe={s:+.4f}")
     print(f"  spread = {plateau_spread * 100:.2f}%  (H1 gate: 50%; L27 strict: 30%)")
@@ -314,7 +312,9 @@ def main() -> None:
         )
 
         # Noise robustness (Varma).
-        def strategy_for_noise(closes_subset: pd.DataFrame, _cfg: GoldMacroConfig = cfg) -> pd.Series:
+        def strategy_for_noise(
+            closes_subset: pd.DataFrame, _cfg: GoldMacroConfig = cfg
+        ) -> pd.Series:
             return gold_macro_returns(closes_subset, cfg=_cfg)
 
         noise_res = run_noise_robustness(

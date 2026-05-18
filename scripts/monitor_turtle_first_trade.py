@@ -63,6 +63,7 @@ def _notify(msg: str, severity: str = "info", detail: str = "") -> None:
     """Call notify_health (best-effort)."""
     try:
         from titan.utils.notification import notify_health
+
         notify_health(msg, severity=severity, detail=detail)
     except Exception as e:  # noqa: BLE001
         print(f"[notify_health unavailable: {e}] {msg}", file=sys.stderr)
@@ -93,14 +94,21 @@ def main() -> int:
 
     # Tail docker logs from the V3.7 cutover.
     cmd = [
-        "docker", "logs", "-f",
-        "--since", CUTOVER_TS,
+        "docker",
+        "logs",
+        "-f",
+        "--since",
+        CUTOVER_TS,
         "titan-portfolio",
     ]
     print(f"[monitor] command: {' '.join(cmd)}")
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding="utf-8", errors="replace",
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
     if proc.stdout is None:
@@ -127,11 +135,14 @@ def main() -> int:
                 first_seen = True
                 # Write the flag file with metadata.
                 FLAG_FILE.write_text(
-                    json.dumps({
-                        "first_seen_ts": datetime.now(timezone.utc).isoformat(),
-                        "event_type": event_type,
-                        "raw_line": line.strip(),
-                    }, indent=2),
+                    json.dumps(
+                        {
+                            "first_seen_ts": datetime.now(timezone.utc).isoformat(),
+                            "event_type": event_type,
+                            "raw_line": line.strip(),
+                        },
+                        indent=2,
+                    ),
                     encoding="utf-8",
                 )
                 _notify(

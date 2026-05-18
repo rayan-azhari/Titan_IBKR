@@ -87,30 +87,38 @@ UNIVERSE: dict[str, str] = {
 # Same C1-C8 as B2/B2b for direct cross-audit comparison.
 CELLS: dict[str, EwmacConfig] = {
     "C1_canonical": EwmacConfig(
-        speeds=((16, 64), (32, 128), (64, 256)), fdm=1.35,
+        speeds=((16, 64), (32, 128), (64, 256)),
+        fdm=1.35,
     ),
     "C2_short_speeds": EwmacConfig(
-        speeds=((4, 16), (8, 32), (16, 64)), fdm=1.35,
+        speeds=((4, 16), (8, 32), (16, 64)),
+        fdm=1.35,
     ),
     "C3_long_speeds": EwmacConfig(
-        speeds=((32, 128), (64, 256), (128, 512)), fdm=1.35,
+        speeds=((32, 128), (64, 256), (128, 512)),
+        fdm=1.35,
     ),
     "C4_full_six": EwmacConfig(
         speeds=((4, 16), (8, 32), (16, 64), (32, 128), (64, 256), (128, 512)),
         fdm=1.51,
     ),
     "C5_two_speed": EwmacConfig(
-        speeds=((16, 64), (64, 256)), fdm=1.20,
+        speeds=((16, 64), (64, 256)),
+        fdm=1.20,
     ),
     "C6_singleton_canonical": EwmacConfig(
-        speeds=((32, 128),), fdm=1.0,
+        speeds=((32, 128),),
+        fdm=1.0,
     ),
     "C7_full_six_unclipped": EwmacConfig(
         speeds=((4, 16), (8, 32), (16, 64), (32, 128), (64, 256), (128, 512)),
-        fdm=1.51, forecast_cap=1e9,
+        fdm=1.51,
+        forecast_cap=1e9,
     ),
     "C8_gross_no_costs": EwmacConfig(
-        speeds=((16, 64), (32, 128), (64, 256)), fdm=1.35, apply_costs=False,
+        speeds=((16, 64), (32, 128), (64, 256)),
+        fdm=1.35,
+        apply_costs=False,
     ),
 }
 CANONICAL_CELL = "C1_canonical"
@@ -147,7 +155,7 @@ def load_universe() -> pd.DataFrame:
     first_valid = df.dropna(how="any").index
     if len(first_valid) == 0:
         raise RuntimeError("No common date range across the 11-symbol universe.")
-    df = df.loc[first_valid[0]:]
+    df = df.loc[first_valid[0] :]
     df = df.ffill(limit=5)
     return df
 
@@ -195,8 +203,18 @@ def _strategy_fn_for_cell(cfg, closes_visible):
     return strategy_fn
 
 
-def run_cell(cell_name, cfg, closes_visible, closes_sanctuary, folds, *,
-             n_trials_sweep, bars_per_year, sweep_sharpes, mc_n_workers):
+def run_cell(
+    cell_name,
+    cfg,
+    closes_visible,
+    closes_sanctuary,
+    folds,
+    *,
+    n_trials_sweep,
+    bars_per_year,
+    sweep_sharpes,
+    mc_n_workers,
+):
     cls = StrategyClass.CROSS_ASSET_MOMENTUM
     d = defaults_for(cls)
     sh, stitched = _stitched_oos_sharpe(closes_visible, cfg, folds, bars_per_year)
@@ -210,16 +228,20 @@ def run_cell(cell_name, cfg, closes_visible, closes_sanctuary, folds, *,
     primary = closes_visible.iloc[:, 0]
     extras: dict[str, pd.Series] = {r: closes_visible[r] for r in closes_visible.columns[1:]}
     mc = run_block_mc(
-        primary_close=primary, cfg=d.mc,
+        primary_close=primary,
+        cfg=d.mc,
         strategy_fn=_strategy_fn_for_cell(cfg, closes_visible),
-        periods_per_year=bars_per_year, seed=42,
-        extra_series=extras, n_workers=mc_n_workers,
+        periods_per_year=bars_per_year,
+        seed=42,
+        extra_series=extras,
+        n_workers=mc_n_workers,
     )
     full = pd.concat([closes_visible, closes_sanctuary])
-    sanc_ret = ewmac_returns(full, cfg=cfg).iloc[len(closes_visible):]
+    sanc_ret = ewmac_returns(full, cfg=cfg).iloc[len(closes_visible) :]
     sanc_sh = float(sharpe(sanc_ret, periods_per_year=bars_per_year))
     div = sanctuary_divergence_test(
-        historical_returns=stitched, sanctuary_returns=sanc_ret,
+        historical_returns=stitched,
+        sanctuary_returns=sanc_ret,
         periods_per_year=bars_per_year,
     )
 
@@ -227,11 +249,14 @@ def run_cell(cell_name, cfg, closes_visible, closes_sanctuary, folds, *,
         return ewmac_returns(df, cfg=cfg)
 
     noise = run_noise_robustness(
-        closes_visible, _noise_fn, periods_per_year=bars_per_year,
+        closes_visible,
+        _noise_fn,
+        periods_per_year=bars_per_year,
         cfg=NoiseConfig(noise_levels=(0.1, 0.3, 0.5), n_trials=10, max_degradation=0.30),
     )
     inputs = DecisionInputs(
-        ci_lo=ci_lo, dsr_prob=dsr.dsr_prob,
+        ci_lo=ci_lo,
+        dsr_prob=dsr.dsr_prob,
         p_maxdd_gt_threshold=mc.p_maxdd_gt_threshold,
         pass_threshold_prob=mc.pass_threshold_prob,
         sanctuary_sharpe=sanc_sh,
@@ -240,18 +265,25 @@ def run_cell(cell_name, cfg, closes_visible, closes_sanctuary, folds, *,
     )
     decision = decide(inputs)
     return CellResult(
-        cell=cell_name, n_oos_bars=len(stitched), n_folds=len(folds),
-        sharpe=round(sh, 4), ci_lo=round(ci_lo, 4), ci_hi=round(ci_hi, 4),
+        cell=cell_name,
+        n_oos_bars=len(stitched),
+        n_folds=len(folds),
+        sharpe=round(sh, 4),
+        ci_lo=round(ci_lo, 4),
+        ci_hi=round(ci_hi, 4),
         dsr_prob=round(dsr.dsr_prob, 4),
         mc_p_maxdd_gt_threshold=round(mc.p_maxdd_gt_threshold, 4),
         mc_threshold_pct=round(mc.threshold_pct, 4),
         sanctuary_sharpe=round(sanc_sh, 4),
-        sanctuary_percentile=round(div.percentile, 4) if np.isfinite(div.percentile) else float("nan"),
+        sanctuary_percentile=round(div.percentile, 4)
+        if np.isfinite(div.percentile)
+        else float("nan"),
         noise_base=round(noise.base_sharpe, 4),
         noise_passes_mean=noise.passes,
         noise_passes_worst=noise.worst_case_passes,
         noise_axis=decision.noise_axis,
-        verdict=decision.verdict.value, rationale=decision.rationale,
+        verdict=decision.verdict.value,
+        rationale=decision.rationale,
     )
 
 
@@ -298,7 +330,9 @@ def main():
     vals = list(plateau_sharpes.values())
     mx, mn = max(vals), min(vals)
     rel_spread = abs(mx - mn) / max(abs(mx), 1e-9)
-    print(f"  Relative spread: {rel_spread:.2%}  (B2 IBKR-3y: 15.28%; B2b yf-21y: 37.10%; L52 gate: <=30%)")
+    print(
+        f"  Relative spread: {rel_spread:.2%}  (B2 IBKR-3y: 15.28%; B2b yf-21y: 37.10%; L52 gate: <=30%)"
+    )
     plateau_passed = rel_spread <= 0.30
     print(f"  Plateau gate: {'PASSED' if plateau_passed else 'FAILED'}")
     if not plateau_passed:
@@ -316,15 +350,25 @@ def main():
     for name, cfg in CELLS.items():
         print(f"\n  > {name}...")
         r = run_cell(
-            name, cfg, closes_visible, closes_sanctuary, folds,
-            n_trials_sweep=len(CELLS), bars_per_year=bars_per_year,
-            sweep_sharpes=sweep_sharpes, mc_n_workers=DEFAULT_MC_WORKERS,
+            name,
+            cfg,
+            closes_visible,
+            closes_sanctuary,
+            folds,
+            n_trials_sweep=len(CELLS),
+            bars_per_year=bars_per_year,
+            sweep_sharpes=sweep_sharpes,
+            mc_n_workers=DEFAULT_MC_WORKERS,
         )
         results.append(r)
         print(f"    Sharpe={r.sharpe:+.4f}  CI=[{r.ci_lo:+.3f}, {r.ci_hi:+.3f}]")
-        print(f"    DSR={r.dsr_prob:.4f}  MC P(>{r.mc_threshold_pct * 100:.0f}%)={r.mc_p_maxdd_gt_threshold:.4f}")
+        print(
+            f"    DSR={r.dsr_prob:.4f}  MC P(>{r.mc_threshold_pct * 100:.0f}%)={r.mc_p_maxdd_gt_threshold:.4f}"
+        )
         print(f"    Sanc Sharpe={r.sanctuary_sharpe:+.4f}")
-        print(f"    Noise: base={r.noise_base:+.4f} mean_pass={r.noise_passes_mean} worst_pass={r.noise_passes_worst} axis={r.noise_axis}")
+        print(
+            f"    Noise: base={r.noise_base:+.4f} mean_pass={r.noise_passes_mean} worst_pass={r.noise_passes_worst} axis={r.noise_axis}"
+        )
         print(f"    Verdict (5-axis): {r.verdict}")
 
     # Result log.
@@ -352,7 +396,9 @@ def main():
             fh.write(f"- {n}: Sharpe = {s:+.4f}\n")
 
         fh.write("\n## §4.2 Per-cell 5-axis matrix\n\n")
-        fh.write("| Cell | Sharpe | CI95 lo | CI95 hi | DSR | MC P | Sanc Sharpe | Noise base | Noise axis | Verdict |\n")
+        fh.write(
+            "| Cell | Sharpe | CI95 lo | CI95 hi | DSR | MC P | Sanc Sharpe | Noise base | Noise axis | Verdict |\n"
+        )
         fh.write("|---|---:|---:|---:|---:|---:|---:|---:|:---:|---|\n")
         for r in results:
             fh.write(
@@ -364,7 +410,9 @@ def main():
 
         c1 = next(r for r in results if r.cell == "C1_canonical")
         fh.write("\n## §4.3 B2 -> B2b -> B2e comparison\n\n")
-        fh.write("| Metric | B2 IBKR-3y | B2b yf-21y | B2e IBKR-x-asset-9y |\n|---|---:|---:|---:|\n")
+        fh.write(
+            "| Metric | B2 IBKR-3y | B2b yf-21y | B2e IBKR-x-asset-9y |\n|---|---:|---:|---:|\n"
+        )
         fh.write(f"| Universe size | 24 | 31 | {len(closes.columns)} |\n")
         fh.write(f"| Bars | 760 | 5574 | {len(closes)} |\n")
         fh.write(f"| WFO folds | 2 | 60 | {len(folds)} |\n")
@@ -374,10 +422,14 @@ def main():
         fh.write(f"| Matrix verdict | COND_WP | RETIRED | {c1.verdict} |\n")
 
         deploy_eligible = [
-            r for r in results
-            if r.cell not in ("C6_singleton_canonical", "C7_full_six_unclipped", "C8_gross_no_costs")
-            and (r.verdict == "DEPLOY"
-                 or (r.verdict == "CONDITIONAL_WATCHPOINT" and r.noise_axis == "best"))
+            r
+            for r in results
+            if r.cell
+            not in ("C6_singleton_canonical", "C7_full_six_unclipped", "C8_gross_no_costs")
+            and (
+                r.verdict == "DEPLOY"
+                or (r.verdict == "CONDITIONAL_WATCHPOINT" and r.noise_axis == "best")
+            )
             and r.ci_lo > 0
         ]
         fh.write("\n## §4.4 Promotion verdict\n\n")

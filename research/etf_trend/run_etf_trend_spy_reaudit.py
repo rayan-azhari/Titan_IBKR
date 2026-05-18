@@ -137,15 +137,21 @@ def main() -> None:
     print("=" * 72)
 
     closes = load_universe()
-    print(f"[load] SPY: {closes.shape[0]} bars "
-          f"({closes.index[0].date()} -> {closes.index[-1].date()})")
+    print(
+        f"[load] SPY: {closes.shape[0]} bars "
+        f"({closes.index[0].date()} -> {closes.index[-1].date()})"
+    )
 
     sanc = slice_sanctuary(closes, months=SANCTUARY_MONTHS)
     visible = sanc.visible
-    print(f"[sanctuary] visible: {visible.shape[0]} bars "
-          f"({visible.index[0].date()} -> {visible.index[-1].date()})")
-    print(f"[sanctuary] held out: {sanc.sanctuary.shape[0]} bars "
-          f"({sanc.sanctuary_start.date()} -> {sanc.sanctuary_end.date()})")
+    print(
+        f"[sanctuary] visible: {visible.shape[0]} bars "
+        f"({visible.index[0].date()} -> {visible.index[-1].date()})"
+    )
+    print(
+        f"[sanctuary] held out: {sanc.sanctuary.shape[0]} bars "
+        f"({sanc.sanctuary_start.date()} -> {sanc.sanctuary_end.date()})"
+    )
 
     etf_trend_spy_assert_causal(closes, cfg=CELLS[CANONICAL_CELL])
     print("[causality] assert_causal: PASS")
@@ -154,8 +160,10 @@ def main() -> None:
     wfo_cfg = class_def.wfo
     mc_cfg = class_def.mc
     folds = build_folds(visible.index, wfo_cfg, bars_per_year=252)
-    print(f"[wfo] {len(folds)} folds (mode={wfo_cfg.is_mode}, "
-          f"is_min={wfo_cfg.is_min_years}y, oos={wfo_cfg.oos_years}y)")
+    print(
+        f"[wfo] {len(folds)} folds (mode={wfo_cfg.is_mode}, "
+        f"is_min={wfo_cfg.is_min_years}y, oos={wfo_cfg.oos_years}y)"
+    )
     if not folds:
         print("[wfo] No folds — abort.")
         return
@@ -175,8 +183,10 @@ def main() -> None:
         pass1_returns[name] = stitched
         pass1_sharpes[name] = sr
         pass1_cis[name] = (ci_lo, ci_hi)
-        print(f"  {name:>20s}  sharpe={sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  "
-              f"n_oos={len(stitched.dropna())}")
+        print(
+            f"  {name:>20s}  sharpe={sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  "
+            f"n_oos={len(stitched.dropna())}"
+        )
 
     # ── L52 plateau pre-flight ────────────────────────────────────────────
     print("\n" + "-" * 72)
@@ -191,8 +201,12 @@ def main() -> None:
     plateau_pass = plateau_spread <= 0.30
     if not plateau_pass:
         print("  L52 H1 FAILED — IS plateau did NOT hold OOS. Aborting Pass 2.")
-        _write_report_minimal(pass1_sharpes, pass1_cis, plateau_spread,
-                              verdict_global="RETIRED (L52 H1 plateau failed)")
+        _write_report_minimal(
+            pass1_sharpes,
+            pass1_cis,
+            plateau_spread,
+            verdict_global="RETIRED (L52 H1 plateau failed)",
+        )
         return
 
     # ── L53 early gate ────────────────────────────────────────────────────
@@ -200,15 +214,21 @@ def main() -> None:
     print("L53 early gate")
     print("-" * 72)
     any_can_clear, gate_per_cell = pass1_can_clear_any_cell(
-        pass1_returns, periods_per_year=252, block_size=mc_cfg.block_size_bars,
+        pass1_returns,
+        periods_per_year=252,
+        block_size=mc_cfg.block_size_bars,
     )
     for name, gr in gate_per_cell.items():
         marker = "RUN P2" if gr.can_clear else "skip"
         print(f"  {name:>20s}  approx_ci_lo={gr.approx_ci_lo:+.4f}  -> {marker}")
     if not any_can_clear:
         print("  L53 — no cell can plausibly clear CI_lo > 0. Skipping Pass 2.")
-        _write_report_minimal(pass1_sharpes, pass1_cis, plateau_spread,
-                              verdict_global="RETIRED (L53 no cell can clear)")
+        _write_report_minimal(
+            pass1_sharpes,
+            pass1_cis,
+            plateau_spread,
+            verdict_global="RETIRED (L53 no cell can clear)",
+        )
         return
 
     # ── Pass 2 — relative MC + DSR + sanctuary + noise + decide ───────────
@@ -229,7 +249,9 @@ def main() -> None:
             sanctuary_returns=sanc_ret.dropna(),
             periods_per_year=252,
         )
-        sanctuary_pct_by_cell[name] = float(div.percentile) if np.isfinite(div.percentile) else float("nan")
+        sanctuary_pct_by_cell[name] = (
+            float(div.percentile) if np.isfinite(div.percentile) else float("nan")
+        )
         sanctuary_lucky_by_cell[name] = bool(div.lucky_flag)
 
     # B&H benchmark for relative MC.
@@ -242,7 +264,9 @@ def main() -> None:
         sr_pass1 = pass1_sharpes[name]
         ci_lo, ci_hi = pass1_cis[name]
 
-        def strategy_for_mc(df: pd.DataFrame, _name: str = name, _cfg: EtfTrendSpyConfig = cfg) -> pd.Series:
+        def strategy_for_mc(
+            df: pd.DataFrame, _name: str = name, _cfg: EtfTrendSpyConfig = cfg
+        ) -> pd.Series:
             renamed = df.rename(columns={"close": "SPY"})
             if _name == "C3_buy_and_hold":
                 return buy_and_hold_spy_returns(renamed, cfg=_cfg)
@@ -272,12 +296,16 @@ def main() -> None:
         )
 
         # Noise robustness.
-        def strategy_for_noise(closes_subset: pd.DataFrame, _name: str = name,
-                               _cfg: EtfTrendSpyConfig = cfg) -> pd.Series:
+        def strategy_for_noise(
+            closes_subset: pd.DataFrame, _name: str = name, _cfg: EtfTrendSpyConfig = cfg
+        ) -> pd.Series:
             return _returns_for_cell(closes_subset, _name, _cfg)
 
         noise_res = run_noise_robustness(
-            visible, strategy_for_noise, periods_per_year=252, cfg=NoiseConfig(),
+            visible,
+            strategy_for_noise,
+            periods_per_year=252,
+            cfg=NoiseConfig(),
         )
 
         # Decide.
@@ -322,14 +350,17 @@ def main() -> None:
                 verdict=decision.verdict.value,
             )
         )
-        print(f"  {name:>20s}  verdict={decision.verdict.value}  "
-              f"CI_lo={ci_lo:+.3f}  sanc_sr={sanctuary_sharpe_by_cell[name]:+.3f}  "
-              f"rel_dd={rel_mc.median_dd_reduction:.3f}  "
-              f"rel_pass={rel_mc.passes}  noise={decision.noise_axis}")
+        print(
+            f"  {name:>20s}  verdict={decision.verdict.value}  "
+            f"CI_lo={ci_lo:+.3f}  sanc_sr={sanctuary_sharpe_by_cell[name]:+.3f}  "
+            f"rel_dd={rel_mc.median_dd_reduction:.3f}  "
+            f"rel_pass={rel_mc.passes}  noise={decision.noise_axis}"
+        )
 
     # ── Selection per §3 rule ─────────────────────────────────────────────
     eligible = [
-        r for r in cell_rows
+        r
+        for r in cell_rows
         if r.name not in EXCLUDED_FROM_PROMOTION
         and r.verdict in ("DEPLOY", "CONDITIONAL_WATCHPOINT")
     ]
@@ -342,7 +373,9 @@ def main() -> None:
     elif selected is None:
         verdict_global = "RETIRED — no cell DEPLOY or CONDITIONAL_WATCHPOINT"
     else:
-        verdict_global = f"PROMOTED — {selected.name} verdict={selected.verdict}, CI_lo={selected.ci_lo:+.3f}"
+        verdict_global = (
+            f"PROMOTED — {selected.name} verdict={selected.verdict}, CI_lo={selected.ci_lo:+.3f}"
+        )
 
     print("\n" + "=" * 72)
     print(f"FINAL VERDICT: {verdict_global}")

@@ -50,9 +50,7 @@ class TurtleConfig:
     cost_bps_per_turnover: float = 1.0
 
 
-def turtle_returns(
-    bars: pd.DataFrame, *, cfg: TurtleConfig | None = None
-) -> pd.Series:
+def turtle_returns(bars: pd.DataFrame, *, cfg: TurtleConfig | None = None) -> pd.Series:
     """Per-bar net return of the long-only Donchian breakout signal.
 
     Parameters:
@@ -110,9 +108,7 @@ def turtle_returns(
     return net.rename("ret")
 
 
-def turtle_assert_causal(
-    bars: pd.DataFrame, *, cfg: TurtleConfig | None = None
-) -> None:
+def turtle_assert_causal(bars: pd.DataFrame, *, cfg: TurtleConfig | None = None) -> None:
     """L21 smoke: corrupting future bars must not change past returns."""
     if cfg is None:
         cfg = TurtleConfig()

@@ -51,9 +51,7 @@ class BondGoldConfig:
     cost_bps_per_turnover: float = 1.0
 
 
-def _causal_rolling_zscore(
-    series: pd.Series, *, window: int
-) -> pd.Series:
+def _causal_rolling_zscore(series: pd.Series, *, window: int) -> pd.Series:
     """Past-only rolling z-score. NaN until ``window`` bars accumulate.
 
     Note (causality): pandas' ``rolling(window).mean()`` at index t uses
@@ -103,9 +101,7 @@ def _vol_target_scale(
     return scale
 
 
-def bond_gold_returns(
-    closes_df: pd.DataFrame, *, cfg: BondGoldConfig | None = None
-) -> pd.Series:
+def bond_gold_returns(closes_df: pd.DataFrame, *, cfg: BondGoldConfig | None = None) -> pd.Series:
     """Per-bar net return of the bond_gold signal.
 
     Parameters:
@@ -156,9 +152,7 @@ def bond_gold_returns(
     return net.rename("ret")
 
 
-def bond_gold_assert_causal(
-    closes_df: pd.DataFrame, *, cfg: BondGoldConfig | None = None
-) -> None:
+def bond_gold_assert_causal(closes_df: pd.DataFrame, *, cfg: BondGoldConfig | None = None) -> None:
     """Smoke test: corrupting future closes must not change past returns.
 
     Picks a random date T in the middle of the series, sets IEF[T:] and

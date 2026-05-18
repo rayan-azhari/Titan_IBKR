@@ -61,7 +61,10 @@ def _seconds_until_next_run() -> float:
 
 def run_monitor() -> int:
     """Spawn the one-shot monitor and return its exit code."""
-    print(f"[cusum-daemon] {datetime.now(timezone.utc).isoformat()} firing monitor_live_drift.py", flush=True)
+    print(
+        f"[cusum-daemon] {datetime.now(timezone.utc).isoformat()} firing monitor_live_drift.py",
+        flush=True,
+    )
     try:
         result = subprocess.run(
             [sys.executable, str(MONITOR_FP)],
@@ -81,7 +84,7 @@ def main() -> None:
     while True:
         wait_s = _seconds_until_next_run()
         wakeup_iso = (datetime.now(timezone.utc) + timedelta(seconds=wait_s)).isoformat()
-        print(f"[cusum-daemon] sleeping {wait_s/3600:.2f}h until {wakeup_iso}", flush=True)
+        print(f"[cusum-daemon] sleeping {wait_s / 3600:.2f}h until {wakeup_iso}", flush=True)
         time.sleep(wait_s)
         run_monitor()
 

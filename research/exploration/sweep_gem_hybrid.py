@@ -128,24 +128,29 @@ def gem_strategy_fn(
 
 def main() -> None:
     closes = load_universe()
-    print(f"[gem-sweep] universe: SPY+EFA+IEF, common range "
-          f"{closes.index[0].date()} -> {closes.index[-1].date()}, {closes.shape[0]} bars")
+    print(
+        f"[gem-sweep] universe: SPY+EFA+IEF, common range "
+        f"{closes.index[0].date()} -> {closes.index[-1].date()}, {closes.shape[0]} bars"
+    )
 
     cutoff = closes.index[-1] - pd.DateOffset(months=SANCTUARY_MONTHS)
     is_closes = closes.loc[:cutoff]
     sanctuary_closes = closes.loc[cutoff:]
-    print(f"[gem-sweep] IS slice: {is_closes.shape[0]} bars "
-          f"({is_closes.index[0].date()} -> {is_closes.index[-1].date()})")
-    print(f"[gem-sweep] sanctuary (held out): {sanctuary_closes.shape[0]} bars "
-          f"({sanctuary_closes.index[0].date()} -> {sanctuary_closes.index[-1].date()})")
+    print(
+        f"[gem-sweep] IS slice: {is_closes.shape[0]} bars "
+        f"({is_closes.index[0].date()} -> {is_closes.index[-1].date()})"
+    )
+    print(
+        f"[gem-sweep] sanctuary (held out): {sanctuary_closes.shape[0]} bars "
+        f"({sanctuary_closes.index[0].date()} -> {sanctuary_closes.index[-1].date()})"
+    )
 
     grid = {
         "vol_estimator_halflife": [10, 20, 40, 60, 100, 160],
         "ann_vol_target": [0.05, 0.075, 0.10, 0.125, 0.15],
     }
     n_cells = len(grid["vol_estimator_halflife"]) * len(grid["ann_vol_target"])
-    print(f"[gem-sweep] running sweep over {n_cells} cells "
-          f"(EWMA halflife x ann vol_target)...")
+    print(f"[gem-sweep] running sweep over {n_cells} cells (EWMA halflife x ann vol_target)...")
 
     res = run_parameter_sweep(
         is_closes,
@@ -182,25 +187,35 @@ def main() -> None:
 
     # Live canonical retrospective.
     target = next(
-        (i for i, cell in enumerate(res.cells)
-         if cell == {"vol_estimator_halflife": 40, "ann_vol_target": 0.10}),
+        (
+            i
+            for i, cell in enumerate(res.cells)
+            if cell == {"vol_estimator_halflife": 40, "ann_vol_target": 0.10}
+        ),
         None,
     )
     if target is not None and np.isfinite(res.sharpes[target]):
         canonical_sr = res.sharpes[target]
-        print(f"\n[gem-sweep] LIVE A1_ewma_hl40 canonical "
-              f"(halflife=40, vol_target=0.10): IS Sharpe = {canonical_sr:.3f}")
+        print(
+            f"\n[gem-sweep] LIVE A1_ewma_hl40 canonical "
+            f"(halflife=40, vol_target=0.10): IS Sharpe = {canonical_sr:.3f}"
+        )
         finite_mask = np.isfinite(res.sharpes)
         if finite_mask.any():
             best_idx = int(np.argmax(np.where(finite_mask, res.sharpes, -np.inf)))
             best_sr = res.sharpes[best_idx]
             best_cell = res.cells[best_idx]
             print(f"[gem-sweep] best cell in grid: {best_cell} -> IS Sharpe = {best_sr:.3f}")
-            gap = (best_sr - canonical_sr) / abs(canonical_sr) * 100 if abs(canonical_sr) > 1e-6 else 0
+            gap = (
+                (best_sr - canonical_sr) / abs(canonical_sr) * 100
+                if abs(canonical_sr) > 1e-6
+                else 0
+            )
             print(f"[gem-sweep] best-vs-canonical gap: {gap:+.1f}%")
         # Check if canonical sits on a plateau.
-        on_plateau = any(c.center == {"vol_estimator_halflife": 40, "ann_vol_target": 0.10}
-                         for c in candidates)
+        on_plateau = any(
+            c.center == {"vol_estimator_halflife": 40, "ann_vol_target": 0.10} for c in candidates
+        )
         print(f"[gem-sweep] LIVE canonical on plateau? {'YES' if on_plateau else 'no'}")
 
     report = format_plateau_report(

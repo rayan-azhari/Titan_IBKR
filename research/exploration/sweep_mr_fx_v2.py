@@ -64,8 +64,7 @@ def mr_fx_v2_strategy_fn(
 
 def main() -> None:
     bars = load_m5_bars()
-    print(f"[mrfx-v2] EUR/USD M5: {bars.shape[0]} bars "
-          f"({bars.index[0]} -> {bars.index[-1]})")
+    print(f"[mrfx-v2] EUR/USD M5: {bars.shape[0]} bars ({bars.index[0]} -> {bars.index[-1]})")
 
     # Causality smoke FIRST (matches the session-anchored mechanic).
     print("\n[mrfx-v2] L04 causality smoke...")
@@ -78,8 +77,9 @@ def main() -> None:
 
     cutoff = bars.index[-1] - pd.DateOffset(months=SANCTUARY_MONTHS)
     is_bars = bars.loc[:cutoff]
-    print(f"[mrfx-v2] IS slice: {is_bars.shape[0]} bars "
-          f"({is_bars.index[0]} -> {is_bars.index[-1]})")
+    print(
+        f"[mrfx-v2] IS slice: {is_bars.shape[0]} bars ({is_bars.index[0]} -> {is_bars.index[-1]})"
+    )
 
     grid = {
         "cost_bps": [0.25, 0.5, 1.0],
@@ -121,19 +121,25 @@ def main() -> None:
 
     # Live proxy: cost_bps=0.5, reversion_target=0.50
     target = next(
-        (i for i, cell in enumerate(res.cells)
-         if cell == {"cost_bps": 0.5, "reversion_target": 0.50}),
+        (
+            i
+            for i, cell in enumerate(res.cells)
+            if cell == {"cost_bps": 0.5, "reversion_target": 0.50}
+        ),
         None,
     )
     if target is not None and np.isfinite(res.sharpes[target]):
-        print(f"\n[mrfx-v2] LIVE-realistic (cost=0.5 bps, reversion=0.50): "
-              f"IS Sharpe = {res.sharpes[target]:.3f}")
+        print(
+            f"\n[mrfx-v2] LIVE-realistic (cost=0.5 bps, reversion=0.50): "
+            f"IS Sharpe = {res.sharpes[target]:.3f}"
+        )
 
     finite_mask = np.isfinite(res.sharpes)
     if finite_mask.any():
         best_idx = int(np.argmax(np.where(finite_mask, res.sharpes, -np.inf)))
-        print(f"[mrfx-v2] best cell: {res.cells[best_idx]} -> "
-              f"IS Sharpe = {res.sharpes[best_idx]:.3f}")
+        print(
+            f"[mrfx-v2] best cell: {res.cells[best_idx]} -> IS Sharpe = {res.sharpes[best_idx]:.3f}"
+        )
 
     print("\n[mrfx-v2] Original Wave A.6 (rolling VWAP, single-tier, 1.5 bps):")
     print("[mrfx-v2]   live proxy = -3.89, every cell -2.0 to -8.4 Sharpe.")

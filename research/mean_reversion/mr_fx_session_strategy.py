@@ -125,7 +125,7 @@ def mr_fx_session_returns(
         is_anchor |= hours == h
     is_anchor[0] = True
     session_id = is_anchor.cumsum()
-    ny_close_mask = (hours == cfg.ny_close_utc)
+    ny_close_mask = hours == cfg.ny_close_utc
 
     # State machine.
     arr_dev = dev.to_numpy()

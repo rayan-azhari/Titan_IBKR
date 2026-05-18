@@ -83,14 +83,16 @@ class IBKRBarFetcher(EWrapper, EClient):
                 ts = datetime.strptime(ts_raw, "%Y%m%d")
             except ValueError:
                 ts = None
-        self.bars.append({
-            "timestamp": ts,
-            "open": float(bar.open),
-            "high": float(bar.high),
-            "low": float(bar.low),
-            "close": float(bar.close),
-            "volume": float(bar.volume),
-        })
+        self.bars.append(
+            {
+                "timestamp": ts,
+                "open": float(bar.open),
+                "high": float(bar.high),
+                "low": float(bar.low),
+                "close": float(bar.close),
+                "volume": float(bar.volume),
+            }
+        )
 
     def historicalDataEnd(self, reqId: int, start: str, end: str) -> None:  # noqa: N802, ARG002
         self.done.set()
@@ -166,7 +168,11 @@ def download_ticker(fetcher: IBKRBarFetcher, ticker: str) -> int:
     while days_remaining > 0:
         chunk_idx += 1
         days = min(CHUNK_DAYS, days_remaining)
-        print(f"  chunk {chunk_idx}: end={end_dt.strftime('%Y%m%d')}, duration={days}d", end="", flush=True)
+        print(
+            f"  chunk {chunk_idx}: end={end_dt.strftime('%Y%m%d')}, duration={days}d",
+            end="",
+            flush=True,
+        )
         bars = _request_chunk(fetcher, contract, end_dt, days)
         n_bars = len(bars)
         print(f" -> {n_bars} bars")

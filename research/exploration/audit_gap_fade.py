@@ -49,9 +49,14 @@ def _load_h1(pair: str = "EUR_USD") -> pd.DataFrame:
 
 def _atr_h1(df: pd.DataFrame, period: int = 14) -> pd.Series:
     h, lo, c = df["high"], df["low"], df["close"]
-    tr = pd.concat([
-        h - lo, (h - c.shift(1)).abs(), (lo - c.shift(1)).abs(),
-    ], axis=1).max(axis=1)
+    tr = pd.concat(
+        [
+            h - lo,
+            (h - c.shift(1)).abs(),
+            (lo - c.shift(1)).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
     return tr.rolling(period, min_periods=period).mean()
 
 
@@ -64,7 +69,6 @@ def build_gap_fade_trades(h1: pd.DataFrame, gap_atr_mult: float = 1.5) -> pd.Dat
     # Group by trading date (rough — based on UTC date of the 07:00 bar)
     by_date = h1.groupby("date")
     prev_close = None
-    prev_date = None
 
     for date, day_df in by_date:
         open_bar = day_df[day_df["hour"] == 7]
@@ -74,7 +78,6 @@ def build_gap_fade_trades(h1: pd.DataFrame, gap_atr_mult: float = 1.5) -> pd.Dat
             ny_close_bar = day_df[day_df["hour"] == 21]
             if not ny_close_bar.empty:
                 prev_close = float(ny_close_bar["close"].iloc[0])
-                prev_date = date
             continue
 
         # Use the open of the 07:00 bar as the entry reference (gap from prev NY close)
@@ -82,17 +85,15 @@ def build_gap_fade_trades(h1: pd.DataFrame, gap_atr_mult: float = 1.5) -> pd.Dat
         london_entry_price = float(open_bar["close"].iloc[0])  # enter at 07:00 close
         gap = london_open - prev_close
 
-        # ATR threshold (use ATR from the close of the prev_date 21:00 bar)
+        # ATR threshold (use ATR from the close of the prior NY 21:00 bar)
         atr_at_entry = atr.loc[open_bar.index[0]] if open_bar.index[0] in atr.index else np.nan
         if not np.isfinite(atr_at_entry):
             prev_close = float(close_bar["close"].iloc[0])
-            prev_date = date
             continue
 
         threshold = gap_atr_mult * atr_at_entry
         if abs(gap) < threshold:
             prev_close = float(close_bar["close"].iloc[0])
-            prev_date = date
             continue
 
         # Fade: gap UP -> short; gap DOWN -> long
@@ -102,21 +103,22 @@ def build_gap_fade_trades(h1: pd.DataFrame, gap_atr_mult: float = 1.5) -> pd.Dat
         cost = 2 * COST_BPS / 10_000.0
         net_ret = gross_ret - cost
 
-        trades.append({
-            "date": date,
-            "prev_close": prev_close,
-            "london_open": london_open,
-            "entry_price": london_entry_price,
-            "exit_price": exit_price,
-            "gap": gap,
-            "atr": float(atr_at_entry),
-            "side": side,
-            "gross_ret": gross_ret,
-            "net_ret": net_ret,
-        })
+        trades.append(
+            {
+                "date": date,
+                "prev_close": prev_close,
+                "london_open": london_open,
+                "entry_price": london_entry_price,
+                "exit_price": exit_price,
+                "gap": gap,
+                "atr": float(atr_at_entry),
+                "side": side,
+                "gross_ret": gross_ret,
+                "net_ret": net_ret,
+            }
+        )
 
         prev_close = exit_price
-        prev_date = date
 
     return pd.DataFrame(trades)
 
@@ -134,7 +136,6 @@ def assert_causal_gap_fade(h1: pd.DataFrame) -> None:
     h1_c.iloc[-n_corrupt:, h1_c.columns.get_loc("low")] *= 100.0
     pert = build_gap_fade_trades(h1_c)
     # Past trades (date before the corruption start) should be unchanged
-    cutoff_date = h1.iloc[-n_corrupt - 5]["close"]  # placeholder; use date instead
     cutoff_date_actual = h1.index[-n_corrupt - 5].date()
     base_past = base[base["date"] < cutoff_date_actual]
     pert_past = pert[pert["date"] < cutoff_date_actual]
@@ -184,8 +185,10 @@ def main() -> None:
     # Live config: gap_atr_mult=1.5
     live_trades = build_gap_fade_trades(h1, gap_atr_mult=1.5)
     live_sr = per_trade_sharpe(live_trades)
-    print(f"\n[live config (gap_atr_mult=1.5)] per-trade Sharpe = {live_sr:+.4f}, "
-          f"n={len(live_trades)}, win_rate={float((live_trades['net_ret']>0).mean()):.2%}")
+    print(
+        f"\n[live config (gap_atr_mult=1.5)] per-trade Sharpe = {live_sr:+.4f}, "
+        f"n={len(live_trades)}, win_rate={float((live_trades['net_ret'] > 0).mean()):.2%}"
+    )
 
     # L65 ruin if signal positive
     if live_sr > 0 and len(live_trades) >= 30:
@@ -197,12 +200,18 @@ def main() -> None:
         print("\n--- L65 single-strategy ruin ---")
         for w in [0.05, 0.10, 0.15]:
             ruin = assess_strategy_ruin(
-                daily_ret, deployment_weight=w,
-                portfolio_kill_threshold=0.15, horizon_bars=252,
-                block_size=21, n_paths=2000, seed=42,
+                daily_ret,
+                deployment_weight=w,
+                portfolio_kill_threshold=0.15,
+                horizon_bars=252,
+                block_size=21,
+                n_paths=2000,
+                seed=42,
             )
-            print(f"  weight={w:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
-                  f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, passes={ruin.passes()}")
+            print(
+                f"  weight={w:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
+                f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, passes={ruin.passes()}"
+            )
 
     # Verdict
     print("\n" + "=" * 88)

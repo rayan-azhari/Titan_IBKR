@@ -81,13 +81,13 @@ def _make_cfg(*, halflife: int, vol_target: float) -> GemConfig:
 
 
 CELLS: dict[str, GemConfig] = {
-    "C1_canonical":      _make_cfg(halflife=20, vol_target=0.05),
-    "P_hl10_vt05":       _make_cfg(halflife=10, vol_target=0.05),
-    "P_hl40_vt05":       _make_cfg(halflife=40, vol_target=0.05),
-    "P_hl60_vt05":       _make_cfg(halflife=60, vol_target=0.05),
-    "P_hl20_vt075":      _make_cfg(halflife=20, vol_target=0.075),
-    "C2_constrained":    _make_cfg(halflife=20, vol_target=0.10),
-    "C3_J4_live":        _make_cfg(halflife=40, vol_target=0.10),
+    "C1_canonical": _make_cfg(halflife=20, vol_target=0.05),
+    "P_hl10_vt05": _make_cfg(halflife=10, vol_target=0.05),
+    "P_hl40_vt05": _make_cfg(halflife=40, vol_target=0.05),
+    "P_hl60_vt05": _make_cfg(halflife=60, vol_target=0.05),
+    "P_hl20_vt075": _make_cfg(halflife=20, vol_target=0.075),
+    "C2_constrained": _make_cfg(halflife=20, vol_target=0.10),
+    "C3_J4_live": _make_cfg(halflife=40, vol_target=0.10),
     "C4_gross_no_costs": _make_cfg(halflife=20, vol_target=0.05),
 }
 CANONICAL_CELL = "C1_canonical"
@@ -171,7 +171,9 @@ def buy_and_hold_60_40(closes: pd.DataFrame) -> pd.Series:
         spy = closes["close"]
         ief = closes["IEF"]
     else:
-        raise ValueError(f"buy_and_hold_60_40 needs SPY+IEF or close+IEF; got {list(closes.columns)}")
+        raise ValueError(
+            f"buy_and_hold_60_40 needs SPY+IEF or close+IEF; got {list(closes.columns)}"
+        )
     spy_ret = np.log(spy / spy.shift(1)).fillna(0.0)
     ief_ret = np.log(ief / ief.shift(1)).fillna(0.0)
     # Static 60/40 (rebalanced daily — close enough for MC purposes).
@@ -179,8 +181,9 @@ def buy_and_hold_60_40(closes: pd.DataFrame) -> pd.Series:
     weight_ief = pd.Series(0.4, index=ief_ret.index)
     weight_spy.iloc[0] = 0.0
     weight_ief.iloc[0] = 0.0
-    return (weight_spy.shift(1).fillna(0.0) * spy_ret
-            + weight_ief.shift(1).fillna(0.0) * ief_ret).rename("ret")
+    return (
+        weight_spy.shift(1).fillna(0.0) * spy_ret + weight_ief.shift(1).fillna(0.0) * ief_ret
+    ).rename("ret")
 
 
 def main() -> None:
@@ -189,14 +192,18 @@ def main() -> None:
     print("=" * 72)
 
     closes = load_universe()
-    print(f"[load] SPY+EFA+IEF: {closes.shape[0]} bars "
-          f"({closes.index[0].date()} -> {closes.index[-1].date()})")
+    print(
+        f"[load] SPY+EFA+IEF: {closes.shape[0]} bars "
+        f"({closes.index[0].date()} -> {closes.index[-1].date()})"
+    )
 
     sanc = slice_sanctuary(closes, months=SANCTUARY_MONTHS)
     visible = sanc.visible
     print(f"[sanctuary] visible: {visible.shape[0]} bars")
-    print(f"[sanctuary] held out: {sanc.sanctuary.shape[0]} bars "
-          f"({sanc.sanctuary_start.date()} -> {sanc.sanctuary_end.date()})")
+    print(
+        f"[sanctuary] held out: {sanc.sanctuary.shape[0]} bars "
+        f"({sanc.sanctuary_start.date()} -> {sanc.sanctuary_end.date()})"
+    )
 
     gem_assert_causal(closes, cfg=CELLS[CANONICAL_CELL])
     print("[causality] gem_assert_causal: PASS")
@@ -225,8 +232,10 @@ def main() -> None:
         pass1_returns[name] = stitched
         pass1_sharpes[name] = sr
         pass1_cis[name] = (ci_lo, ci_hi)
-        print(f"  {name:>20s}  sharpe={sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  "
-              f"n_oos={len(stitched.dropna())}")
+        print(
+            f"  {name:>20s}  sharpe={sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  "
+            f"n_oos={len(stitched.dropna())}"
+        )
 
     # ── L52 plateau pre-flight ────────────────────────────────────────────
     print("\n" + "-" * 72)
@@ -245,7 +254,9 @@ def main() -> None:
     print("L53 early gate")
     print("-" * 72)
     any_can_clear, gate_per_cell = pass1_can_clear_any_cell(
-        pass1_returns, periods_per_year=252, block_size=mc_cfg.block_size_bars,
+        pass1_returns,
+        periods_per_year=252,
+        block_size=mc_cfg.block_size_bars,
     )
     for name, gr in gate_per_cell.items():
         marker = "RUN P2" if gr.can_clear else "skip"
@@ -269,7 +280,9 @@ def main() -> None:
             sanctuary_returns=sanc_ret.dropna(),
             periods_per_year=252,
         )
-        sanctuary_pct_by_cell[name] = float(div.percentile) if np.isfinite(div.percentile) else float("nan")
+        sanctuary_pct_by_cell[name] = (
+            float(div.percentile) if np.isfinite(div.percentile) else float("nan")
+        )
         sanctuary_lucky_by_cell[name] = bool(div.lucky_flag)
 
     def benchmark_for_mc(df: pd.DataFrame) -> pd.Series:
@@ -282,7 +295,9 @@ def main() -> None:
         sr_pass1 = pass1_sharpes[name]
         ci_lo, ci_hi = pass1_cis[name]
 
-        def strategy_for_mc(df: pd.DataFrame, _name: str = name, _cfg: GemConfig = cfg) -> pd.Series:
+        def strategy_for_mc(
+            df: pd.DataFrame, _name: str = name, _cfg: GemConfig = cfg
+        ) -> pd.Series:
             renamed = pd.DataFrame({"SPY": df["close"], "EFA": df["EFA"], "IEF": df["IEF"]})
             return _returns_for_cell(renamed, _name, _cfg)
 
@@ -308,12 +323,16 @@ def main() -> None:
             n_trials=len(PLATEAU_CELLS),
         )
 
-        def strategy_for_noise(closes_subset: pd.DataFrame, _name: str = name,
-                               _cfg: GemConfig = cfg) -> pd.Series:
+        def strategy_for_noise(
+            closes_subset: pd.DataFrame, _name: str = name, _cfg: GemConfig = cfg
+        ) -> pd.Series:
             return _returns_for_cell(closes_subset, _name, _cfg)
 
         noise_res = run_noise_robustness(
-            visible, strategy_for_noise, periods_per_year=252, cfg=NoiseConfig(),
+            visible,
+            strategy_for_noise,
+            periods_per_year=252,
+            cfg=NoiseConfig(),
         )
 
         synthetic_mc_p = 0.0 if rel_mc.passes else 1.0
@@ -331,9 +350,13 @@ def main() -> None:
 
         cell_rows.append(
             CellRow(
-                name=name, cfg=cfg, is_gross=(name == "C4_gross_no_costs"),
+                name=name,
+                cfg=cfg,
+                is_gross=(name == "C4_gross_no_costs"),
                 n_oos_bars=len(pass1_returns[name].dropna()),
-                sharpe=sr_pass1, ci_lo=ci_lo, ci_hi=ci_hi,
+                sharpe=sr_pass1,
+                ci_lo=ci_lo,
+                ci_hi=ci_hi,
                 dsr_prob=dsr.dsr_prob,
                 rel_mc_median_dd_reduction=rel_mc.median_dd_reduction,
                 rel_mc_p_strategy_better=rel_mc.p_strategy_better,
@@ -346,13 +369,16 @@ def main() -> None:
                 verdict=decision.verdict.value,
             )
         )
-        print(f"  {name:>20s}  verdict={decision.verdict.value}  CI_lo={ci_lo:+.3f}  "
-              f"rel_dd={rel_mc.median_dd_reduction:.3f}  rel_pass={rel_mc.passes}  "
-              f"noise={decision.noise_axis}")
+        print(
+            f"  {name:>20s}  verdict={decision.verdict.value}  CI_lo={ci_lo:+.3f}  "
+            f"rel_dd={rel_mc.median_dd_reduction:.3f}  rel_pass={rel_mc.passes}  "
+            f"noise={decision.noise_axis}"
+        )
 
     # Selection.
     eligible = [
-        r for r in cell_rows
+        r
+        for r in cell_rows
         if r.name not in EXCLUDED_FROM_PROMOTION
         and r.verdict in ("DEPLOY", "CONDITIONAL_WATCHPOINT")
     ]
@@ -366,8 +392,7 @@ def main() -> None:
         verdict_global = "NOT PROMOTED — no cell DEPLOY or CONDITIONAL_WATCHPOINT (J4 live remains)"
     else:
         verdict_global = (
-            f"PROMOTED — {selected.name} verdict={selected.verdict}, "
-            f"CI_lo={selected.ci_lo:+.3f}"
+            f"PROMOTED — {selected.name} verdict={selected.verdict}, CI_lo={selected.ci_lo:+.3f}"
         )
 
     print("\n" + "=" * 72)

@@ -119,7 +119,9 @@ def main() -> None:
         "skip_months": [0, 1, 2, 3],
     }
 
-    print(f"[b4b-sweep] running sweep over {len(grid['momentum_window_months']) * len(grid['skip_months'])} cells...")
+    print(
+        f"[b4b-sweep] running sweep over {len(grid['momentum_window_months']) * len(grid['skip_months'])} cells..."
+    )
     res = run_parameter_sweep(
         is_closes,
         strategy_fn=tsmom_strategy_fn,
@@ -186,7 +188,9 @@ def main() -> None:
     report_fp.write_text(report, encoding="utf-8")
 
     (REPORTS_DIR / "sharpe_surface.csv").write_text(surf.to_csv(), encoding="utf-8")
-    (REPORTS_DIR / "cells_long.csv").write_text(res.to_dataframe().to_csv(index=False), encoding="utf-8")
+    (REPORTS_DIR / "cells_long.csv").write_text(
+        res.to_dataframe().to_csv(index=False), encoding="utf-8"
+    )
 
     print(f"\n[b4b-sweep] wrote: {report_fp.relative_to(PROJECT_ROOT)}")
     print(f"[b4b-sweep] wrote: {(REPORTS_DIR / 'sharpe_surface.csv').relative_to(PROJECT_ROOT)}")

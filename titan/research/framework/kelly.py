@@ -142,7 +142,7 @@ def compute_kelly_fraction(
     mu_for_kelly = edge_sharpe * annual_vol
 
     # Kelly: f* = mu / sigma^2 (both annualised, log-utility convention).
-    full_kelly = mu_for_kelly / (annual_vol ** 2) if annual_vol > 1e-12 else 0.0
+    full_kelly = mu_for_kelly / (annual_vol**2) if annual_vol > 1e-12 else 0.0
     full_kelly = max(0.0, full_kelly)  # cap at 0 (no shorting via negative Kelly here)
 
     fractional_weight = fractional * full_kelly

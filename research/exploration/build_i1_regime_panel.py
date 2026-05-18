@@ -70,8 +70,7 @@ def main() -> None:
     common = None
     for s in components.values():
         common = s.index if common is None else common.intersection(s.index)
-    print(f"\n[align] common index: {len(common)} bars, "
-          f"{common[0].date()} -> {common[-1].date()}")
+    print(f"\n[align] common index: {len(common)} bars, {common[0].date()} -> {common[-1].date()}")
 
     panel = pd.DataFrame(index=common)
 
@@ -117,9 +116,11 @@ def main() -> None:
 
     # Drop early NaN rows (rolling windows need history)
     panel_clean = panel.dropna()
-    print(f"\n[clean] full panel: {len(panel)} rows, "
-          f"after dropna: {len(panel_clean)} rows "
-          f"({panel_clean.index[0].date()} -> {panel_clean.index[-1].date()})")
+    print(
+        f"\n[clean] full panel: {len(panel)} rows, "
+        f"after dropna: {len(panel_clean)} rows "
+        f"({panel_clean.index[0].date()} -> {panel_clean.index[-1].date()})"
+    )
 
     # Save
     panel_clean.to_parquet(OUTPUT_FILE)

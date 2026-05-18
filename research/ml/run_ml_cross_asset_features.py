@@ -54,10 +54,17 @@ HORIZON = 6  # best cell from grid
 SANCTUARY_MONTHS = 12
 
 XGB_PARAMS = dict(
-    n_estimators=200, max_depth=4, learning_rate=0.05,
-    min_child_weight=5, subsample=0.8, colsample_bytree=0.8,
-    objective="binary:logistic", eval_metric="auc", tree_method="hist",
-    random_state=42, n_jobs=4,
+    n_estimators=200,
+    max_depth=4,
+    learning_rate=0.05,
+    min_child_weight=5,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    objective="binary:logistic",
+    eval_metric="auc",
+    tree_method="hist",
+    random_state=42,
+    n_jobs=4,
 )
 
 
@@ -70,7 +77,9 @@ def _load_panel() -> pd.DataFrame:
 
 
 def build_asset_dataset_with_cross_asset(
-    symbol: str, horizon: int, panel: pd.DataFrame,
+    symbol: str,
+    horizon: int,
+    panel: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.Series, pd.DatetimeIndex, pd.DatetimeIndex] | None:
     """Same as run_ml_multi_asset_grid.build_asset_dataset but joins the
     regime panel as additional columns on every row.
@@ -103,8 +112,13 @@ def build_asset_dataset_with_cross_asset(
     # Build TBM labels.
     atr_arr = _compute_atr(h1, 14)
     labels = _tbm_kernel(
-        h1["close"].values, h1["high"].values, h1["low"].values,
-        atr_arr, 2.0, 1.0, horizon,
+        h1["close"].values,
+        h1["high"].values,
+        h1["low"].values,
+        atr_arr,
+        2.0,
+        1.0,
+        horizon,
     )
     labels_s = pd.Series(labels, index=h1.index, name="tbm_label")
 
@@ -162,8 +176,10 @@ def main() -> None:
 
     feature_names = common_features
     n_xa = sum(1 for c in feature_names if c.startswith("xa_"))
-    print(f"\nCommon features: {len(feature_names)} ({n_xa} cross-asset, "
-          f"{len(feature_names) - n_xa} per-asset)")
+    print(
+        f"\nCommon features: {len(feature_names)} ({n_xa} cross-asset, "
+        f"{len(feature_names) - n_xa} per-asset)"
+    )
 
     # Per-asset z-score + pool.
     pooled_X = []
@@ -221,8 +237,10 @@ def main() -> None:
     print("\nCOMPARISON vs baseline (no cross-asset features):")
     print(f"  baseline mean AUC = {baseline_mean_auc:.4f}, n>0.55 = {baseline_n_above_055}")
     print(f"  with cross-asset = {mean_auc:.4f}, n>0.55 = {n_above_055}")
-    print(f"  improvement: {improvement:+.4f} mean AUC, "
-          f"{n_above_055 - baseline_n_above_055:+d} assets above 0.55")
+    print(
+        f"  improvement: {improvement:+.4f} mean AUC, "
+        f"{n_above_055 - baseline_n_above_055:+d} assets above 0.55"
+    )
 
     # Verdict.
     if mean_auc > 0.58 and n_above_055 >= 10:
@@ -238,27 +256,36 @@ def main() -> None:
     with rpath.open("w", encoding="utf-8") as fh:
         fh.write("# ml cross-asset features test (regime panel as columns)\n\n")
         fh.write("**Run date:** 2026-05-17\n")
-        fh.write("**Hypothesis:** Adding the 7-feature regime panel as columns on "
-                 "every asset row (so the model sees bond/equity/vol/dollar context "
-                 "when predicting any asset) materially lifts the L72 RETIRE.\n\n")
+        fh.write(
+            "**Hypothesis:** Adding the 7-feature regime panel as columns on "
+            "every asset row (so the model sees bond/equity/vol/dollar context "
+            "when predicting any asset) materially lifts the L72 RETIRE.\n\n"
+        )
         fh.write(f"**Cell:** horizon={HORIZON}h, XGBoost (best from grid 2033042).\n")
-        fh.write(f"**Cross-asset features added (prefix `xa_`):** {len(panel.columns)} "
-                 f"({list(panel.columns)})\n\n")
-        fh.write(f"**Total features:** {len(feature_names)} ({n_xa} cross-asset + "
-                 f"{len(feature_names) - n_xa} per-asset)\n\n")
+        fh.write(
+            f"**Cross-asset features added (prefix `xa_`):** {len(panel.columns)} "
+            f"({list(panel.columns)})\n\n"
+        )
+        fh.write(
+            f"**Total features:** {len(feature_names)} ({n_xa} cross-asset + "
+            f"{len(feature_names) - n_xa} per-asset)\n\n"
+        )
         fh.write("## Per-asset sanctuary AUC\n\n")
         fh.write("| Asset | n_train | n_sanc | AUC | Above 0.55? |\n")
         fh.write("|---|---:|---:|---:|:---:|\n")
         for sym, auc in sorted(per_asset_auc.items(), key=lambda kv: -kv[1]):
             tr_n = int((per_asset_data[sym][0].index <= per_asset_data[sym][3][0]).sum())
             mark = "Y" if auc > 0.55 else "-"
-            fh.write(f"| {sym} | {tr_n:,} | {len(per_asset_data[sym][3]):,} | "
-                     f"{auc:.4f} | {mark} |\n")
+            fh.write(
+                f"| {sym} | {tr_n:,} | {len(per_asset_data[sym][3]):,} | {auc:.4f} | {mark} |\n"
+            )
         fh.write("\n## Aggregate\n\n")
         fh.write("| Metric | Baseline (no xa) | With xa | Diff |\n|---|---:|---:|---:|\n")
         fh.write(f"| Mean AUC | {baseline_mean_auc:.4f} | {mean_auc:.4f} | {improvement:+.4f} |\n")
-        fh.write(f"| n above 0.55 | {baseline_n_above_055} | {n_above_055} | "
-                 f"{n_above_055 - baseline_n_above_055:+d} |\n")
+        fh.write(
+            f"| n above 0.55 | {baseline_n_above_055} | {n_above_055} | "
+            f"{n_above_055 - baseline_n_above_055:+d} |\n"
+        )
         fh.write(f"| n above 0.60 | -- | {n_above_060} | -- |\n")
         fh.write(f"| n above 0.65 | -- | {n_above_065} | -- |\n")
         fh.write(f"\n**Verdict:** {verdict}\n")

@@ -67,14 +67,14 @@ def mr_audjpy_strategy_fn(
 
 def main() -> None:
     bars = load_h1_bars()
-    print(f"[mr-sweep] AUD/JPY H1: {bars.shape[0]} bars "
-          f"({bars.index[0]} -> {bars.index[-1]})")
+    print(f"[mr-sweep] AUD/JPY H1: {bars.shape[0]} bars ({bars.index[0]} -> {bars.index[-1]})")
 
     cutoff = bars.index[-1] - pd.DateOffset(months=SANCTUARY_MONTHS)
     is_bars = bars.loc[:cutoff]
     sanc_bars = bars.loc[cutoff:]
-    print(f"[mr-sweep] IS slice: {is_bars.shape[0]} bars "
-          f"({is_bars.index[0]} -> {is_bars.index[-1]})")
+    print(
+        f"[mr-sweep] IS slice: {is_bars.shape[0]} bars ({is_bars.index[0]} -> {is_bars.index[-1]})"
+    )
     print(f"[mr-sweep] sanctuary held out: {sanc_bars.shape[0]} bars")
 
     grid = {
@@ -82,8 +82,7 @@ def main() -> None:
         "entry_pct": [0.90, 0.95, 0.98, 0.99],
     }
     n_cells = len(grid["vwap_anchor"]) * len(grid["entry_pct"])
-    print(f"[mr-sweep] running sweep over {n_cells} cells "
-          f"(vwap_anchor x entry_pct)...")
+    print(f"[mr-sweep] running sweep over {n_cells} cells (vwap_anchor x entry_pct)...")
 
     res = run_parameter_sweep(
         is_bars,
@@ -118,19 +117,22 @@ def main() -> None:
         print("[mr-sweep] NO plateau candidates passed.")
 
     target = next(
-        (i for i, cell in enumerate(res.cells)
-         if cell == {"vwap_anchor": 24, "entry_pct": 0.95}),
+        (i for i, cell in enumerate(res.cells) if cell == {"vwap_anchor": 24, "entry_pct": 0.95}),
         None,
     )
     if target is not None and np.isfinite(res.sharpes[target]):
         canonical_sr = res.sharpes[target]
-        print(f"\n[mr-sweep] LIVE proxy (vwap_anchor=24, entry_pct=0.95): IS Sharpe = {canonical_sr:.3f}")
+        print(
+            f"\n[mr-sweep] LIVE proxy (vwap_anchor=24, entry_pct=0.95): IS Sharpe = {canonical_sr:.3f}"
+        )
 
     finite_mask = np.isfinite(res.sharpes)
     if finite_mask.any():
         best_idx = int(np.argmax(np.where(finite_mask, res.sharpes, -np.inf)))
-        print(f"[mr-sweep] best cell: {res.cells[best_idx]} -> "
-              f"IS Sharpe = {res.sharpes[best_idx]:.3f}")
+        print(
+            f"[mr-sweep] best cell: {res.cells[best_idx]} -> "
+            f"IS Sharpe = {res.sharpes[best_idx]:.3f}"
+        )
 
     # Note on V1 claims: live config (vwap_anchor=24) reported Sharpe +0.53
     # by the April-2026 corrected harness. Pre-fix V1 claimed Sharpe +4.64
@@ -139,7 +141,9 @@ def main() -> None:
     print("[mr-sweep] V3.6 deployment-relevant question: is THIS sweep's best")
     print("[mr-sweep] cell + CI_lo > 0 with the L17 rel-MC test pending?")
 
-    report = format_plateau_report(res, candidates, audit_label="mr_audjpy V1-era RE-AUDIT SWEEP (Wave A.3)")
+    report = format_plateau_report(
+        res, candidates, audit_label="mr_audjpy V1-era RE-AUDIT SWEEP (Wave A.3)"
+    )
     (REPORTS_DIR / "plateau_report.md").write_text(report, encoding="utf-8")
     (REPORTS_DIR / "sharpe_surface.csv").write_text(surf.to_csv(), encoding="utf-8")
     (REPORTS_DIR / "cells_long.csv").write_text(

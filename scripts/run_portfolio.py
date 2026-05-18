@@ -887,16 +887,16 @@ STRATEGY_REGISTRY["gem_j5_canonical"] = {
         "absolute_gate_lookback_months": 12,
         "buffer_pct": 0.005,
         "defensive_switch": True,
-        "ann_vol_target": 0.05,        # J5: 0.10 -> 0.05
+        "ann_vol_target": 0.05,  # J5: 0.10 -> 0.05
         "vol_lookback_days": 20,
         "max_leverage": 2.0,
         "vol_estimator_kind": "ewma",
-        "vol_estimator_halflife": 60,   # J5: 40 -> 60
+        "vol_estimator_halflife": 60,  # J5: 40 -> 60
         "stress_gate_enabled": False,
         "dd_breaker_enabled": False,
         "warmup_bars": 380,
         # Initial equity gets overridden by allocator based on weight + portfolio NLV
-        "initial_equity": 24_000.0,    # 80% of 30k baseline (GEM weight 4/5)
+        "initial_equity": 24_000.0,  # 80% of 30k baseline (GEM weight 4/5)
         "base_ccy": "USD",
         "cost_bps_per_turnover": 6.0,
     },
@@ -942,8 +942,7 @@ STRATEGY_REGISTRY["ewmac_regime_i1v2_c6"] = {
         # 9-asset subset of the frozen artefact's 11 — strategy is tolerant
         # of missing assets (computes signals on the subset that has bars).
         "instrument_ids_str": (
-            "ES.CME,NQ.CME,CL.NYMEX,BZ.NYMEX,HG.COMEX,SI.COMEX,GC.COMEX,"
-            "ZN.CBOT,ZB.CBOT"
+            "ES.CME,NQ.CME,CL.NYMEX,BZ.NYMEX,HG.COMEX,SI.COMEX,GC.COMEX,ZN.CBOT,ZB.CBOT"
         ),
     },
 }
@@ -958,8 +957,11 @@ STRATEGY_REGISTRY["turtle_cat_c3peak"] = {
     "contracts": [
         # CAT (Caterpillar) US listing -- direct subscription.
         IBContract(
-            secType="STK", symbol="CAT",
-            exchange="SMART", primaryExchange="NYSE", currency="USD",
+            secType="STK",
+            symbol="CAT",
+            exchange="SMART",
+            primaryExchange="NYSE",
+            currency="USD",
         ),
     ],
     "config_kwargs": {
@@ -1012,8 +1014,8 @@ STRATEGY_SETS = {
     "all": list(STRATEGY_REGISTRY.keys()),
     "daily_only": [
         # etf_trend_spy REMOVED 2026-05-16 — Wave A.2 RETIRED (L56).
-        "gold_macro",       # pending V3.6 re-audit
-        "bond_gold",        # V3.6 PROMOTED CONDITIONAL (V1 config remains until Phase 2 cutover)
+        "gold_macro",  # pending V3.6 re-audit
+        "bond_gold",  # V3.6 PROMOTED CONDITIONAL (V1 config remains until Phase 2 cutover)
         "fx_carry_audjpy",  # pending V3.6 re-audit
         "ic_equity_noc",
     ],

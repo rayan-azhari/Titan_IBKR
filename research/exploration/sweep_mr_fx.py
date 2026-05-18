@@ -54,9 +54,7 @@ def load_m5_bars() -> pd.DataFrame:
     return df[["close", "volume"]].dropna(subset=["close"])
 
 
-def mr_fx_strategy_fn(
-    bars_df: pd.DataFrame, *, vwap_anchor: int, entry_pct: float
-) -> pd.Series:
+def mr_fx_strategy_fn(bars_df: pd.DataFrame, *, vwap_anchor: int, entry_pct: float) -> pd.Series:
     """Sweep adapter — re-uses mr_audjpy module, just different bar tf + cost."""
     cfg = MrAudjpyConfig(
         vwap_anchor=vwap_anchor,
@@ -68,24 +66,24 @@ def mr_fx_strategy_fn(
 
 def main() -> None:
     bars = load_m5_bars()
-    print(f"[mrfx-sweep] EUR/USD M5: {bars.shape[0]} bars "
-          f"({bars.index[0]} -> {bars.index[-1]})")
+    print(f"[mrfx-sweep] EUR/USD M5: {bars.shape[0]} bars ({bars.index[0]} -> {bars.index[-1]})")
 
     cutoff = bars.index[-1] - pd.DateOffset(months=SANCTUARY_MONTHS)
     is_bars = bars.loc[:cutoff]
     sanc_bars = bars.loc[cutoff:]
-    print(f"[mrfx-sweep] IS slice: {is_bars.shape[0]} bars "
-          f"({is_bars.index[0]} -> {is_bars.index[-1]})")
+    print(
+        f"[mrfx-sweep] IS slice: {is_bars.shape[0]} bars "
+        f"({is_bars.index[0]} -> {is_bars.index[-1]})"
+    )
     print(f"[mrfx-sweep] sanctuary held out: {sanc_bars.shape[0]} bars")
 
     # M5 grid: 12 M5 bars = 1 hour; 144 = 1 trading day; 288 = 1 24h day
     grid = {
         "vwap_anchor": [48, 144, 288, 576, 1440],  # 4h, 1d, 2d, 4d, 10d worth of M5
-        "entry_pct":   [0.90, 0.95, 0.98, 0.99],
+        "entry_pct": [0.90, 0.95, 0.98, 0.99],
     }
     n_cells = len(grid["vwap_anchor"]) * len(grid["entry_pct"])
-    print(f"[mrfx-sweep] running sweep over {n_cells} cells "
-          f"(vwap_anchor x entry_pct)...")
+    print(f"[mrfx-sweep] running sweep over {n_cells} cells (vwap_anchor x entry_pct)...")
 
     res = run_parameter_sweep(
         is_bars,
@@ -121,25 +119,30 @@ def main() -> None:
 
     # Live proxy is 1-day-equivalent VWAP (M5 anchor=144 = 12h, closest to live).
     target = next(
-        (i for i, cell in enumerate(res.cells)
-         if cell == {"vwap_anchor": 144, "entry_pct": 0.95}),
+        (i for i, cell in enumerate(res.cells) if cell == {"vwap_anchor": 144, "entry_pct": 0.95}),
         None,
     )
     if target is not None and np.isfinite(res.sharpes[target]):
-        print(f"\n[mrfx-sweep] LIVE proxy (vwap_anchor=144 [≈1 trading day], "
-              f"entry_pct=0.95): IS Sharpe = {res.sharpes[target]:.3f}")
+        print(
+            f"\n[mrfx-sweep] LIVE proxy (vwap_anchor=144 [≈1 trading day], "
+            f"entry_pct=0.95): IS Sharpe = {res.sharpes[target]:.3f}"
+        )
 
     finite_mask = np.isfinite(res.sharpes)
     if finite_mask.any():
         best_idx = int(np.argmax(np.where(finite_mask, res.sharpes, -np.inf)))
-        print(f"[mrfx-sweep] best cell: {res.cells[best_idx]} -> "
-              f"IS Sharpe = {res.sharpes[best_idx]:.3f}")
+        print(
+            f"[mrfx-sweep] best cell: {res.cells[best_idx]} -> "
+            f"IS Sharpe = {res.sharpes[best_idx]:.3f}"
+        )
 
     print("\n[mrfx-sweep] Pattern: per L58 (mr_audjpy + mtf), signal-layer-first")
     print("[mrfx-sweep] sweep on VWAP-MR strategies typically reveals NEGATIVE")
     print("[mrfx-sweep] signal-layer Sharpe; live edge (if any) is filter-derived.")
 
-    report = format_plateau_report(res, candidates, audit_label="mr_fx V1-era RE-AUDIT SWEEP (Wave A.6)")
+    report = format_plateau_report(
+        res, candidates, audit_label="mr_fx V1-era RE-AUDIT SWEEP (Wave A.6)"
+    )
     (REPORTS_DIR / "plateau_report.md").write_text(report, encoding="utf-8")
     (REPORTS_DIR / "sharpe_surface.csv").write_text(surf.to_csv(), encoding="utf-8")
     (REPORTS_DIR / "cells_long.csv").write_text(

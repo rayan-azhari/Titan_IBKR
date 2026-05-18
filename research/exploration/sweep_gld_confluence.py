@@ -180,7 +180,7 @@ def main() -> None:
         sr = float(sharpe(ret_is, periods_per_year=PERIODS_PER_YEAR_H1_EQ))
         ci_lo, ci_hi = bootstrap_sharpe_ci(ret_is, periods_per_year=PERIODS_PER_YEAR_H1_EQ, seed=42)
         mdd = float(max_drawdown(ret_is))
-        print(f"{thr:>10.2f} {sr:+10.4f} {ci_lo:+10.3f} {ci_hi:+10.3f} {mdd*100:+10.1f}%")
+        print(f"{thr:>10.2f} {sr:+10.4f} {ci_lo:+10.3f} {ci_hi:+10.3f} {mdd * 100:+10.1f}%")
 
     # Sanctuary check at live threshold.
     print("\nSanctuary at live threshold 0.75:")

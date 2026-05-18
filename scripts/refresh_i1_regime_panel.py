@@ -40,10 +40,16 @@ def refresh_underlyings() -> int:
     pairs = [f"{local}={yf}" for local, yf in SYMBOLS.items()]
     print(f"[refresh] downloading {len(pairs)} underlyings via yfinance: {pairs}")
     cmd = [
-        "uv", "run", "python", "scripts/download_data_yfinance.py",
-        "--symbols", *pairs,
-        "--interval", "D",
-        "--start", "2010-01-01",
+        "uv",
+        "run",
+        "python",
+        "scripts/download_data_yfinance.py",
+        "--symbols",
+        *pairs,
+        "--interval",
+        "D",
+        "--start",
+        "2010-01-01",
     ]
     try:
         result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), timeout=300)
@@ -57,7 +63,10 @@ def rebuild_panel() -> int:
     """Re-run the panel construction script."""
     print("[refresh] rebuilding regime panel...")
     cmd = [
-        "uv", "run", "python", "research/exploration/build_i1_regime_panel.py",
+        "uv",
+        "run",
+        "python",
+        "research/exploration/build_i1_regime_panel.py",
     ]
     try:
         result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), timeout=120)
@@ -86,7 +95,9 @@ def main() -> int:
     out = PROJECT_ROOT / "data" / "i1_regime_panel.parquet"
     if out.exists():
         st = out.stat()
-        print(f"[refresh] OK -- {out} ({st.st_size} bytes, mtime={datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat()})")
+        print(
+            f"[refresh] OK -- {out} ({st.st_size} bytes, mtime={datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat()})"
+        )
     return 0
 
 

@@ -55,14 +55,12 @@ def load_universe() -> dict[str, pd.DataFrame]:
     return {
         "H1": _load_bars("EUR_USD_H1.parquet"),
         "H4": _load_bars("EUR_USD_H4.parquet"),
-        "D":  _load_bars("EUR_USD_D.parquet"),
-        "W":  _load_bars("EUR_USD_W.parquet"),
+        "D": _load_bars("EUR_USD_D.parquet"),
+        "W": _load_bars("EUR_USD_W.parquet"),
     }
 
 
-def mtf_strategy_fn(
-    bars_h1: pd.DataFrame, *, threshold: float, d_weight: float
-) -> pd.Series:
+def mtf_strategy_fn(bars_h1: pd.DataFrame, *, threshold: float, d_weight: float) -> pd.Series:
     """Sweep adapter — H1 is the primary frame; H4/D/W are loaded globally."""
     # Build the bars_by_tf dict using a closure-captured _BARS_BY_TF (set in main).
     # We slice each TF to be ≤ the last H1 timestamp in `bars_h1` so the sweep
@@ -72,8 +70,8 @@ def mtf_strategy_fn(
     bars_by_tf = {
         "H1": bars_h1[["close"]],
         "H4": _BARS_BY_TF["H4"].loc[:h1_last_ts],
-        "D":  _BARS_BY_TF["D"].loc[:h1_last_ts],
-        "W":  _BARS_BY_TF["W"].loc[:h1_last_ts],
+        "D": _BARS_BY_TF["D"].loc[:h1_last_ts],
+        "W": _BARS_BY_TF["W"].loc[:h1_last_ts],
     }
     # Construct cfg with the swept axes. Live default weights are
     # H1:0.10, H4:0.25, D:0.60, W:0.05; we sweep the D weight here as
@@ -98,15 +96,19 @@ _BARS_BY_TF: dict[str, pd.DataFrame] = {}
 def main() -> None:
     global _BARS_BY_TF
     _BARS_BY_TF = load_universe()
-    print(f"[mtf-sweep] EUR/USD H1: {_BARS_BY_TF['H1'].shape[0]} bars "
-          f"({_BARS_BY_TF['H1'].index[0]} -> {_BARS_BY_TF['H1'].index[-1]})")
+    print(
+        f"[mtf-sweep] EUR/USD H1: {_BARS_BY_TF['H1'].shape[0]} bars "
+        f"({_BARS_BY_TF['H1'].index[0]} -> {_BARS_BY_TF['H1'].index[-1]})"
+    )
     print(f"[mtf-sweep] H4: {_BARS_BY_TF['H4'].shape[0]} bars")
     print(f"[mtf-sweep] D : {_BARS_BY_TF['D'].shape[0]} bars")
     print(f"[mtf-sweep] W : {_BARS_BY_TF['W'].shape[0]} bars")
 
     # ── L21 causality smoke FIRST ─────────────────────────────────────────
-    print("\n[mtf-sweep] L21 causality smoke test (corrupt future bars; "
-          "assert past returns unchanged)...")
+    print(
+        "\n[mtf-sweep] L21 causality smoke test (corrupt future bars; "
+        "assert past returns unchanged)..."
+    )
     try:
         mtf_assert_causal(_BARS_BY_TF)
         print("[mtf-sweep] L21 PASS — multi-TF alignment is causally correct.")
@@ -119,14 +121,15 @@ def main() -> None:
     h1_bars = _BARS_BY_TF["H1"]
     cutoff = h1_bars.index[-1] - pd.DateOffset(months=SANCTUARY_MONTHS)
     is_h1 = h1_bars.loc[:cutoff]
-    print(f"\n[mtf-sweep] IS H1 slice: {is_h1.shape[0]} bars "
-          f"({is_h1.index[0]} -> {is_h1.index[-1]})")
+    print(
+        f"\n[mtf-sweep] IS H1 slice: {is_h1.shape[0]} bars ({is_h1.index[0]} -> {is_h1.index[-1]})"
+    )
     print(f"[mtf-sweep] sanctuary (held out): {h1_bars.shape[0] - is_h1.shape[0]} H1 bars")
 
     # ── Sweep grid ────────────────────────────────────────────────────────
     grid = {
         "threshold": [0.05, 0.10, 0.15, 0.20],
-        "d_weight":  [0.30, 0.45, 0.60, 0.75],
+        "d_weight": [0.30, 0.45, 0.60, 0.75],
     }
     n_cells = len(grid["threshold"]) * len(grid["d_weight"])
     print(f"\n[mtf-sweep] running sweep over {n_cells} cells (threshold x d_weight)...")
@@ -164,26 +167,31 @@ def main() -> None:
         print("[mtf-sweep] NO plateau candidates passed.")
 
     target = next(
-        (i for i, cell in enumerate(res.cells)
-         if cell == {"threshold": 0.10, "d_weight": 0.60}),
+        (i for i, cell in enumerate(res.cells) if cell == {"threshold": 0.10, "d_weight": 0.60}),
         None,
     )
     if target is not None and np.isfinite(res.sharpes[target]):
-        print(f"\n[mtf-sweep] LIVE proxy (threshold=0.10, D_weight=0.60): "
-              f"IS Sharpe = {res.sharpes[target]:.3f}")
+        print(
+            f"\n[mtf-sweep] LIVE proxy (threshold=0.10, D_weight=0.60): "
+            f"IS Sharpe = {res.sharpes[target]:.3f}"
+        )
 
     finite_mask = np.isfinite(res.sharpes)
     if finite_mask.any():
         best_idx = int(np.argmax(np.where(finite_mask, res.sharpes, -np.inf)))
-        print(f"[mtf-sweep] best cell: {res.cells[best_idx]} -> "
-              f"IS Sharpe = {res.sharpes[best_idx]:.3f}")
+        print(
+            f"[mtf-sweep] best cell: {res.cells[best_idx]} -> "
+            f"IS Sharpe = {res.sharpes[best_idx]:.3f}"
+        )
 
     print("\n[mtf-sweep] V1 (Round 4) claimed OOS Combined Sharpe +1.94 on WMA config.")
     print("[mtf-sweep] V3.6 expectation under causality-correct alignment:")
     print("[mtf-sweep]   if live proxy ~ +1.94 -> V1 audit was causally correct;")
     print("[mtf-sweep]   if live proxy << +1.94 -> V1 had the L21 look-ahead bug.")
 
-    report = format_plateau_report(res, candidates, audit_label="mtf V1-era RE-AUDIT SWEEP (Wave A.5)")
+    report = format_plateau_report(
+        res, candidates, audit_label="mtf V1-era RE-AUDIT SWEEP (Wave A.5)"
+    )
     (REPORTS_DIR / "plateau_report.md").write_text(report, encoding="utf-8")
     (REPORTS_DIR / "sharpe_surface.csv").write_text(surf.to_csv(), encoding="utf-8")
     (REPORTS_DIR / "cells_long.csv").write_text(

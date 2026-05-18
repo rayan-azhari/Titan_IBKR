@@ -61,22 +61,78 @@ HIGHLIGHT_CELLS = ["P_hl60_vt05", "C1_canonical", "C3_J4_live"]
 
 # Stitched-OOS Sharpe numbers from `.tmp/reports/gem_j5_reaudit/result_log.md` §4.1.
 AUDIT_NUMBERS = {
-    "C1_canonical":      {"sharpe": +0.9935, "ci_lo": +0.474, "ci_hi": +1.488, "verdict": "CONDITIONAL_WATCHPOINT",
-                          "rel_mc_dd_red": 0.614, "rel_mc_pass": True, "noise": "mid"},
-    "P_hl10_vt05":       {"sharpe": +1.0050, "ci_lo": +0.502, "ci_hi": +1.513, "verdict": "CONDITIONAL_WATCHPOINT",
-                          "rel_mc_dd_red": 0.614, "rel_mc_pass": True, "noise": "mid"},
-    "P_hl40_vt05":       {"sharpe": +0.9924, "ci_lo": +0.489, "ci_hi": +1.489, "verdict": "DEPLOY",
-                          "rel_mc_dd_red": 0.600, "rel_mc_pass": True, "noise": "best"},
-    "P_hl60_vt05":       {"sharpe": +1.0021, "ci_lo": +0.510, "ci_hi": +1.505, "verdict": "DEPLOY (PROMOTED)",
-                          "rel_mc_dd_red": 0.621, "rel_mc_pass": True, "noise": "best"},
-    "P_hl20_vt075":      {"sharpe": +0.8715, "ci_lo": +0.349, "ci_hi": +1.351, "verdict": "DEPLOY",
-                          "rel_mc_dd_red": 0.725, "rel_mc_pass": True, "noise": "best"},
-    "C2_constrained":    {"sharpe": +0.7633, "ci_lo": +0.232, "ci_hi": +1.272, "verdict": "CONDITIONAL_WATCHPOINT",
-                          "rel_mc_dd_red": 0.851, "rel_mc_pass": False, "noise": "best"},
-    "C3_J4_live":        {"sharpe": +0.7402, "ci_lo": +0.238, "ci_hi": +1.239, "verdict": "CONDITIONAL_WATCHPOINT",
-                          "rel_mc_dd_red": 0.881, "rel_mc_pass": False, "noise": "best"},
-    "C4_gross_no_costs": {"sharpe": +1.0279, "ci_lo": +0.510, "ci_hi": +1.521, "verdict": "CONDITIONAL_WATCHPOINT",
-                          "rel_mc_dd_red": 0.608, "rel_mc_pass": True, "noise": "mid"},
+    "C1_canonical": {
+        "sharpe": +0.9935,
+        "ci_lo": +0.474,
+        "ci_hi": +1.488,
+        "verdict": "CONDITIONAL_WATCHPOINT",
+        "rel_mc_dd_red": 0.614,
+        "rel_mc_pass": True,
+        "noise": "mid",
+    },
+    "P_hl10_vt05": {
+        "sharpe": +1.0050,
+        "ci_lo": +0.502,
+        "ci_hi": +1.513,
+        "verdict": "CONDITIONAL_WATCHPOINT",
+        "rel_mc_dd_red": 0.614,
+        "rel_mc_pass": True,
+        "noise": "mid",
+    },
+    "P_hl40_vt05": {
+        "sharpe": +0.9924,
+        "ci_lo": +0.489,
+        "ci_hi": +1.489,
+        "verdict": "DEPLOY",
+        "rel_mc_dd_red": 0.600,
+        "rel_mc_pass": True,
+        "noise": "best",
+    },
+    "P_hl60_vt05": {
+        "sharpe": +1.0021,
+        "ci_lo": +0.510,
+        "ci_hi": +1.505,
+        "verdict": "DEPLOY (PROMOTED)",
+        "rel_mc_dd_red": 0.621,
+        "rel_mc_pass": True,
+        "noise": "best",
+    },
+    "P_hl20_vt075": {
+        "sharpe": +0.8715,
+        "ci_lo": +0.349,
+        "ci_hi": +1.351,
+        "verdict": "DEPLOY",
+        "rel_mc_dd_red": 0.725,
+        "rel_mc_pass": True,
+        "noise": "best",
+    },
+    "C2_constrained": {
+        "sharpe": +0.7633,
+        "ci_lo": +0.232,
+        "ci_hi": +1.272,
+        "verdict": "CONDITIONAL_WATCHPOINT",
+        "rel_mc_dd_red": 0.851,
+        "rel_mc_pass": False,
+        "noise": "best",
+    },
+    "C3_J4_live": {
+        "sharpe": +0.7402,
+        "ci_lo": +0.238,
+        "ci_hi": +1.239,
+        "verdict": "CONDITIONAL_WATCHPOINT",
+        "rel_mc_dd_red": 0.881,
+        "rel_mc_pass": False,
+        "noise": "best",
+    },
+    "C4_gross_no_costs": {
+        "sharpe": +1.0279,
+        "ci_lo": +0.510,
+        "ci_hi": +1.521,
+        "verdict": "CONDITIONAL_WATCHPOINT",
+        "rel_mc_dd_red": 0.608,
+        "rel_mc_pass": True,
+        "noise": "mid",
+    },
 }
 
 
@@ -153,13 +209,14 @@ def _fig_kpi_grid(stats_by_name: dict[str, dict]) -> go.Figure:
     rows = ["**Sharpe**", "**CI<sub>95 lo</sub>**", "**CAGR**", "**Ann. Vol**", "**Max DD**"]
     names_in_order = ["P_hl60_vt05", "C1_canonical", "C3_J4_live", "Benchmark_60_40"]
     pretty = {
-        "P_hl60_vt05":    "<b>J5 LIVE</b><br>P_hl60_vt05",
-        "C1_canonical":   "Sweep IS-best<br>C1 (hl20, vt05)",
-        "C3_J4_live":     "J4 prior live<br>(hl40, vt10)",
-        "Benchmark_60_40":"60/40 SPY/IEF<br>buy-and-hold",
+        "P_hl60_vt05": "<b>J5 LIVE</b><br>P_hl60_vt05",
+        "C1_canonical": "Sweep IS-best<br>C1 (hl20, vt05)",
+        "C3_J4_live": "J4 prior live<br>(hl40, vt10)",
+        "Benchmark_60_40": "60/40 SPY/IEF<br>buy-and-hold",
     }
     fig = make_subplots(
-        rows=1, cols=4,
+        rows=1,
+        cols=4,
         subplot_titles=[pretty[n] for n in names_in_order],
         specs=[[{"type": "table"}, {"type": "table"}, {"type": "table"}, {"type": "table"}]],
     )
@@ -168,14 +225,18 @@ def _fig_kpi_grid(stats_by_name: dict[str, dict]) -> go.Figure:
         rows_text = [
             f"<b>{s['sharpe']:+.3f}</b>",
             f"<b>{s['ci_lo']:+.3f}</b>",
-            f"<b>{s['cagr']*100:+.2f}%</b>",
-            f"<b>{s['vol_ann']*100:.2f}%</b>",
-            f"<b>{s['maxdd']*100:.1f}%</b>",
+            f"<b>{s['cagr'] * 100:+.2f}%</b>",
+            f"<b>{s['vol_ann'] * 100:.2f}%</b>",
+            f"<b>{s['maxdd'] * 100:.1f}%</b>",
         ]
         trace = go.Table(
-            header=dict(values=["", pretty[name]],
-                        fill_color="#f3f4f6", align="left",
-                        font=dict(size=11), height=0),
+            header=dict(
+                values=["", pretty[name]],
+                fill_color="#f3f4f6",
+                align="left",
+                font=dict(size=11),
+                height=0,
+            ),
             cells=dict(
                 values=[rows, rows_text],
                 align="left",
@@ -192,30 +253,34 @@ def _fig_kpi_grid(stats_by_name: dict[str, dict]) -> go.Figure:
 def _fig_equity(rets_by_name: dict[str, pd.Series]) -> go.Figure:
     fig = go.Figure()
     colors = {
-        "P_hl60_vt05":     "#15803d",  # green — promoted/live
-        "C1_canonical":    "#7c3aed",  # purple
-        "C3_J4_live":      "#ca8a04",  # amber — prior live
+        "P_hl60_vt05": "#15803d",  # green — promoted/live
+        "C1_canonical": "#7c3aed",  # purple
+        "C3_J4_live": "#ca8a04",  # amber — prior live
         "Benchmark_60_40": "#6b7280",  # grey — benchmark
     }
     widths = {
-        "P_hl60_vt05":    3.0,
-        "C1_canonical":   1.6,
-        "C3_J4_live":     1.6,
-        "Benchmark_60_40":1.6,
+        "P_hl60_vt05": 3.0,
+        "C1_canonical": 1.6,
+        "C3_J4_live": 1.6,
+        "Benchmark_60_40": 1.6,
     }
     labels = {
-        "P_hl60_vt05":    "J5 P_hl60_vt05 (LIVE)",
-        "C1_canonical":   "C1 sweep IS-best (hl20, vt05)",
-        "C3_J4_live":     "C3 J4 prior-live (hl40, vt10)",
-        "Benchmark_60_40":"60/40 SPY/IEF (benchmark)",
+        "P_hl60_vt05": "J5 P_hl60_vt05 (LIVE)",
+        "C1_canonical": "C1 sweep IS-best (hl20, vt05)",
+        "C3_J4_live": "C3 J4 prior-live (hl40, vt10)",
+        "Benchmark_60_40": "60/40 SPY/IEF (benchmark)",
     }
     for name, rets in rets_by_name.items():
         eq = _equity_curve(rets)
-        fig.add_trace(go.Scatter(
-            x=eq.index, y=eq.values, mode="lines",
-            name=labels.get(name, name),
-            line=dict(color=colors.get(name, "#111827"), width=widths.get(name, 1.6)),
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=eq.index,
+                y=eq.values,
+                mode="lines",
+                name=labels.get(name, name),
+                line=dict(color=colors.get(name, "#111827"), width=widths.get(name, 1.6)),
+            )
+        )
     fig.update_layout(
         height=480,
         margin=dict(l=40, r=10, t=24, b=40),
@@ -230,26 +295,30 @@ def _fig_equity(rets_by_name: dict[str, pd.Series]) -> go.Figure:
 def _fig_drawdown(rets_by_name: dict[str, pd.Series]) -> go.Figure:
     fig = go.Figure()
     colors = {
-        "P_hl60_vt05":     "#15803d",
-        "C1_canonical":    "#7c3aed",
-        "C3_J4_live":      "#ca8a04",
+        "P_hl60_vt05": "#15803d",
+        "C1_canonical": "#7c3aed",
+        "C3_J4_live": "#ca8a04",
         "Benchmark_60_40": "#6b7280",
     }
     labels = {
-        "P_hl60_vt05":    "J5 P_hl60_vt05 (LIVE)",
-        "C1_canonical":   "C1 sweep IS-best",
-        "C3_J4_live":     "C3 J4 prior-live",
-        "Benchmark_60_40":"60/40 SPY/IEF",
+        "P_hl60_vt05": "J5 P_hl60_vt05 (LIVE)",
+        "C1_canonical": "C1 sweep IS-best",
+        "C3_J4_live": "C3 J4 prior-live",
+        "Benchmark_60_40": "60/40 SPY/IEF",
     }
     for name, rets in rets_by_name.items():
         dd = _drawdown_curve(rets)
-        fig.add_trace(go.Scatter(
-            x=dd.index, y=dd.values * 100.0, mode="lines",
-            name=labels.get(name, name),
-            line=dict(color=colors.get(name, "#111827"), width=1.6),
-            fill="tozeroy" if name == "P_hl60_vt05" else None,
-            fillcolor="rgba(21, 128, 61, 0.12)" if name == "P_hl60_vt05" else None,
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=dd.index,
+                y=dd.values * 100.0,
+                mode="lines",
+                name=labels.get(name, name),
+                line=dict(color=colors.get(name, "#111827"), width=1.6),
+                fill="tozeroy" if name == "P_hl60_vt05" else None,
+                fillcolor="rgba(21, 128, 61, 0.12)" if name == "P_hl60_vt05" else None,
+            )
+        )
     fig.update_layout(
         height=320,
         margin=dict(l=40, r=10, t=24, b=40),
@@ -265,35 +334,48 @@ def _fig_audit_table() -> go.Figure:
     """Per-cell 5-axis audit matrix."""
     rows = []
     for name, m in AUDIT_NUMBERS.items():
-        rows.append([
-            name,
-            f"{m['sharpe']:+.4f}",
-            f"{m['ci_lo']:+.3f}",
-            f"{m['ci_hi']:+.3f}",
-            f"{m['rel_mc_dd_red']:.3f}",
-            "YES" if m["rel_mc_pass"] else "no",
-            m["noise"],
-            m["verdict"],
-        ])
+        rows.append(
+            [
+                name,
+                f"{m['sharpe']:+.4f}",
+                f"{m['ci_lo']:+.3f}",
+                f"{m['ci_hi']:+.3f}",
+                f"{m['rel_mc_dd_red']:.3f}",
+                "YES" if m["rel_mc_pass"] else "no",
+                m["noise"],
+                m["verdict"],
+            ]
+        )
     # Transpose to column-major.
     cols_data = list(map(list, zip(*rows)))
-    fig = go.Figure(data=[go.Table(
-        header=dict(
-            values=["<b>Cell</b>", "<b>OOS Sharpe</b>", "<b>CI<sub>95 lo</sub></b>",
-                    "<b>CI<sub>95 hi</sub></b>", "<b>Rel-MC DD red</b>",
-                    "<b>Rel-MC pass</b>", "<b>Noise axis</b>", "<b>Verdict</b>"],
-            fill_color="#1f2937",
-            font=dict(color="white", size=12),
-            align="left",
-        ),
-        cells=dict(
-            values=cols_data,
-            align="left",
-            fill_color=["#f9fafb" if (i % 2 == 0) else "white" for i in range(len(rows))],
-            font=dict(size=12),
-            height=28,
-        ),
-    )])
+    fig = go.Figure(
+        data=[
+            go.Table(
+                header=dict(
+                    values=[
+                        "<b>Cell</b>",
+                        "<b>OOS Sharpe</b>",
+                        "<b>CI<sub>95 lo</sub></b>",
+                        "<b>CI<sub>95 hi</sub></b>",
+                        "<b>Rel-MC DD red</b>",
+                        "<b>Rel-MC pass</b>",
+                        "<b>Noise axis</b>",
+                        "<b>Verdict</b>",
+                    ],
+                    fill_color="#1f2937",
+                    font=dict(color="white", size=12),
+                    align="left",
+                ),
+                cells=dict(
+                    values=cols_data,
+                    align="left",
+                    fill_color=["#f9fafb" if (i % 2 == 0) else "white" for i in range(len(rows))],
+                    font=dict(size=12),
+                    height=28,
+                ),
+            )
+        ]
+    )
     fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10))
     return fig
 
@@ -323,16 +405,17 @@ def main() -> Path:
 
     # Restrict to stitched OOS for stats + plotting (matches the audit framing).
     rets_by_name: dict[str, pd.Series] = {
-        name: _stitched_oos_returns(full_by_name[name], folds)
-        for name in HIGHLIGHT_CELLS
+        name: _stitched_oos_returns(full_by_name[name], folds) for name in HIGHLIGHT_CELLS
     }
     rets_by_name["Benchmark_60_40"] = _stitched_oos_returns(bench_full, folds)
 
     print("Computing CAGR / MaxDD / vol stats...")
     stats_by_name = {name: _compute_stats(r) for name, r in rets_by_name.items()}
     for name, s in stats_by_name.items():
-        print(f"  {name:>18s}  Sharpe={s['sharpe']:+.3f}  CAGR={s['cagr']*100:+.2f}%  "
-              f"MaxDD={s['maxdd']*100:.1f}%  vol={s['vol_ann']*100:.1f}%")
+        print(
+            f"  {name:>18s}  Sharpe={s['sharpe']:+.3f}  CAGR={s['cagr'] * 100:+.2f}%  "
+            f"MaxDD={s['maxdd'] * 100:.1f}%  vol={s['vol_ann'] * 100:.1f}%"
+        )
 
     fig_kpis = _fig_kpi_grid(stats_by_name)
     fig_eq = _fig_equity(rets_by_name)
@@ -385,10 +468,10 @@ code {{ background: #f3f4f6; padding: 1px 5px; border-radius: 3px; font-size: 12
   J5 <code>P_hl60_vt05</code> (vol_estimator_halflife=60, ann_vol_target=0.05) replaces J4 A1_ewma_hl40
   via in-place config overwrite + <code>docker compose restart titan-portfolio</code>.
   2 IBKR positions adopted cleanly (CSPX qty=27, IDTM qty=45 — no double-fill).
-  Stitched-OOS Sharpe <b>{j5['sharpe']:+.3f}</b> vs prior-live <b>{j4['sharpe']:+.3f}</b>
-  (<b>+{(j5['sharpe']-j4['sharpe'])/abs(j4['sharpe'])*100:.1f}%</b>);
-  CI<sub>95 lo</sub> <b>{j5['ci_lo']:+.3f}</b> vs <b>{j4['ci_lo']:+.3f}</b>
-  (<b>{j5['ci_lo']/max(abs(j4['ci_lo']),1e-9):.1f}x tighter</b>).
+  Stitched-OOS Sharpe <b>{j5["sharpe"]:+.3f}</b> vs prior-live <b>{j4["sharpe"]:+.3f}</b>
+  (<b>+{(j5["sharpe"] - j4["sharpe"]) / abs(j4["sharpe"]) * 100:.1f}%</b>);
+  CI<sub>95 lo</sub> <b>{j5["ci_lo"]:+.3f}</b> vs <b>{j4["ci_lo"]:+.3f}</b>
+  (<b>{j5["ci_lo"] / max(abs(j4["ci_lo"]), 1e-9):.1f}x tighter</b>).
 </div>
 
 <div class="section">
@@ -413,9 +496,9 @@ WFO-fold stitching (consecutive OOS slices may be sampled non-contiguously).</p>
 <p>The drawdown panel is the main visual proof of the L17 relative-MC verdict —
 J5 (green, filled) sits inside the benchmark drawdown envelope for most of the
 window. Worst observed drawdowns:
-J5 <b>{j5['maxdd']*100:.1f}%</b>,
-J4 <b>{j4['maxdd']*100:.1f}%</b>,
-60/40 benchmark <b>{bench['maxdd']*100:.1f}%</b>.</p>
+J5 <b>{j5["maxdd"] * 100:.1f}%</b>,
+J4 <b>{j4["maxdd"] * 100:.1f}%</b>,
+60/40 benchmark <b>{bench["maxdd"] * 100:.1f}%</b>.</p>
 {_div(fig_dd)}
 </div>
 

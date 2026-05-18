@@ -87,6 +87,7 @@ def main() -> int:
         return 1
 
     import databento as db
+
     client = db.Historical(key=api_key)
 
     print("=" * 70)

@@ -261,9 +261,7 @@ class PortfolioRiskManager:
             # Fraction of total portfolio capital held by strategies whose
             # risk contribution was NOT measured (immature, <20d history).
             # 0.0 means every strategy contributes to the rc decomposition.
-            "risk_unmeasured_capital_pct": round(
-                risk_contribs.get("__unmeasured__", 0.0) * 100, 2
-            ),
+            "risk_unmeasured_capital_pct": round(risk_contribs.get("__unmeasured__", 0.0) * 100, 2),
             "strategies": {
                 sid: {
                     "equity": round(s.current_equity, 2),
@@ -314,10 +312,7 @@ class PortfolioRiskManager:
         total = self._total_equity()
         if total <= 0:
             return {}
-        weights = np.array([
-            self._strategies[n].current_equity / total
-            for n in names
-        ])
+        weights = np.array([self._strategies[n].current_equity / total for n in names])
         mature_capital_frac = float(weights.sum())
         portfolio_var = float(weights @ cov @ weights)
         if portfolio_var <= 1e-18:

@@ -53,12 +53,16 @@ def main() -> None:
     parts = [_load_close(sym, fname) for sym, fname in UNIVERSE.items()]
     closes = pd.concat(parts, axis=1).sort_index()
     first_valid = closes.dropna(how="any").index
-    closes = closes.loc[first_valid[0]:].ffill(limit=5)
+    closes = closes.loc[first_valid[0] :].ffill(limit=5)
     panel = pd.read_parquet(PANEL_FP).sort_index().dropna(how="any")
-    print(f"\nUniverse: {len(closes.columns)} symbols, "
-          f"{closes.index[0].date()} -> {closes.index[-1].date()} ({len(closes)} bars)")
-    print(f"Panel: {len(panel.columns)} features, "
-          f"{panel.index[0].date()} -> {panel.index[-1].date()} ({len(panel)} bars)")
+    print(
+        f"\nUniverse: {len(closes.columns)} symbols, "
+        f"{closes.index[0].date()} -> {closes.index[-1].date()} ({len(closes)} bars)"
+    )
+    print(
+        f"Panel: {len(panel.columns)} features, "
+        f"{panel.index[0].date()} -> {panel.index[-1].date()} ({len(panel)} bars)"
+    )
 
     # 2. Use the FULL visible window (12mo sanctuary held out) as the IS
     #    slice for the freeze. This matches the audit's deployment-window
@@ -95,8 +99,10 @@ def main() -> None:
     if model is None:
         print("ERROR: HMM fit failed", file=sys.stderr)
         sys.exit(1)
-    print(f"\nHMM fitted: n_states={cfg.n_states}, "
-          f"transmat diag={[round(float(d), 3) for d in np.diag(model.transmat_)]}")
+    print(
+        f"\nHMM fitted: n_states={cfg.n_states}, "
+        f"transmat diag={[round(float(d), 3) for d in np.diag(model.transmat_)]}"
+    )
 
     # 5. Compute state path on IS slice for trend-friendly mapping.
     # CRITICAL: smoothing MUST be applied BEFORE deriving the mapping, to
@@ -115,7 +121,9 @@ def main() -> None:
     # 6. Per-asset trend-friendly mapping using IS log-returns.
     log_ret_is = np.log(closes / closes.shift(1)).iloc[:is_end_idx]
     per_asset_friendly = identify_trend_friendly_per_asset(
-        state_path_is, log_ret_is, cfg=cfg,
+        state_path_is,
+        log_ret_is,
+        cfg=cfg,
     )
     print("\nPer-asset trend-friendly states (IS-frozen):")
     for asset in closes.columns:
@@ -168,8 +176,7 @@ def main() -> None:
         "feature_names": list(panel_aligned.columns),
         "asset_order": list(closes.columns),
         "trend_friendly_per_asset": {
-            asset: sorted(per_asset_friendly.get(asset, set()))
-            for asset in closes.columns
+            asset: sorted(per_asset_friendly.get(asset, set())) for asset in closes.columns
         },
         "gate_fractions_is": gate_fractions,
     }

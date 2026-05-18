@@ -83,10 +83,17 @@ PERIODS_PER_YEAR = BARS_PER_YEAR["H1"]
 SANCTUARY_MONTHS = 12
 
 XGB_PARAMS = dict(
-    n_estimators=200, max_depth=4, learning_rate=0.05,
-    min_child_weight=5, subsample=0.8, colsample_bytree=0.8,
-    objective="binary:logistic", eval_metric="auc", tree_method="hist",
-    random_state=42, n_jobs=4,
+    n_estimators=200,
+    max_depth=4,
+    learning_rate=0.05,
+    min_child_weight=5,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    objective="binary:logistic",
+    eval_metric="auc",
+    tree_method="hist",
+    random_state=42,
+    n_jobs=4,
 )
 
 
@@ -153,8 +160,11 @@ def _train_pooled_model() -> tuple[XGBClassifier, dict[str, StandardScaler], lis
 
 
 def _compute_signals_for_asset(
-    h1: pd.DataFrame, model: XGBClassifier, scaler: StandardScaler,
-    feature_names: list[str], ctx: dict[str, pd.DataFrame] | None = None,
+    h1: pd.DataFrame,
+    model: XGBClassifier,
+    scaler: StandardScaler,
+    feature_names: list[str],
+    ctx: dict[str, pd.DataFrame] | None = None,
 ) -> pd.Series:
     """Returns a (-1, 0, +1) signal Series aligned to h1.index, V3.6-causal
     (shifted by 1 bar so position effective at close[t] earns t->t+1 return).
@@ -202,8 +212,11 @@ def _strategy_returns(h1: pd.DataFrame, signal: pd.Series) -> pd.Series:
 
 
 def audit_asset(
-    asset: str, model: XGBClassifier, scaler: StandardScaler,
-    feature_names: list[str], sweep_sharpes: list[float],
+    asset: str,
+    model: XGBClassifier,
+    scaler: StandardScaler,
+    feature_names: list[str],
+    sweep_sharpes: list[float],
 ) -> AssetResult | None:
     print(f"\n--- {asset} ---")
     h1 = _load_h1(asset)
@@ -231,6 +244,7 @@ def audit_asset(
     sanctuary_auc = float("nan")
     try:
         from sklearn.metrics import roc_auc_score
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             feats_full = build_features(h1, context_data=ctx, cfg=None)
@@ -241,8 +255,13 @@ def audit_asset(
         # Labels for sanctuary.
         atr_arr = _compute_atr(h1, 14)
         labs = _tbm_kernel(
-            h1["close"].values, h1["high"].values, h1["low"].values,
-            atr_arr, 2.0, 1.0, HORIZON,
+            h1["close"].values,
+            h1["high"].values,
+            h1["low"].values,
+            atr_arr,
+            2.0,
+            1.0,
+            HORIZON,
         )
         labs_s = pd.Series(labs, index=h1.index, name="lab")
         common_s = proba_full.index.intersection(labs_s.index)
@@ -262,31 +281,50 @@ def audit_asset(
     d_def = defaults_for(cls)
     headline_sr = float(sharpe(rets_v, periods_per_year=PERIODS_PER_YEAR))
     ci_lo, ci_hi = bootstrap_sharpe_ci(
-        rets_v, periods_per_year=PERIODS_PER_YEAR, n_resamples=1000, seed=42,
+        rets_v,
+        periods_per_year=PERIODS_PER_YEAR,
+        n_resamples=1000,
+        seed=42,
     )
     # DSR with N=6 trials (one per top-6 asset).
     sr_var = float(np.var(sweep_sharpes, ddof=1)) if len(sweep_sharpes) > 1 else 0.0
     dsr = deflated_sharpe(
-        headline_sr, sr_var_across_trials=sr_var, returns=rets_v, n_trials=len(TOP6),
+        headline_sr,
+        sr_var_across_trials=sr_var,
+        returns=rets_v,
+        n_trials=len(TOP6),
     )
 
     # MC block bootstrap. The strategy_fn rebuilds signal from synth close.
     primary_close = h1["close"][visible_mask]
 
     def _strategy_fn(synth_df: pd.DataFrame) -> pd.Series:
-        synth_h1 = pd.DataFrame({
-            "open": synth_df["close"], "high": synth_df["close"],
-            "low": synth_df["close"], "close": synth_df["close"], "volume": 1.0,
-        })
+        synth_h1 = pd.DataFrame(
+            {
+                "open": synth_df["close"],
+                "high": synth_df["close"],
+                "low": synth_df["close"],
+                "close": synth_df["close"],
+                "volume": 1.0,
+            }
+        )
         sig = _compute_signals_for_asset(
-            synth_h1, model, scaler, feature_names, ctx={},
+            synth_h1,
+            model,
+            scaler,
+            feature_names,
+            ctx={},
         )
         return _strategy_returns(synth_h1, sig)
 
     mc = run_block_mc(
-        primary_close=primary_close, cfg=d_def.mc,
-        strategy_fn=_strategy_fn, periods_per_year=PERIODS_PER_YEAR,
-        seed=42, extra_series=None, n_workers=DEFAULT_MC_WORKERS,
+        primary_close=primary_close,
+        cfg=d_def.mc,
+        strategy_fn=_strategy_fn,
+        periods_per_year=PERIODS_PER_YEAR,
+        seed=42,
+        extra_series=None,
+        n_workers=DEFAULT_MC_WORKERS,
     )
 
     sanc_sr = float(sharpe(rets_s, periods_per_year=PERIODS_PER_YEAR)) if len(rets_s) >= 50 else 0.0
@@ -299,23 +337,34 @@ def audit_asset(
     closes_v = primary_close.rename("close").to_frame()
 
     def _noise_fn(closes_df_local: pd.DataFrame) -> pd.Series:
-        synth_h1 = pd.DataFrame({
-            "open": closes_df_local["close"], "high": closes_df_local["close"],
-            "low": closes_df_local["close"], "close": closes_df_local["close"],
-            "volume": 1.0,
-        })
+        synth_h1 = pd.DataFrame(
+            {
+                "open": closes_df_local["close"],
+                "high": closes_df_local["close"],
+                "low": closes_df_local["close"],
+                "close": closes_df_local["close"],
+                "volume": 1.0,
+            }
+        )
         sig = _compute_signals_for_asset(
-            synth_h1, model, scaler, feature_names, ctx={},
+            synth_h1,
+            model,
+            scaler,
+            feature_names,
+            ctx={},
         )
         return _strategy_returns(synth_h1, sig)
 
     noise = run_noise_robustness(
-        closes_v, _noise_fn, periods_per_year=PERIODS_PER_YEAR,
+        closes_v,
+        _noise_fn,
+        periods_per_year=PERIODS_PER_YEAR,
         cfg=NoiseConfig(noise_levels=(0.1, 0.3, 0.5), n_trials=10, max_degradation=0.30),
     )
 
     inputs = DecisionInputs(
-        ci_lo=ci_lo, dsr_prob=dsr.dsr_prob,
+        ci_lo=ci_lo,
+        dsr_prob=dsr.dsr_prob,
         p_maxdd_gt_threshold=mc.p_maxdd_gt_threshold,
         pass_threshold_prob=mc.pass_threshold_prob,
         sanctuary_sharpe=sanc_sr,
@@ -329,13 +378,15 @@ def audit_asset(
         sanctuary_auc=round(sanctuary_auc, 4) if np.isfinite(sanctuary_auc) else float("nan"),
         fraction_active=round(frac_active, 4),
         sharpe=round(headline_sr, 4),
-        ci_lo=round(ci_lo, 4), ci_hi=round(ci_hi, 4),
+        ci_lo=round(ci_lo, 4),
+        ci_hi=round(ci_hi, 4),
         dsr_prob=round(dsr.dsr_prob, 4),
         mc_p_maxdd_gt_threshold=round(mc.p_maxdd_gt_threshold, 4),
         mc_threshold_pct=round(mc.threshold_pct, 4),
         sanctuary_sharpe=round(sanc_sr, 4),
         sanctuary_percentile=round(div.percentile, 4)
-        if np.isfinite(div.percentile) else float("nan"),
+        if np.isfinite(div.percentile)
+        else float("nan"),
         noise_base=round(noise.base_sharpe, 4),
         noise_passes_mean=noise.passes,
         noise_passes_worst=noise.worst_case_passes,
@@ -343,11 +394,15 @@ def audit_asset(
         verdict=decision.verdict.value,
     )
     print(f"  Sharpe={r.sharpe:+.4f}  CI=[{r.ci_lo:+.3f}, {r.ci_hi:+.3f}]")
-    print(f"  DSR={r.dsr_prob:.4f}  MC P(>{r.mc_threshold_pct*100:.0f}%)={r.mc_p_maxdd_gt_threshold:.4f}")
+    print(
+        f"  DSR={r.dsr_prob:.4f}  MC P(>{r.mc_threshold_pct * 100:.0f}%)={r.mc_p_maxdd_gt_threshold:.4f}"
+    )
     print(f"  Sanc Sharpe={r.sanctuary_sharpe:+.4f}")
-    print(f"  Noise: base={r.noise_base:+.4f}, "
-          f"mean_pass={r.noise_passes_mean}, worst={r.noise_passes_worst}, "
-          f"axis={r.noise_axis}")
+    print(
+        f"  Noise: base={r.noise_base:+.4f}, "
+        f"mean_pass={r.noise_passes_mean}, worst={r.noise_passes_worst}, "
+        f"axis={r.noise_axis}"
+    )
     print(f"  Verdict: {r.verdict}")
     return r
 
@@ -374,7 +429,11 @@ def main() -> None:
         d = _load_d_context(asset)
         ctx = {"D": d} if not d.empty else {}
         signal = _compute_signals_for_asset(
-            h1, model, scalers[asset], feature_names, ctx=ctx,
+            h1,
+            model,
+            scalers[asset],
+            feature_names,
+            ctx=ctx,
         )
         rets = _strategy_returns(h1, signal)
         cutoff = h1.index[-1] - pd.DateOffset(months=SANCTUARY_MONTHS)
@@ -396,11 +455,17 @@ def main() -> None:
 
     # Save pooled model + scalers for reproducibility.
     artefact_path = REPORTS_DIR / "ml_top6_pooled_artefact.joblib"
-    joblib.dump({
-        "model": model, "scalers": scalers, "feature_names": feature_names,
-        "horizon": HORIZON, "threshold": THRESHOLD,
-        "trained_at": "2026-05-17",
-    }, artefact_path)
+    joblib.dump(
+        {
+            "model": model,
+            "scalers": scalers,
+            "feature_names": feature_names,
+            "horizon": HORIZON,
+            "threshold": THRESHOLD,
+            "trained_at": "2026-05-17",
+        },
+        artefact_path,
+    )
     print(f"\nPooled artefact: {artefact_path.relative_to(PROJECT_ROOT)}")
 
     # Write result log.
@@ -408,11 +473,15 @@ def main() -> None:
     with rpath.open("w", encoding="utf-8") as fh:
         fh.write("# ml top-6 per-asset 5-axis audit\n\n")
         fh.write("**Run date:** 2026-05-17\n")
-        fh.write("**Cell:** horizon=6h, XGBoost, pooled-feature-z-scored "
-                 "(reproduces grid commit 2033042 best cell)\n\n")
+        fh.write(
+            "**Cell:** horizon=6h, XGBoost, pooled-feature-z-scored "
+            "(reproduces grid commit 2033042 best cell)\n\n"
+        )
         fh.write("## §1. Per-asset 5-axis matrix\n\n")
-        fh.write("| Asset | Sanc AUC | Active | Sharpe | CI95 lo | CI95 hi | "
-                 "DSR | MC P | Sanc Sharpe | Noise base | Noise axis | Verdict |\n")
+        fh.write(
+            "| Asset | Sanc AUC | Active | Sharpe | CI95 lo | CI95 hi | "
+            "DSR | MC P | Sanc Sharpe | Noise base | Noise axis | Verdict |\n"
+        )
         fh.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---|\n")
         for r in results:
             fh.write(
@@ -424,38 +493,52 @@ def main() -> None:
                 f"{r.noise_axis} | {r.verdict} |\n"
             )
         fh.write("\n## §2. Deployment-eligibility per V3.7 rule\n\n")
-        fh.write("DEPLOY-eligible cells (DEPLOY verdict OR CONDITIONAL_WATCHPOINT "
-                 "with noise=best) AND CI_lo > 0:\n\n")
+        fh.write(
+            "DEPLOY-eligible cells (DEPLOY verdict OR CONDITIONAL_WATCHPOINT "
+            "with noise=best) AND CI_lo > 0:\n\n"
+        )
         eligible = [
-            r for r in results
-            if (r.verdict == "DEPLOY"
-                or (r.verdict == "CONDITIONAL_WATCHPOINT" and r.noise_axis == "best"))
+            r
+            for r in results
+            if (
+                r.verdict == "DEPLOY"
+                or (r.verdict == "CONDITIONAL_WATCHPOINT" and r.noise_axis == "best")
+            )
             and r.ci_lo > 0
         ]
         if eligible:
             best = max(eligible, key=lambda r: r.ci_lo)
-            fh.write(f"**{len(eligible)} eligible asset(s).** "
-                     f"Top by CI_lo: **{best.asset}** "
-                     f"(CI_lo={best.ci_lo:+.3f}, Sharpe={best.sharpe:+.4f}, "
-                     f"verdict={best.verdict}, noise={best.noise_axis}).\n")
+            fh.write(
+                f"**{len(eligible)} eligible asset(s).** "
+                f"Top by CI_lo: **{best.asset}** "
+                f"(CI_lo={best.ci_lo:+.3f}, Sharpe={best.sharpe:+.4f}, "
+                f"verdict={best.verdict}, noise={best.noise_axis}).\n"
+            )
             for r in sorted(eligible, key=lambda r: -r.ci_lo):
-                fh.write(f"- {r.asset}: CI_lo={r.ci_lo:+.3f}, Sharpe={r.sharpe:+.4f}, "
-                         f"verdict={r.verdict}, noise={r.noise_axis}\n")
+                fh.write(
+                    f"- {r.asset}: CI_lo={r.ci_lo:+.3f}, Sharpe={r.sharpe:+.4f}, "
+                    f"verdict={r.verdict}, noise={r.noise_axis}\n"
+                )
         else:
-            fh.write("**0 eligible assets.** No top-6 asset passes the "
-                     "strict 5-axis + CI_lo > 0 rule.\n")
+            fh.write(
+                "**0 eligible assets.** No top-6 asset passes the strict 5-axis + CI_lo > 0 rule.\n"
+            )
         fh.write("\n## §3. Verdict + next steps\n\n")
         if eligible:
-            fh.write("**ml line of research: PER-ASSET DEPLOY candidate(s) "
-                     "identified.** L65 ruin assessment + L67 portfolio "
-                     "inclusion test required before any live cutover.\n")
+            fh.write(
+                "**ml line of research: PER-ASSET DEPLOY candidate(s) "
+                "identified.** L65 ruin assessment + L67 portfolio "
+                "inclusion test required before any live cutover.\n"
+            )
         else:
-            fh.write("**ml line of research: RETIRE.** Top-6 sanctuary AUC "
-                     "above 0.55 was a classification-layer signal that does "
-                     "NOT translate to a deployment-eligible Sharpe under the "
-                     "full V3.6 5-axis matrix. The line is now properly "
-                     "closed -- single-pair, single-horizon, AND multi-asset "
-                     "per-asset 5-axis tests all fail.\n")
+            fh.write(
+                "**ml line of research: RETIRE.** Top-6 sanctuary AUC "
+                "above 0.55 was a classification-layer signal that does "
+                "NOT translate to a deployment-eligible Sharpe under the "
+                "full V3.6 5-axis matrix. The line is now properly "
+                "closed -- single-pair, single-horizon, AND multi-asset "
+                "per-asset 5-axis tests all fail.\n"
+            )
     print(f"\nResult log: {rpath}")
 
 

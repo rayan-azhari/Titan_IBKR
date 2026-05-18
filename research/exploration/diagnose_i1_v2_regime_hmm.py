@@ -99,6 +99,7 @@ def hamming(a: np.ndarray, b: np.ndarray) -> float:
     n_states = max(int(a.max()), int(b.max())) + 1
     # Try all label permutations of b to match a; report best hamming.
     from itertools import permutations
+
     best = 1.0
     for perm in permutations(range(n_states)):
         b_relabeled = np.array([perm[s] for s in b])
@@ -120,8 +121,12 @@ def main() -> None:
     cutoff = panel.index[-1] - pd.DateOffset(months=SANCTUARY_MONTHS)
     is_panel = panel.loc[:cutoff]
     sanc_panel = panel.loc[cutoff:]
-    print(f"\nIS slice:      {len(is_panel)} bars ({is_panel.index[0].date()} -> {is_panel.index[-1].date()})")
-    print(f"Sanctuary:     {len(sanc_panel)} bars ({sanc_panel.index[0].date()} -> {sanc_panel.index[-1].date()}) [HELD OUT]")
+    print(
+        f"\nIS slice:      {len(is_panel)} bars ({is_panel.index[0].date()} -> {is_panel.index[-1].date()})"
+    )
+    print(
+        f"Sanctuary:     {len(sanc_panel)} bars ({sanc_panel.index[0].date()} -> {sanc_panel.index[-1].date()}) [HELD OUT]"
+    )
 
     X_is = is_panel.to_numpy()
     feature_names = list(panel.columns)
@@ -180,8 +185,10 @@ def main() -> None:
         # 4. Seed stability
         if SEEDS[1] in models:
             stab = 1.0 - hamming(state_paths[SEEDS[0]], state_paths[SEEDS[1]])
-            print(f"  Seed stability (1 - hamming after relabel): {stab:.3f}  "
-                  f"({'OK' if stab > 0.80 else 'WARN'})")
+            print(
+                f"  Seed stability (1 - hamming after relabel): {stab:.3f}  "
+                f"({'OK' if stab > 0.80 else 'WARN'})"
+            )
         else:
             print("  Seed stability: alt seed failed")
 

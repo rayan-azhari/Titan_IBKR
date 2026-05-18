@@ -90,9 +90,7 @@ def _vol_target_scale(
     return scale
 
 
-def gold_macro_returns(
-    closes_df: pd.DataFrame, *, cfg: GoldMacroConfig | None = None
-) -> pd.Series:
+def gold_macro_returns(closes_df: pd.DataFrame, *, cfg: GoldMacroConfig | None = None) -> pd.Series:
     """Per-bar net return of the gold_macro signal.
 
     Parameters:

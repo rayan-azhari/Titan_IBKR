@@ -60,8 +60,7 @@ def test_methodology_audit_baseline_not_exceeded():
         "more patterns vs the frozen baseline at "
         "tests/baselines/methodology_audit_baseline.json:\n"
         + "\n".join(
-            f"  {pid}: current={cur} > baseline={base}"
-            for pid, (cur, base) in regressions.items()
+            f"  {pid}: current={cur} > baseline={base}" for pid, (cur, base) in regressions.items()
         )
         + "\n\nEither fix the new violations OR (with reviewer approval and "
         "a documented reason) raise the baseline by editing the JSON file."

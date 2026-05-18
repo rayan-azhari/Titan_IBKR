@@ -95,15 +95,17 @@ def build_b5_trades(df: pd.DataFrame) -> pd.DataFrame:
         cost = 2 * COST_BPS / 10_000.0
         net_ret = gross_ret - cost
 
-        trades.append({
-            "date": date,
-            "first_30m_ret": first_30m_ret,
-            "side": side,
-            "entry": last_entry,
-            "exit": last_exit,
-            "gross_ret": gross_ret,
-            "net_ret": net_ret,
-        })
+        trades.append(
+            {
+                "date": date,
+                "first_30m_ret": first_30m_ret,
+                "side": side,
+                "entry": last_entry,
+                "exit": last_exit,
+                "gross_ret": gross_ret,
+                "net_ret": net_ret,
+            }
+        )
     return pd.DataFrame(trades)
 
 
@@ -145,8 +147,7 @@ def main() -> None:
     # Available M5 tickers: AMAT, CAT, CRM, CSCO, INTC, TMO, TXN, UNH, WMT
     primary = "AMAT"
     df = _load_m5(primary)
-    print(f"\n[load] {primary}: {len(df)} M5 bars, "
-          f"{df.index[0]} -> {df.index[-1]}")
+    print(f"\n[load] {primary}: {len(df)} M5 bars, {df.index[0]} -> {df.index[-1]}")
 
     assert_causal_b5(df)
 
@@ -193,12 +194,18 @@ def main() -> None:
         print("\n--- L65 ruin assessment (best ticker) ---")
         for w in [0.05, 0.10, 0.15]:
             ruin = assess_strategy_ruin(
-                daily_ret, deployment_weight=w,
-                portfolio_kill_threshold=0.15, horizon_bars=252,
-                block_size=21, n_paths=2000, seed=42,
+                daily_ret,
+                deployment_weight=w,
+                portfolio_kill_threshold=0.15,
+                horizon_bars=252,
+                block_size=21,
+                n_paths=2000,
+                seed=42,
             )
-            print(f"  weight={w:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
-                  f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, passes={ruin.passes()}")
+            print(
+                f"  weight={w:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
+                f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, passes={ruin.passes()}"
+            )
 
     # Verdict
     print("\n" + "=" * 88)
@@ -211,14 +218,20 @@ def main() -> None:
     med = float(np.median(valid))
     pct_pos = float(np.mean([s > 0 for s in valid]))
     if med > 0.3 and pct_pos >= 0.6:
-        print(f"CONDITIONAL_WATCHPOINT candidate: panel median {med:+.4f}, "
-              f"{pct_pos:.0%} positive. L67 portfolio inclusion test needed.")
+        print(
+            f"CONDITIONAL_WATCHPOINT candidate: panel median {med:+.4f}, "
+            f"{pct_pos:.0%} positive. L67 portfolio inclusion test needed."
+        )
     elif med > 0 and pct_pos >= 0.5:
-        print(f"MARGINAL: panel median {med:+.4f}, {pct_pos:.0%} positive. "
-              f"Could defer or scope to top-1 ticker.")
+        print(
+            f"MARGINAL: panel median {med:+.4f}, {pct_pos:.0%} positive. "
+            f"Could defer or scope to top-1 ticker."
+        )
     else:
-        print(f"RETIRE: panel median {med:+.4f}, {pct_pos:.0%} positive. "
-              f"Signal too weak (matches academic decay-post-2014 finding).")
+        print(
+            f"RETIRE: panel median {med:+.4f}, {pct_pos:.0%} positive. "
+            f"Signal too weak (matches academic decay-post-2014 finding)."
+        )
 
 
 if __name__ == "__main__":

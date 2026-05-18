@@ -81,6 +81,7 @@ XGB_PARAMS = dict(
 
 def _load_h1_h4_d() -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
     """Load EUR/USD H1 with H4 + D as context."""
+
     def _load(p: str) -> pd.DataFrame:
         fp = DATA_DIR / f"EUR_USD_{p}.parquet"
         df = pd.read_parquet(fp)
@@ -102,8 +103,13 @@ def _build_labels(h1: pd.DataFrame) -> pd.DataFrame:
     """Triple Barrier Method labels on H1."""
     atr_arr = _compute_atr(h1, ATR_PERIOD)
     labels = _tbm_kernel(
-        h1["close"].values, h1["high"].values, h1["low"].values,
-        atr_arr, PT_MULT, SL_MULT, MAX_HOLDING,
+        h1["close"].values,
+        h1["high"].values,
+        h1["low"].values,
+        atr_arr,
+        PT_MULT,
+        SL_MULT,
+        MAX_HOLDING,
     )
     return pd.DataFrame(
         {"tbm_label": labels, "atr": atr_arr},
@@ -122,16 +128,18 @@ def main() -> None:
     print(f"  H4: {len(ctx['H4'])} bars")
     print(f"  D:  {len(ctx['D'])} bars")
 
-    print(f"\n[2] Building TBM labels (PT={PT_MULT}x ATR, SL={SL_MULT}x ATR, "
-          f"horizon={MAX_HOLDING}h)...")
+    print(
+        f"\n[2] Building TBM labels (PT={PT_MULT}x ATR, SL={SL_MULT}x ATR, "
+        f"horizon={MAX_HOLDING}h)..."
+    )
     labels_df = _build_labels(h1)
     n_total = len(labels_df)
     n_up = int((labels_df["tbm_label"] == 1).sum())
     n_dn = int((labels_df["tbm_label"] == -1).sum())
     n_to = int((labels_df["tbm_label"] == 0).sum())
-    print(f"  +1 TP first: {n_up:6d}  ({n_up/n_total*100:.1f}%)")
-    print(f"  -1 SL first: {n_dn:6d}  ({n_dn/n_total*100:.1f}%)")
-    print(f"   0 time-out: {n_to:6d}  ({n_to/n_total*100:.1f}%)")
+    print(f"  +1 TP first: {n_up:6d}  ({n_up / n_total * 100:.1f}%)")
+    print(f"  -1 SL first: {n_dn:6d}  ({n_dn / n_total * 100:.1f}%)")
+    print(f"   0 time-out: {n_to:6d}  ({n_to / n_total * 100:.1f}%)")
 
     print("\n[3] Building feature matrix (current 29-col build_features())...")
     with warnings.catch_warnings():
@@ -153,9 +161,11 @@ def main() -> None:
     # Binary: TP-first -> 1, SL-first -> 0.
     y = (y_label[decisive_mask] == 1).astype(int)
     print(f"  total clean rows: {len(X_all):,}")
-    print(f"  decisive rows:    {len(X):,}  ({len(X)/len(X_all)*100:.1f}%)")
-    print(f"  class balance:    1={int(y.sum())} ({y.mean()*100:.1f}%), "
-          f"0={int((1-y).sum())} ({(1-y).mean()*100:.1f}%)")
+    print(f"  decisive rows:    {len(X):,}  ({len(X) / len(X_all) * 100:.1f}%)")
+    print(
+        f"  class balance:    1={int(y.sum())} ({y.mean() * 100:.1f}%), "
+        f"0={int((1 - y).sum())} ({(1 - y).mean() * 100:.1f}%)"
+    )
 
     print(f"\n[5] Holding out sanctuary (last {SANCTUARY_MONTHS} months)...")
     cutoff = X.index[-1] - pd.DateOffset(months=SANCTUARY_MONTHS)
@@ -166,8 +176,7 @@ def main() -> None:
     print(f"  visible:   {len(X_v):,} rows ({X_v.index[0]} -> {X_v.index[-1]})")
     print(f"  sanctuary: {len(X_s):,} rows ({X_s.index[0]} -> {X_s.index[-1]})")
 
-    print("\n[6] Training XGBoost on visible (pre-committed hyperparams, "
-          "no per-fold tuning)...")
+    print("\n[6] Training XGBoost on visible (pre-committed hyperparams, no per-fold tuning)...")
     model = XGBClassifier(**XGB_PARAMS)
     model.fit(X_v, y_v)
     # In-sample AUC (sanity).
@@ -176,16 +185,19 @@ def main() -> None:
     # Sanctuary AUC (honest -- never seen during fit).
     sanc_auc = (
         float(roc_auc_score(y_s, model.predict_proba(X_s)[:, 1]))
-        if len(X_s) > 0 and y_s.nunique() == 2 else float("nan")
+        if len(X_s) > 0 and y_s.nunique() == 2
+        else float("nan")
     )
     print(f"  Sanctuary AUC (held-out): {sanc_auc:.4f}")
     sanc_proba = model.predict_proba(X_s)[:, 1] if len(X_s) > 0 else np.array([])
-    sanc_decision = (sanc_proba > META_THRESHOLD)
+    sanc_decision = sanc_proba > META_THRESHOLD
     n_take = int(sanc_decision.sum())
     sanc_win_rate = float(y_s[sanc_decision].mean()) if n_take > 0 else float("nan")
-    print(f"  Sanctuary @ threshold={META_THRESHOLD}: "
-          f"{n_take}/{len(X_s)} trades ({n_take/max(len(X_s),1)*100:.1f}%), "
-          f"win_rate_meta={sanc_win_rate:.4f}")
+    print(
+        f"  Sanctuary @ threshold={META_THRESHOLD}: "
+        f"{n_take}/{len(X_s)} trades ({n_take / max(len(X_s), 1) * 100:.1f}%), "
+        f"win_rate_meta={sanc_win_rate:.4f}"
+    )
 
     print("\n[7] Serialising artefact...")
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -217,13 +229,11 @@ def main() -> None:
         "sanctuary_auc": sanc_auc,
         "sanctuary_win_rate_meta": sanc_win_rate,
         "audit_ref": (
-            ".tmp/reports/ml_wave_c_audit/result_log.md "
-            "(retrain after feature-pipeline drift, L71)"
+            ".tmp/reports/ml_wave_c_audit/result_log.md (retrain after feature-pipeline drift, L71)"
         ),
     }
     joblib.dump(artefact, out_path)
-    print(f"  wrote: {out_path.relative_to(PROJECT_ROOT)} "
-          f"({out_path.stat().st_size} bytes)")
+    print(f"  wrote: {out_path.relative_to(PROJECT_ROOT)} ({out_path.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":

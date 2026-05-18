@@ -110,23 +110,31 @@ def main() -> None:
     bench_6040 = benchmark_6040_returns().dropna()
 
     print(f"  GEM J5:           {len(gem)} bars, {gem.index[0].date()} -> {gem.index[-1].date()}")
-    print(f"  turtle CAT:       {len(turtle)} bars, {turtle.index[0].date()} -> {turtle.index[-1].date()}")
-    print(f"  fx_carry AUD/JPY: {len(fx_carry)} bars, {fx_carry.index[0].date()} -> {fx_carry.index[-1].date()}")
-    print(f"  ic_equity top-3:  {len(ic_eq)} bars, {ic_eq.index[0].date()} -> {ic_eq.index[-1].date()}")
+    print(
+        f"  turtle CAT:       {len(turtle)} bars, {turtle.index[0].date()} -> {turtle.index[-1].date()}"
+    )
+    print(
+        f"  fx_carry AUD/JPY: {len(fx_carry)} bars, {fx_carry.index[0].date()} -> {fx_carry.index[-1].date()}"
+    )
+    print(
+        f"  ic_equity top-3:  {len(ic_eq)} bars, {ic_eq.index[0].date()} -> {ic_eq.index[-1].date()}"
+    )
 
     # ─────────────────────────────────────────────────────────────────
     # Empirical correlation matrix across all 4 strategies (on overlap)
     # ─────────────────────────────────────────────────────────────────
-    common = gem.index.intersection(turtle.index).intersection(
-        fx_carry.index).intersection(ic_eq.index)
-    print(f"\n[align] common index: {len(common)} bars "
-          f"({common[0].date()} -> {common[-1].date()})")
-    df = pd.DataFrame({
-        "gem_j5": gem.reindex(common).fillna(0.0),
-        "turtle_cat": turtle.reindex(common).fillna(0.0),
-        "fx_carry": fx_carry.reindex(common).fillna(0.0),
-        "ic_equity": ic_eq.reindex(common).fillna(0.0),
-    })
+    common = (
+        gem.index.intersection(turtle.index).intersection(fx_carry.index).intersection(ic_eq.index)
+    )
+    print(f"\n[align] common index: {len(common)} bars ({common[0].date()} -> {common[-1].date()})")
+    df = pd.DataFrame(
+        {
+            "gem_j5": gem.reindex(common).fillna(0.0),
+            "turtle_cat": turtle.reindex(common).fillna(0.0),
+            "fx_carry": fx_carry.reindex(common).fillna(0.0),
+            "ic_equity": ic_eq.reindex(common).fillna(0.0),
+        }
+    )
     print("\nCorrelation matrix (overlap period):")
     print(df.corr().round(3).to_string())
 
@@ -141,7 +149,8 @@ def main() -> None:
         {"gem_j5": 0.70, "turtle_cat": 0.20},
     )
     eval1 = evaluate_portfolio_vs_benchmark(
-        p1, bench_6040,
+        p1,
+        bench_6040,
         portfolio_label="GEM(70%) + turtle(20%)",
         benchmark_label="60/40 SPY/IEF",
     )
@@ -158,7 +167,8 @@ def main() -> None:
         {"gem_j5": 0.70, "turtle_cat": 0.20, "fx_carry": 0.05, "ic_equity": 0.05},
     )
     eval2 = evaluate_portfolio_vs_benchmark(
-        p2, bench_6040,
+        p2,
+        bench_6040,
         portfolio_label="GEM(70%)+turtle(20%)+fx(5%)+ic_eq(5%)",
         benchmark_label="60/40 SPY/IEF",
     )
@@ -175,7 +185,8 @@ def main() -> None:
         {"gem_j5": 0.60, "turtle_cat": 0.20, "fx_carry": 0.10, "ic_equity": 0.10},
     )
     eval3 = evaluate_portfolio_vs_benchmark(
-        p3, bench_6040,
+        p3,
+        bench_6040,
         portfolio_label="GEM(60%)+turtle(20%)+fx(10%)+ic_eq(10%)",
         benchmark_label="60/40 SPY/IEF",
     )
@@ -188,21 +199,31 @@ def main() -> None:
     print("Joint L65 ruin (P(NAV DD > 15% in 1y), 2000 paths, gate < 1%)")
     print("─" * 100)
     scenarios = [
-        ("S1 GEM 70% + turtle 20%",
-         {"gem_j5": gem, "turtle_cat": turtle},
-         {"gem_j5": 0.70, "turtle_cat": 0.20}),
-        ("S2 + fx 5% + ic_eq 5%",
-         {"gem_j5": gem, "turtle_cat": turtle, "fx_carry": fx_carry, "ic_equity": ic_eq},
-         {"gem_j5": 0.70, "turtle_cat": 0.20, "fx_carry": 0.05, "ic_equity": 0.05}),
-        ("S3 GEM 60% + 20+10+10",
-         {"gem_j5": gem, "turtle_cat": turtle, "fx_carry": fx_carry, "ic_equity": ic_eq},
-         {"gem_j5": 0.60, "turtle_cat": 0.20, "fx_carry": 0.10, "ic_equity": 0.10}),
+        (
+            "S1 GEM 70% + turtle 20%",
+            {"gem_j5": gem, "turtle_cat": turtle},
+            {"gem_j5": 0.70, "turtle_cat": 0.20},
+        ),
+        (
+            "S2 + fx 5% + ic_eq 5%",
+            {"gem_j5": gem, "turtle_cat": turtle, "fx_carry": fx_carry, "ic_equity": ic_eq},
+            {"gem_j5": 0.70, "turtle_cat": 0.20, "fx_carry": 0.05, "ic_equity": 0.05},
+        ),
+        (
+            "S3 GEM 60% + 20+10+10",
+            {"gem_j5": gem, "turtle_cat": turtle, "fx_carry": fx_carry, "ic_equity": ic_eq},
+            {"gem_j5": 0.60, "turtle_cat": 0.20, "fx_carry": 0.10, "ic_equity": 0.10},
+        ),
     ]
     for label, returns_dict, weights in scenarios:
         res = assess_joint_ruin(
-            returns_dict, deployment_weights=weights,
-            portfolio_kill_threshold=0.15, horizon_bars=252,
-            block_size=21, n_paths=2000, seed=42,
+            returns_dict,
+            deployment_weights=weights,
+            portfolio_kill_threshold=0.15,
+            horizon_bars=252,
+            block_size=21,
+            n_paths=2000,
+            seed=42,
         )
         print(f"\n  {label}:")
         print(f"    P_kill_trip = {res.p_kill_trip:.3%}  (gate < 1%)")

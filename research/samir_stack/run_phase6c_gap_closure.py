@@ -72,27 +72,38 @@ def main() -> None:
         ief_close=panel_data.get("ief"),
         tlt_close=panel_data.get("tlt"),
     )
-    print(f"  indicator panel: {indicator_panel.shape[0]} bars × {indicator_panel.shape[1]} indicators")
+    print(
+        f"  indicator panel: {indicator_panel.shape[0]} bars × {indicator_panel.shape[1]} indicators"
+    )
     print(f"  columns: {list(indicator_panel.columns)}")
 
     score = regime_score_equal(indicator_panel)
-    print(f"  regime_score: {len(score)} bars, "
-          f"mean={score.mean():.3f}, min={score.min():.3f}, max={score.max():.3f}")
+    print(
+        f"  regime_score: {len(score)} bars, "
+        f"mean={score.mean():.3f}, min={score.min():.3f}, max={score.max():.3f}"
+    )
 
     # ─────────────────────────────────────────────────────────────────────
     # Step 2: Run live config (Phase 5 canonical)
     # ─────────────────────────────────────────────────────────────────────
     print("\n[step 2] running Phase 5 canonical config")
     cfg = StackedConfig(
-        equity_weight=0.40, bond_weight=0.60,
-        L_max=2.0, tier_thresholds=(0.30, 0.55),
+        equity_weight=0.40,
+        bond_weight=0.60,
+        L_max=2.0,
+        tier_thresholds=(0.30, 0.55),
         capitulation=CapitulationConfig(enabled=True),
     )
-    print(f"  config: equity_weight={cfg.equity_weight}, L_max={cfg.L_max}, "
-          f"tier_thresholds={cfg.tier_thresholds}, capitulation={cfg.capitulation.enabled}")
+    print(
+        f"  config: equity_weight={cfg.equity_weight}, L_max={cfg.L_max}, "
+        f"tier_thresholds={cfg.tier_thresholds}, capitulation={cfg.capitulation.enabled}"
+    )
 
     result = run_stacked_strategy(
-        panel_data["spy"], panel_data["ief"], score, cfg,
+        panel_data["spy"],
+        panel_data["ief"],
+        score,
+        cfg,
         tlt_close=panel_data.get("tlt"),
         indicator_panel=indicator_panel,
     )
@@ -110,8 +121,11 @@ def main() -> None:
     ief_close = panel_data["ief"]
 
     mc_cfg = McConfig(
-        block_size_bars=63, n_paths=200, bootstrap_method="shared_block",
-        max_dd_threshold_pct=0.35, max_dd_pass_prob=0.10,
+        block_size_bars=63,
+        n_paths=200,
+        bootstrap_method="shared_block",
+        max_dd_threshold_pct=0.35,
+        max_dd_pass_prob=0.10,
     )
 
     def benchmark_60_40(df: pd.DataFrame) -> pd.Series:
@@ -137,7 +151,10 @@ def main() -> None:
         )
         synth_score = regime_score_equal(synth_indicators)
         res = run_stacked_strategy(
-            synth_spy, synth_ief, synth_score, cfg,
+            synth_spy,
+            synth_ief,
+            synth_score,
+            cfg,
             tlt_close=panel_data.get("tlt"),
             indicator_panel=synth_indicators,
         )
@@ -191,7 +208,10 @@ def main() -> None:
         )
         noisy_score = regime_score_equal(noisy_indicators)
         res = run_stacked_strategy(
-            noisy_spy, panel_data["ief"], noisy_score, cfg,
+            noisy_spy,
+            panel_data["ief"],
+            noisy_score,
+            cfg,
             tlt_close=panel_data.get("tlt"),
             indicator_panel=noisy_indicators,
         )
@@ -207,8 +227,10 @@ def main() -> None:
         )
         print(f"  base Sharpe = {noise_res.base_sharpe:+.4f}")
         for lvl in noise_res.per_level:
-            print(f"  noise={lvl.noise_level:.2f}: mean SR={lvl.sharpe_mean:+.4f}, "
-                  f"degradation={lvl.degradation_mean:.3f} (p5={lvl.degradation_p5:.3f})")
+            print(
+                f"  noise={lvl.noise_level:.2f}: mean SR={lvl.sharpe_mean:+.4f}, "
+                f"degradation={lvl.degradation_mean:.3f} (p5={lvl.degradation_p5:.3f})"
+            )
         print(f"  noise mean passes: {noise_res.passes}")
         print(f"  worst-case passes: {noise_res.worst_case_passes}")
     except Exception as e:  # noqa: BLE001
@@ -222,9 +244,11 @@ def main() -> None:
     # Phase 5 swept 9 cells of (equity_weight, L_max, capitulation):
     # the canonical Sharpe should be deflated for selection bias.
     phase5_cell_sharpes = [0.94, 0.81, 0.88, 0.76, 0.82, 0.71, 0.79, 0.65, 0.72]
-    print(f"  Phase 5 sweep cell Sharpes (9 cells): "
-          f"min={min(phase5_cell_sharpes):.2f}, max={max(phase5_cell_sharpes):.2f}, "
-          f"mean={np.mean(phase5_cell_sharpes):.2f}")
+    print(
+        f"  Phase 5 sweep cell Sharpes (9 cells): "
+        f"min={min(phase5_cell_sharpes):.2f}, max={max(phase5_cell_sharpes):.2f}, "
+        f"mean={np.mean(phase5_cell_sharpes):.2f}"
+    )
     sr_var = sr_var_from_sweep(phase5_cell_sharpes)
     dsr = deflated_sharpe(
         sr_hat=sr,
@@ -247,7 +271,9 @@ def main() -> None:
         fh.write("**Verdict: Phase 5 audit STANDS; V3.7 gaps now closed.**\n\n")
         fh.write("## Phase 5 canonical re-validation\n\n")
         fh.write(f"- Sharpe = {sr:+.4f}, CI95 = [{ci_lo:+.3f}, {ci_hi:+.3f}]\n")
-        fh.write(f"- {len(returns)} daily bars, {returns.index[0].date()} → {returns.index[-1].date()}\n\n")
+        fh.write(
+            f"- {len(returns)} daily bars, {returns.index[0].date()} → {returns.index[-1].date()}\n\n"
+        )
         fh.write("## L17 rel-MC vs 60/40 SPY/IEF\n\n")
         if rel_mc is not None:
             fh.write(f"- median dd_reduction = {rel_mc.median_dd_reduction:.3f} (gate <= 0.80)\n")
@@ -261,15 +287,19 @@ def main() -> None:
         if noise_res is not None:
             fh.write(f"- base Sharpe = {noise_res.base_sharpe:+.4f}\n")
             for lvl in noise_res.per_level:
-                fh.write(f"- noise={lvl.noise_level:.2f}: mean SR={lvl.sharpe_mean:+.4f}, "
-                         f"degradation_mean={lvl.degradation_mean:.3f}, "
-                         f"degradation_p5={lvl.degradation_p5:.3f}\n")
+                fh.write(
+                    f"- noise={lvl.noise_level:.2f}: mean SR={lvl.sharpe_mean:+.4f}, "
+                    f"degradation_mean={lvl.degradation_mean:.3f}, "
+                    f"degradation_p5={lvl.degradation_p5:.3f}\n"
+                )
             fh.write(f"- noise mean passes: **{noise_res.passes}**\n")
             fh.write(f"- worst-case passes: **{noise_res.worst_case_passes}**\n\n")
         else:
             fh.write("- L24 noise robustness failed to run.\n\n")
         fh.write("## L25 DSR deflation\n\n")
-        fh.write(f"- Phase 5 sweep: 9 cells, Sharpes {min(phase5_cell_sharpes):.2f} to {max(phase5_cell_sharpes):.2f}\n")
+        fh.write(
+            f"- Phase 5 sweep: 9 cells, Sharpes {min(phase5_cell_sharpes):.2f} to {max(phase5_cell_sharpes):.2f}\n"
+        )
         fh.write(f"- sample Sharpe       = {sr:+.4f}\n")
         fh.write(f"- DSR z-stat          = {dsr.z:+.4f}\n")
         fh.write(f"- E[max SR] (null)    = {dsr.e_max_sr:+.4f}\n")
@@ -281,7 +311,9 @@ def main() -> None:
         if rel_mc is not None:
             fh.write(f"1. **L17 rel-MC vs 60/40**: {'PASS' if rel_mc_pass else 'FAIL'}\n")
         if noise_res is not None:
-            fh.write(f"2. **L24 noise robustness**: passes={noise_res.passes}, worst={noise_res.worst_case_passes}\n")
+            fh.write(
+                f"2. **L24 noise robustness**: passes={noise_res.passes}, worst={noise_res.worst_case_passes}\n"
+            )
         fh.write(f"3. **L25 DSR**: z={dsr.z:+.4f}, p(SR>0)={dsr.dsr_prob:.4f}\n\n")
         fh.write("Status: KEEP-LIVE confirmed under V3.7 framework. ")
         fh.write("No live deployment change needed.\n")

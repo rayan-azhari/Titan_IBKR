@@ -137,16 +137,22 @@ def main() -> None:
     print("=" * 72)
 
     closes = load_universe()
-    print(f"[load] universe: IEF + GLD, {closes.shape[0]} bars "
-          f"({closes.index[0].date()} -> {closes.index[-1].date()})")
+    print(
+        f"[load] universe: IEF + GLD, {closes.shape[0]} bars "
+        f"({closes.index[0].date()} -> {closes.index[-1].date()})"
+    )
 
     # L52 sanctuary discipline.
     sanc = slice_sanctuary(closes, months=SANCTUARY_MONTHS)
     visible = sanc.visible
-    print(f"[sanctuary] visible: {visible.shape[0]} bars "
-          f"({visible.index[0].date()} -> {visible.index[-1].date()})")
-    print(f"[sanctuary] held out: {sanc.sanctuary.shape[0]} bars "
-          f"({sanc.sanctuary_start.date()} -> {sanc.sanctuary_end.date()})")
+    print(
+        f"[sanctuary] visible: {visible.shape[0]} bars "
+        f"({visible.index[0].date()} -> {visible.index[-1].date()})"
+    )
+    print(
+        f"[sanctuary] held out: {sanc.sanctuary.shape[0]} bars "
+        f"({sanc.sanctuary_start.date()} -> {sanc.sanctuary_end.date()})"
+    )
 
     # A1 causality smoke on the canonical config.
     bond_gold_assert_causal(closes, cfg=CELLS[CANONICAL_CELL])
@@ -157,8 +163,10 @@ def main() -> None:
     wfo_cfg = class_def.wfo
     mc_cfg = class_def.mc
     folds = build_folds(visible.index, wfo_cfg, bars_per_year=252)
-    print(f"[wfo] {len(folds)} folds (mode={wfo_cfg.is_mode}, "
-          f"is_min={wfo_cfg.is_min_years}y, oos={wfo_cfg.oos_years}y)")
+    print(
+        f"[wfo] {len(folds)} folds (mode={wfo_cfg.is_mode}, "
+        f"is_min={wfo_cfg.is_min_years}y, oos={wfo_cfg.oos_years}y)"
+    )
     if not folds:
         print("[wfo] No folds — visible window too short. Abort.")
         return
@@ -178,8 +186,10 @@ def main() -> None:
         pass1_returns[name] = stitched
         pass1_sharpes[name] = sr
         pass1_cis[name] = (ci_lo, ci_hi)
-        print(f"  {name:>20s}  sharpe={sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  "
-              f"n_oos={len(stitched.dropna())}")
+        print(
+            f"  {name:>20s}  sharpe={sr:+.4f}  CI=[{ci_lo:+.3f}, {ci_hi:+.3f}]  "
+            f"n_oos={len(stitched.dropna())}"
+        )
 
     # ── L52 plateau pre-flight (on stitched OOS) ──────────────────────────
     print("\n" + "-" * 72)
@@ -196,7 +206,9 @@ def main() -> None:
     if not plateau_h1_pass:
         print("  L52 H1 FAILED — IS plateau did NOT hold OOS. Aborting Pass 2.")
         _write_minimal_report(
-            pass1_sharpes, pass1_cis, plateau_spread,
+            pass1_sharpes,
+            pass1_cis,
+            plateau_spread,
             verdict_global="RETIRED (L52 H1 plateau failed)",
         )
         return
@@ -216,7 +228,9 @@ def main() -> None:
     if not any_can_clear:
         print("  L53 — no cell can plausibly clear CI_lo > 0. Skipping Pass 2.")
         _write_minimal_report(
-            pass1_sharpes, pass1_cis, plateau_spread,
+            pass1_sharpes,
+            pass1_cis,
+            plateau_spread,
             verdict_global="RETIRED (L53 no cell can clear CI_lo)",
         )
         return
@@ -245,7 +259,9 @@ def main() -> None:
             sanctuary_returns=sanc_ret.dropna(),
             periods_per_year=252,
         )
-        sanctuary_pct_by_cell[name] = float(div.percentile) if np.isfinite(div.percentile) else float("nan")
+        sanctuary_pct_by_cell[name] = (
+            float(div.percentile) if np.isfinite(div.percentile) else float("nan")
+        )
 
     # MC needs a per-cell strategy_fn that operates on the bootstrap synthetic
     # DataFrame. Since the bootstrap is "shared_block" with IEF as extra,
@@ -283,7 +299,9 @@ def main() -> None:
         )
 
         # Noise robustness (Varma).
-        def strategy_for_noise(closes_subset: pd.DataFrame, _cfg: BondGoldConfig = cfg) -> pd.Series:
+        def strategy_for_noise(
+            closes_subset: pd.DataFrame, _cfg: BondGoldConfig = cfg
+        ) -> pd.Series:
             return bond_gold_returns(closes_subset, cfg=_cfg)
 
         noise_res = run_noise_robustness(
@@ -328,13 +346,16 @@ def main() -> None:
                 rationale=decision.rationale,
             )
         )
-        print(f"  {name:>20s}  verdict={decision.verdict.value}  "
-              f"CI_lo={ci_lo:+.3f}  sanc_sr={sanctuary_sharpes_by_cell[name]:+.3f}  "
-              f"MC_p={mc_res.p_maxdd_gt_threshold:.3f}  noise={decision.noise_axis}")
+        print(
+            f"  {name:>20s}  verdict={decision.verdict.value}  "
+            f"CI_lo={ci_lo:+.3f}  sanc_sr={sanctuary_sharpes_by_cell[name]:+.3f}  "
+            f"MC_p={mc_res.p_maxdd_gt_threshold:.3f}  noise={decision.noise_axis}"
+        )
 
     # ── Selection per §3 rule ─────────────────────────────────────────────
     eligible = [
-        r for r in cell_rows
+        r
+        for r in cell_rows
         if r.name not in EXCLUDED_FROM_PROMOTION
         and r.verdict in ("DEPLOY", "CONDITIONAL_WATCHPOINT")
     ]
@@ -349,7 +370,9 @@ def main() -> None:
     elif selected is None:
         verdict_global = "RETIRED — no cell DEPLOY or CONDITIONAL_WATCHPOINT"
     else:
-        verdict_global = f"PROMOTED — {selected.name} verdict={selected.verdict}, CI_lo={selected.ci_lo:+.3f}"
+        verdict_global = (
+            f"PROMOTED — {selected.name} verdict={selected.verdict}, CI_lo={selected.ci_lo:+.3f}"
+        )
 
     print("\n" + "=" * 72)
     print(f"FINAL VERDICT: {verdict_global}")
@@ -420,12 +443,8 @@ def _write_full_report(
     lines.append("")
     lines.append(f"## §4.2 L52 plateau pre-flight — spread {plateau_spread * 100:.2f}%")
     lines.append("")
-    lines.append(
-        f"- H1 gate (≤ 50%): **{'PASS' if plateau_spread <= 0.50 else 'FAIL'}**"
-    )
-    lines.append(
-        f"- L27 strict gate (≤ 30%): **{'PASS' if plateau_l27_pass else 'FAIL'}**"
-    )
+    lines.append(f"- H1 gate (≤ 50%): **{'PASS' if plateau_spread <= 0.50 else 'FAIL'}**")
+    lines.append(f"- L27 strict gate (≤ 30%): **{'PASS' if plateau_l27_pass else 'FAIL'}**")
     lines.append("")
     lines.append("## §4.3 Per-cell 5-axis matrix")
     lines.append("")

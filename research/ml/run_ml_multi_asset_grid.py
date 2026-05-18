@@ -70,8 +70,17 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Universe.
 ASSETS = {
-    "fx": ["AUD_JPY", "AUD_USD", "EUR_CHF", "EUR_GBP", "EUR_JPY",
-           "EUR_USD", "GBP_USD", "USD_CHF", "USD_JPY"],
+    "fx": [
+        "AUD_JPY",
+        "AUD_USD",
+        "EUR_CHF",
+        "EUR_GBP",
+        "EUR_JPY",
+        "EUR_USD",
+        "GBP_USD",
+        "USD_CHF",
+        "USD_JPY",
+    ],
     "index": ["ES", "NQ"],
     "etf": ["SPY", "QQQ"],
     "commodity": ["GLD", "CL"],
@@ -98,17 +107,30 @@ RANDOM_SEED = 42
 
 MODEL_CONFIGS = {
     "logreg": lambda: LogisticRegression(
-        C=1.0, max_iter=500, random_state=RANDOM_SEED, n_jobs=4,
+        C=1.0,
+        max_iter=500,
+        random_state=RANDOM_SEED,
+        n_jobs=4,
     ),
     "random_forest": lambda: RandomForestClassifier(
-        n_estimators=200, max_depth=6, min_samples_leaf=20,
-        random_state=RANDOM_SEED, n_jobs=4,
+        n_estimators=200,
+        max_depth=6,
+        min_samples_leaf=20,
+        random_state=RANDOM_SEED,
+        n_jobs=4,
     ),
     "xgboost": lambda: XGBClassifier(
-        n_estimators=200, max_depth=4, learning_rate=0.05,
-        min_child_weight=5, subsample=0.8, colsample_bytree=0.8,
-        objective="binary:logistic", eval_metric="auc", tree_method="hist",
-        random_state=RANDOM_SEED, n_jobs=4,
+        n_estimators=200,
+        max_depth=4,
+        learning_rate=0.05,
+        min_child_weight=5,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        objective="binary:logistic",
+        eval_metric="auc",
+        tree_method="hist",
+        random_state=RANDOM_SEED,
+        n_jobs=4,
     ),
 }
 
@@ -144,7 +166,8 @@ def _load_d_context(symbol: str) -> pd.DataFrame:
 
 
 def build_asset_dataset(
-    symbol: str, horizon: int,
+    symbol: str,
+    horizon: int,
 ) -> tuple[pd.DataFrame, pd.Series, pd.DatetimeIndex, pd.DatetimeIndex] | None:
     """Build (X, y, train_idx, sanctuary_idx) for one asset.
 
@@ -162,8 +185,13 @@ def build_asset_dataset(
     # Build TBM labels at this horizon.
     atr_arr = _compute_atr(h1, ATR_PERIOD)
     labels = _tbm_kernel(
-        h1["close"].values, h1["high"].values, h1["low"].values,
-        atr_arr, PT_MULT, SL_MULT, horizon,
+        h1["close"].values,
+        h1["high"].values,
+        h1["low"].values,
+        atr_arr,
+        PT_MULT,
+        SL_MULT,
+        horizon,
     )
     labels_s = pd.Series(labels, index=h1.index, name="tbm_label")
     # Align + drop NaN/inf.
@@ -194,7 +222,8 @@ def build_asset_dataset(
 
 
 def run_cell(
-    horizon: int, model_name: str,
+    horizon: int,
+    model_name: str,
 ) -> dict:
     """Run one (horizon, model_class) cell across all assets.
 
@@ -229,7 +258,9 @@ def run_cell(
         scaler = StandardScaler()
         scaler.fit(Xf.loc[train_idx])
         Xn = pd.DataFrame(
-            scaler.transform(Xf), index=Xf.index, columns=feature_names,
+            scaler.transform(Xf),
+            index=Xf.index,
+            columns=feature_names,
         )
         per_asset_normed[sym] = {
             "X_train": Xn.loc[train_idx].to_numpy(),
@@ -256,18 +287,21 @@ def run_cell(
     for sym, d in per_asset_normed.items():
         if len(d["y_sanc"]) < 50 or len(np.unique(d["y_sanc"])) < 2:
             per_asset_metrics[sym] = {
-                "sanc_auc": float("nan"), "n_sanc": d["n_sanc"], "n_train": d["n_train"],
+                "sanc_auc": float("nan"),
+                "n_sanc": d["n_sanc"],
+                "n_train": d["n_train"],
             }
             continue
         proba = model.predict_proba(d["X_sanc"])[:, 1]
         auc = float(roc_auc_score(d["y_sanc"], proba))
         per_asset_metrics[sym] = {
-            "sanc_auc": auc, "n_sanc": d["n_sanc"], "n_train": d["n_train"],
+            "sanc_auc": auc,
+            "n_sanc": d["n_sanc"],
+            "n_train": d["n_train"],
         }
 
     # Aggregate.
-    valid_aucs = [m["sanc_auc"] for m in per_asset_metrics.values()
-                  if np.isfinite(m["sanc_auc"])]
+    valid_aucs = [m["sanc_auc"] for m in per_asset_metrics.values() if np.isfinite(m["sanc_auc"])]
     mean_auc = float(np.mean(valid_aucs)) if valid_aucs else float("nan")
     median_auc = float(np.median(valid_aucs)) if valid_aucs else float("nan")
     n_above_055 = int(sum(1 for v in valid_aucs if v > SANC_AUC_PROMOTE))
@@ -316,13 +350,16 @@ def main() -> None:
             if "error" in r:
                 print(f"  ERROR: {r['error']}")
                 continue
-            print(f"  assets={r['n_assets_evaluated']}, "
-                  f"pool_train={r['n_pool_train_rows']:,}, "
-                  f"features={r['feature_count']}")
-            print(f"  mean_sanc_auc={r['mean_sanc_auc']:.4f}, "
-                  f"median={r['median_sanc_auc']:.4f}")
-            print(f"  n>0.55={r['n_assets_above_055']}, n>0.51={r['n_assets_above_051']}, "
-                  f"pct>0.50={r['pct_assets_above_050']:.0%}")
+            print(
+                f"  assets={r['n_assets_evaluated']}, "
+                f"pool_train={r['n_pool_train_rows']:,}, "
+                f"features={r['feature_count']}"
+            )
+            print(f"  mean_sanc_auc={r['mean_sanc_auc']:.4f}, median={r['median_sanc_auc']:.4f}")
+            print(
+                f"  n>0.55={r['n_assets_above_055']}, n>0.51={r['n_assets_above_051']}, "
+                f"pct>0.50={r['pct_assets_above_050']:.0%}"
+            )
             print(f"  VERDICT: {r['verdict']}")
 
     # Write outputs.
@@ -330,19 +367,21 @@ def main() -> None:
     for r in all_results:
         if "error" in r:
             continue
-        rows.append({
-            "horizon_h": r["horizon"],
-            "model": r["model"],
-            "n_assets": r["n_assets_evaluated"],
-            "pool_train": r["n_pool_train_rows"],
-            "features": r["feature_count"],
-            "mean_sanc_auc": round(r["mean_sanc_auc"], 4),
-            "median_sanc_auc": round(r["median_sanc_auc"], 4),
-            "n_above_055": r["n_assets_above_055"],
-            "n_above_051": r["n_assets_above_051"],
-            "pct_above_050": round(r["pct_assets_above_050"], 4),
-            "verdict": r["verdict"],
-        })
+        rows.append(
+            {
+                "horizon_h": r["horizon"],
+                "model": r["model"],
+                "n_assets": r["n_assets_evaluated"],
+                "pool_train": r["n_pool_train_rows"],
+                "features": r["feature_count"],
+                "mean_sanc_auc": round(r["mean_sanc_auc"], 4),
+                "median_sanc_auc": round(r["median_sanc_auc"], 4),
+                "n_above_055": r["n_assets_above_055"],
+                "n_above_051": r["n_assets_above_051"],
+                "pct_above_050": round(r["pct_assets_above_050"], 4),
+                "verdict": r["verdict"],
+            }
+        )
     pd.DataFrame(rows).to_csv(REPORTS_DIR / "per_cell_table.csv", index=False)
 
     # Markdown summary.
@@ -350,15 +389,18 @@ def main() -> None:
     with rpath.open("w", encoding="utf-8") as fh:
         fh.write("# ml multi-asset grid -- L61 expansion of Wave C\n\n")
         fh.write("**Run date:** 2026-05-17\n")
-        fh.write(f"**Universe:** {len(ALL_ASSETS)} assets across "
-                 f"{len(ASSETS)} classes\n")
+        fh.write(f"**Universe:** {len(ALL_ASSETS)} assets across {len(ASSETS)} classes\n")
         fh.write(f"**Horizons:** {HORIZONS}h\n")
         fh.write(f"**Models:** {list(MODEL_CONFIGS.keys())}\n")
-        fh.write("**Per-cell training:** ONE pooled model across all "
-                 "available assets after per-asset feature z-scoring.\n\n")
+        fh.write(
+            "**Per-cell training:** ONE pooled model across all "
+            "available assets after per-asset feature z-scoring.\n\n"
+        )
         fh.write("## Per-cell summary\n\n")
-        fh.write("| Horizon | Model | n_assets | pool_train | mean_AUC | "
-                 "median_AUC | n>0.55 | n>0.51 | %>0.50 | Verdict |\n")
+        fh.write(
+            "| Horizon | Model | n_assets | pool_train | mean_AUC | "
+            "median_AUC | n>0.55 | n>0.51 | %>0.50 | Verdict |\n"
+        )
         fh.write("|---|---|---:|---:|---:|---:|---:|---:|---:|---|\n")
         for r in all_results:
             if "error" in r:
@@ -378,31 +420,37 @@ def main() -> None:
             default=None,
         )
         if best is not None:
-            fh.write(f"**Best cell: horizon={best['horizon']}h, "
-                     f"model={best['model']}, mean_AUC={best['mean_sanc_auc']:.4f}, "
-                     f"verdict={best['verdict']}**\n\n")
+            fh.write(
+                f"**Best cell: horizon={best['horizon']}h, "
+                f"model={best['model']}, mean_AUC={best['mean_sanc_auc']:.4f}, "
+                f"verdict={best['verdict']}**\n\n"
+            )
             fh.write("| Asset | n_train | n_sanc | Sanctuary AUC |\n")
             fh.write("|---|---:|---:|---:|\n")
             for sym in sorted(best["per_asset"].keys()):
                 m = best["per_asset"][sym]
-                auc_str = (
-                    f"{m['sanc_auc']:.4f}" if np.isfinite(m["sanc_auc"]) else "N/A"
-                )
+                auc_str = f"{m['sanc_auc']:.4f}" if np.isfinite(m["sanc_auc"]) else "N/A"
                 fh.write(f"| {sym} | {m['n_train']:,} | {m['n_sanc']:,} | {auc_str} |\n")
         fh.write("\n## Verdict\n\n")
         if any(r.get("verdict") == "PROMOTE" for r in all_results):
-            fh.write("**At least one cell PROMOTE.** Path forward: take the "
-                     "PROMOTE cell, run full V3.6 5-axis on each asset's "
-                     "stitched OOS returns, then portfolio-include via L67.\n")
+            fh.write(
+                "**At least one cell PROMOTE.** Path forward: take the "
+                "PROMOTE cell, run full V3.6 5-axis on each asset's "
+                "stitched OOS returns, then portfolio-include via L67.\n"
+            )
         elif any(r.get("verdict") == "MARGINAL" for r in all_results):
-            fh.write("**No cell PROMOTE, some MARGINAL.** Path forward: drill "
-                     "into the marginal cell's per-asset AUC distribution; the "
-                     "edge may be concentrated in a subset.\n")
+            fh.write(
+                "**No cell PROMOTE, some MARGINAL.** Path forward: drill "
+                "into the marginal cell's per-asset AUC distribution; the "
+                "edge may be concentrated in a subset.\n"
+            )
         else:
-            fh.write("**All cells RETIRE.** The architecture + features + "
-                     "TBM label combination has no out-of-sample edge across "
-                     "any tested horizon, model class, or asset universe. ml "
-                     "line of research closed under V3.6 framework.\n")
+            fh.write(
+                "**All cells RETIRE.** The architecture + features + "
+                "TBM label combination has no out-of-sample edge across "
+                "any tested horizon, model class, or asset universe. ml "
+                "line of research closed under V3.6 framework.\n"
+            )
     print(f"\nResult log: {rpath}")
     print(f"Per-cell CSV: {REPORTS_DIR / 'per_cell_table.csv'}")
 

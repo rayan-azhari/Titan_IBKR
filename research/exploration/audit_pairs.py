@@ -83,8 +83,8 @@ def pairs_returns(
     betas = pd.Series(np.nan, index=common)
     for t in range(refit_window, n):
         if t % refit_window == 0 or t == refit_window:
-            sub_a = log_a.iloc[t - refit_window:t].dropna()
-            sub_b = log_b.iloc[t - refit_window:t].dropna()
+            sub_a = log_a.iloc[t - refit_window : t].dropna()
+            sub_b = log_b.iloc[t - refit_window : t].dropna()
             common_sub = sub_a.index.intersection(sub_b.index)
             if len(common_sub) < 30:
                 continue
@@ -152,7 +152,7 @@ def assert_causal_pairs(a: pd.Series, b: pd.Series) -> None:
     a_c.iloc[cutoff:] *= 100.0
     b_c.iloc[cutoff:] *= 100.0
     pert = pairs_returns(a_c, b_c)
-    diff = (base.iloc[:cutoff - 252] - pert.iloc[:cutoff - 252]).abs().max()
+    diff = (base.iloc[: cutoff - 252] - pert.iloc[: cutoff - 252]).abs().max()
     assert diff < 1e-12, f"L21 fail: {diff}"
     print(f"[pairs] L21 PASS (max diff={diff:.2e})")
 
@@ -190,8 +190,10 @@ def main() -> None:
     live_ret = pairs_returns(gld, efa, entry_z=2.0, exit_z=0.5)
     live_sr = float(sharpe(live_ret, periods_per_year=PERIODS_PER_YEAR))
     live_ci = bootstrap_sharpe_ci(live_ret, periods_per_year=PERIODS_PER_YEAR, seed=42)
-    print(f"\n[live config (entry_z=2.0, exit_z=0.5)] Sharpe={live_sr:+.4f}, "
-          f"CI=[{live_ci[0]:+.3f}, {live_ci[1]:+.3f}]")
+    print(
+        f"\n[live config (entry_z=2.0, exit_z=0.5)] Sharpe={live_sr:+.4f}, "
+        f"CI=[{live_ci[0]:+.3f}, {live_ci[1]:+.3f}]"
+    )
     print(f"  CVaR-95 = {cvar(live_ret, alpha=0.05):+.4%}")
     print(f"  CDaR-95 = {cdar(live_ret, alpha=0.05):+.4%}")
 
@@ -205,12 +207,18 @@ def main() -> None:
     print("\n--- L65 single-strategy ruin ---")
     for w in [0.05, 0.10, 0.15, 0.20]:
         ruin = assess_strategy_ruin(
-            live_ret, deployment_weight=w,
-            portfolio_kill_threshold=0.15, horizon_bars=252,
-            block_size=21, n_paths=2000, seed=42,
+            live_ret,
+            deployment_weight=w,
+            portfolio_kill_threshold=0.15,
+            horizon_bars=252,
+            block_size=21,
+            n_paths=2000,
+            seed=42,
         )
-        print(f"  weight={w:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
-              f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, passes={ruin.passes()}")
+        print(
+            f"  weight={w:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
+            f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, passes={ruin.passes()}"
+        )
 
     # Verdict
     print("\n" + "=" * 88)
@@ -219,11 +227,15 @@ def main() -> None:
     if not baseline_pass:
         print(f"RETIRE: live Sharpe {live_sr:+.4f} fails baseline gate.")
     elif live_sr > 0.30 and live_ci[0] > 0:
-        print(f"CONDITIONAL_WATCHPOINT candidate: live SR {live_sr:+.4f} with "
-              f"CI_lo {live_ci[0]:+.3f}. Joint L65 vs current portfolio needed.")
+        print(
+            f"CONDITIONAL_WATCHPOINT candidate: live SR {live_sr:+.4f} with "
+            f"CI_lo {live_ci[0]:+.3f}. Joint L65 vs current portfolio needed."
+        )
     else:
-        print(f"MARGINAL: live SR {live_sr:+.4f}, CI_lo {live_ci[0]:+.3f}. "
-              f"Defer; needs more sweep cells or larger universe.")
+        print(
+            f"MARGINAL: live SR {live_sr:+.4f}, CI_lo {live_ci[0]:+.3f}. "
+            f"Defer; needs more sweep cells or larger universe."
+        )
     print("V1 claim was +1.14; check L62 gap.")
 
 

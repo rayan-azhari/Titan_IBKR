@@ -84,10 +84,7 @@ _ALLOWLIST_FILTER_THEN_STD: dict[str, _AllowEntry] = {
     "titan/research/__init__.py": ("module docstring", _PERMANENT),
     "tests/test_research_metrics.py": ("test explicitly exercises the old bias", _PERMANENT),
     # Legacy research files pending migration (same set as above).
-    **{
-        k: v for k, v in _ALLOWLIST_SQRT_252.items()
-        if k.startswith("research/")
-    },
+    **{k: v for k, v in _ALLOWLIST_SQRT_252.items() if k.startswith("research/")},
 }
 
 _ALLOWLIST_BALANCES_KEYS0: dict[str, _AllowEntry] = {
@@ -343,8 +340,7 @@ def test_no_expired_allowlist_entries():
                 continue
             if exp is not None and exp < today:
                 expired.append(
-                    f"  {name}[{path_rel}]: expired {exp.isoformat()} "
-                    f"-- reason was {reason!r}"
+                    f"  {name}[{path_rel}]: expired {exp.isoformat()} -- reason was {reason!r}"
                 )
     assert not expired, (
         "Allowlist entries past their expiry. Migrate the file to the "

@@ -76,9 +76,7 @@ def load_universe() -> pd.DataFrame:
     return pd.DataFrame({"IEF": ief.reindex(common), "GLD": gld.reindex(common)}).dropna()
 
 
-def bond_gold_strategy_fn(
-    closes_df: pd.DataFrame, *, lookback: int, threshold: float
-) -> pd.Series:
+def bond_gold_strategy_fn(closes_df: pd.DataFrame, *, lookback: int, threshold: float) -> pd.Series:
     """Per-bar net return of the bond->gold signal.
 
     Causality (L18 shift discipline):
@@ -134,7 +132,9 @@ def bond_gold_strategy_fn(
 
 def main() -> None:
     closes = load_universe()
-    print(f"[bg-sweep] universe: IEF + GLD, common range {closes.index[0].date()} -> {closes.index[-1].date()}")
+    print(
+        f"[bg-sweep] universe: IEF + GLD, common range {closes.index[0].date()} -> {closes.index[-1].date()}"
+    )
     print(f"[bg-sweep] total bars: {closes.shape[0]}")
 
     cutoff = closes.index[-1] - pd.DateOffset(months=SANCTUARY_MONTHS)
@@ -153,7 +153,9 @@ def main() -> None:
         "lookback": [30, 45, 60, 90, 120],
         "threshold": [0.00, 0.25, 0.50, 0.75, 1.00],
     }
-    print(f"[bg-sweep] running sweep over {len(grid['lookback']) * len(grid['threshold'])} cells...")
+    print(
+        f"[bg-sweep] running sweep over {len(grid['lookback']) * len(grid['threshold'])} cells..."
+    )
 
     res = run_parameter_sweep(
         is_closes,
@@ -202,7 +204,9 @@ def main() -> None:
     )
     if target is not None and np.isfinite(res.sharpes[target]):
         canonical_sr = res.sharpes[target]
-        print(f"\n[bg-sweep] LIVE canonical (lookback=60, threshold=0.50): IS Sharpe = {canonical_sr:.3f}")
+        print(
+            f"\n[bg-sweep] LIVE canonical (lookback=60, threshold=0.50): IS Sharpe = {canonical_sr:.3f}"
+        )
         finite_mask = np.isfinite(res.sharpes)
         if finite_mask.any():
             best_idx = int(np.argmax(np.where(finite_mask, res.sharpes, -np.inf)))
@@ -216,7 +220,9 @@ def main() -> None:
     report = format_plateau_report(res, candidates, audit_label="bond_gold V1-era RE-AUDIT SWEEP")
     (REPORTS_DIR / "plateau_report.md").write_text(report, encoding="utf-8")
     (REPORTS_DIR / "sharpe_surface.csv").write_text(surf.to_csv(), encoding="utf-8")
-    (REPORTS_DIR / "cells_long.csv").write_text(res.to_dataframe().to_csv(index=False), encoding="utf-8")
+    (REPORTS_DIR / "cells_long.csv").write_text(
+        res.to_dataframe().to_csv(index=False), encoding="utf-8"
+    )
 
     print(f"\n[bg-sweep] wrote: {(REPORTS_DIR / 'plateau_report.md').relative_to(PROJECT_ROOT)}")
     print(f"[bg-sweep] wrote: {(REPORTS_DIR / 'sharpe_surface.csv').relative_to(PROJECT_ROOT)}")

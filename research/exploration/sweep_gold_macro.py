@@ -220,7 +220,9 @@ def main() -> None:
         "real_rate_window": [10, 20, 40, 60],
     }
     n_cells = len(grid["slow_ma"]) * len(grid["real_rate_window"])
-    print(f"[gm-sweep] running sweep over {n_cells} cells (dollar_window fixed at {DOLLAR_WINDOW})...")
+    print(
+        f"[gm-sweep] running sweep over {n_cells} cells (dollar_window fixed at {DOLLAR_WINDOW})..."
+    )
 
     res = run_parameter_sweep(
         is_closes,
@@ -270,7 +272,9 @@ def main() -> None:
     )
     if target is not None and np.isfinite(res.sharpes[target]):
         canonical_sr = res.sharpes[target]
-        print(f"\n[gm-sweep] LIVE canonical (slow_ma=200, rr_window=20): IS Sharpe = {canonical_sr:.3f}")
+        print(
+            f"\n[gm-sweep] LIVE canonical (slow_ma=200, rr_window=20): IS Sharpe = {canonical_sr:.3f}"
+        )
         finite_mask = np.isfinite(res.sharpes)
         if finite_mask.any():
             best_idx = int(np.argmax(np.where(finite_mask, res.sharpes, -np.inf)))
@@ -284,7 +288,9 @@ def main() -> None:
     report = format_plateau_report(res, candidates, audit_label="gold_macro V1-era RE-AUDIT SWEEP")
     (REPORTS_DIR / "plateau_report.md").write_text(report, encoding="utf-8")
     (REPORTS_DIR / "sharpe_surface.csv").write_text(surf.to_csv(), encoding="utf-8")
-    (REPORTS_DIR / "cells_long.csv").write_text(res.to_dataframe().to_csv(index=False), encoding="utf-8")
+    (REPORTS_DIR / "cells_long.csv").write_text(
+        res.to_dataframe().to_csv(index=False), encoding="utf-8"
+    )
     print(f"\n[gm-sweep] wrote: {(REPORTS_DIR / 'plateau_report.md').relative_to(PROJECT_ROOT)}")
 
 

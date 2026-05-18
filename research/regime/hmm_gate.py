@@ -201,9 +201,7 @@ def _gaussian_log_likelihood(obs: np.ndarray, means: np.ndarray, covars: np.ndar
     return log_likelihoods
 
 
-def _causal_forward_states(
-    model: hmm.GaussianHMM, obs: np.ndarray
-) -> np.ndarray:
+def _causal_forward_states(model: hmm.GaussianHMM, obs: np.ndarray) -> np.ndarray:
     """Forward-filtered most-likely-state sequence — CAUSAL.
 
     obs shape: (T, F) where F >= 1. The log-likelihood helper handles both

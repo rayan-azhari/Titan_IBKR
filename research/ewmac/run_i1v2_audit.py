@@ -83,12 +83,24 @@ EWMAC_CELLS: dict[str, EwmacConfig] = {
 GATE_CELLS: dict[str, tuple[str, PanelHMMGateConfig | None]] = {
     "C1_canonical": ("C1_canonical", PanelHMMGateConfig(n_states=2, state_id="mean_return")),
     "C2_3state": ("C1_canonical", PanelHMMGateConfig(n_states=3, state_id="mean_return")),
-    "C3_seed_alt": ("C1_canonical", PanelHMMGateConfig(n_states=2, state_id="mean_return", random_seed=11)),
+    "C3_seed_alt": (
+        "C1_canonical",
+        PanelHMMGateConfig(n_states=2, state_id="mean_return", random_seed=11),
+    ),
     "C4_low_vol": ("C1_canonical", PanelHMMGateConfig(n_states=2, state_id="low_vol")),
     "C5_no_gate_baseline": ("C5_no_gate_baseline", None),
-    "C6_smoothed": ("C1_canonical", PanelHMMGateConfig(n_states=2, state_id="mean_return", smoothing_days=5)),
-    "C7_gross_no_costs": ("C7_gross_no_costs", PanelHMMGateConfig(n_states=2, state_id="mean_return")),
-    "C8_combined": ("C1_canonical", PanelHMMGateConfig(n_states=2, state_id="mean_return", require_broad_trend=True)),
+    "C6_smoothed": (
+        "C1_canonical",
+        PanelHMMGateConfig(n_states=2, state_id="mean_return", smoothing_days=5),
+    ),
+    "C7_gross_no_costs": (
+        "C7_gross_no_costs",
+        PanelHMMGateConfig(n_states=2, state_id="mean_return"),
+    ),
+    "C8_combined": (
+        "C1_canonical",
+        PanelHMMGateConfig(n_states=2, state_id="mean_return", require_broad_trend=True),
+    ),
 }
 CANONICAL_CELL = "C1_canonical"
 
@@ -107,7 +119,7 @@ def load_universe() -> pd.DataFrame:
     first_valid = df.dropna(how="any").index
     if len(first_valid) == 0:
         raise RuntimeError("No common date range across the 11-symbol universe.")
-    df = df.loc[first_valid[0]:].ffill(limit=5)
+    df = df.loc[first_valid[0] :].ffill(limit=5)
     return df
 
 
@@ -134,7 +146,10 @@ def gated_ewmac_returns(
     forecast = compute_ewmac_forecast(closes, cfg=ewmac_cfg)
     if gate_cfg is not None:
         gate = compute_panel_regime_gate(
-            closes, panel, cfg=gate_cfg, is_end_idx=is_end_idx,
+            closes,
+            panel,
+            cfg=gate_cfg,
+            is_end_idx=is_end_idx,
         )
         forecast = forecast * gate
     inst_vol = _instrument_vol(closes, lookback_days=ewmac_cfg.instrument_vol_lookback_days)
@@ -146,8 +161,9 @@ def gated_ewmac_returns(
         dpos = positions.diff().abs().fillna(0.0)
         n_fills = (dpos > 1e-9).sum(axis=1).astype(float)
         bps_drag = (dpos.sum(axis=1) * ewmac_cfg.cost_bps_per_turnover) / 10_000.0
-        fixed_drag = (n_fills * ewmac_cfg.cost_fixed_usd_per_fill /
-                      max(ewmac_cfg.notional_usd_per_leg, 1.0))
+        fixed_drag = (
+            n_fills * ewmac_cfg.cost_fixed_usd_per_fill / max(ewmac_cfg.notional_usd_per_leg, 1.0)
+        )
         net = gross - bps_drag - fixed_drag
     else:
         net = gross
@@ -175,8 +191,11 @@ class CellResult:
 
 
 def _stitched_oos(
-    closes: pd.DataFrame, panel: pd.DataFrame, ewmac_cfg: EwmacConfig,
-    gate_cfg: PanelHMMGateConfig | None, folds: list,
+    closes: pd.DataFrame,
+    panel: pd.DataFrame,
+    ewmac_cfg: EwmacConfig,
+    gate_cfg: PanelHMMGateConfig | None,
+    folds: list,
 ) -> tuple[pd.Series, float, pd.DataFrame]:
     """Run gated EWMAC fold-by-fold (each fold gets its own IS-frozen HMM
     fit using that fold's IS slice) and stitch OOS slices.
@@ -187,31 +206,47 @@ def _stitched_oos(
     for f in folds:
         is_end_idx_full = f.oos_start
         ret = gated_ewmac_returns(closes, panel, ewmac_cfg, gate_cfg, is_end_idx_full)
-        parts.append(ret.iloc[f.oos_start: f.oos_end_excl])
+        parts.append(ret.iloc[f.oos_start : f.oos_end_excl])
         if gate_cfg is not None:
             last_gate_df = compute_panel_regime_gate(
-                closes, panel, cfg=gate_cfg, is_end_idx=is_end_idx_full,
-            ).iloc[f.oos_start: f.oos_end_excl]
+                closes,
+                panel,
+                cfg=gate_cfg,
+                is_end_idx=is_end_idx_full,
+            ).iloc[f.oos_start : f.oos_end_excl]
     stitched = pd.concat(parts).fillna(0.0)
     sh = float(sharpe(stitched, periods_per_year=BARS_PER_YEAR["D"]))
     return stitched, sh, last_gate_df
 
 
 def run_cell(
-    cell_name: str, ewmac_cfg: EwmacConfig, gate_cfg: PanelHMMGateConfig | None,
-    closes_v: pd.DataFrame, closes_s: pd.DataFrame, panel: pd.DataFrame,
-    folds: list, *, n_trials_sweep: int, sweep_sharpes: list[float],
+    cell_name: str,
+    ewmac_cfg: EwmacConfig,
+    gate_cfg: PanelHMMGateConfig | None,
+    closes_v: pd.DataFrame,
+    closes_s: pd.DataFrame,
+    panel: pd.DataFrame,
+    folds: list,
+    *,
+    n_trials_sweep: int,
+    sweep_sharpes: list[float],
     mc_n_workers: int,
 ) -> CellResult:
     bars_per_year = BARS_PER_YEAR["D"]
     d = defaults_for(StrategyClass.CROSS_ASSET_MOMENTUM)
     stitched, sh, gate_df = _stitched_oos(closes_v, panel, ewmac_cfg, gate_cfg, folds)
     ci_lo, ci_hi = bootstrap_sharpe_ci(
-        stitched, periods_per_year=bars_per_year, n_resamples=1000, seed=42,
+        stitched,
+        periods_per_year=bars_per_year,
+        n_resamples=1000,
+        seed=42,
     )
     sr_var = sr_var_from_sweep(sweep_sharpes)
     dsr = deflated_sharpe(
-        sh, sr_var_across_trials=sr_var, returns=stitched, n_trials=n_trials_sweep,
+        sh,
+        sr_var_across_trials=sr_var,
+        returns=stitched,
+        n_trials=n_trials_sweep,
     )
 
     def _strategy_fn(df: pd.DataFrame) -> pd.Series:
@@ -228,19 +263,28 @@ def run_cell(
     primary = closes_v.iloc[:, 0]
     extras = {r: closes_v[r] for r in closes_v.columns[1:]}
     mc = run_block_mc(
-        primary_close=primary, cfg=d.mc,
-        strategy_fn=_strategy_fn, periods_per_year=bars_per_year,
-        seed=42, extra_series=extras, n_workers=mc_n_workers,
+        primary_close=primary,
+        cfg=d.mc,
+        strategy_fn=_strategy_fn,
+        periods_per_year=bars_per_year,
+        seed=42,
+        extra_series=extras,
+        n_workers=mc_n_workers,
     )
 
     # Sanctuary: fit HMM/gate on visible, apply to visible+sanctuary; pick sanctuary tail.
     full_closes = pd.concat([closes_v, closes_s])
     sanc_ret = gated_ewmac_returns(
-        full_closes, panel, ewmac_cfg, gate_cfg, is_end_idx=len(closes_v),
-    ).iloc[len(closes_v):]
+        full_closes,
+        panel,
+        ewmac_cfg,
+        gate_cfg,
+        is_end_idx=len(closes_v),
+    ).iloc[len(closes_v) :]
     sanc_sh = float(sharpe(sanc_ret, periods_per_year=bars_per_year))
     div = sanctuary_divergence_test(
-        historical_returns=stitched, sanctuary_returns=sanc_ret,
+        historical_returns=stitched,
+        sanctuary_returns=sanc_ret,
         periods_per_year=bars_per_year,
     )
 
@@ -248,12 +292,15 @@ def run_cell(
         return gated_ewmac_returns(df, panel, ewmac_cfg, gate_cfg, is_end_idx=len(df))
 
     noise = run_noise_robustness(
-        closes_v, _noise_fn, periods_per_year=bars_per_year,
+        closes_v,
+        _noise_fn,
+        periods_per_year=bars_per_year,
         cfg=NoiseConfig(noise_levels=(0.1, 0.3, 0.5), n_trials=10, max_degradation=0.30),
     )
 
     inputs = DecisionInputs(
-        ci_lo=ci_lo, dsr_prob=dsr.dsr_prob,
+        ci_lo=ci_lo,
+        dsr_prob=dsr.dsr_prob,
         p_maxdd_gt_threshold=mc.p_maxdd_gt_threshold,
         pass_threshold_prob=mc.pass_threshold_prob,
         sanctuary_sharpe=sanc_sh,
@@ -269,7 +316,10 @@ def run_cell(
     else:
         # Re-compute gate over full visible window using max-IS boundary.
         full_gate = compute_panel_regime_gate(
-            closes_v, panel, cfg=gate_cfg, is_end_idx=len(closes_v),
+            closes_v,
+            panel,
+            cfg=gate_cfg,
+            is_end_idx=len(closes_v),
         )
         # OOS portion only (skip the last fold's IS-only bars at start of vis).
         oos_start = folds[0].oos_start
@@ -278,13 +328,17 @@ def run_cell(
         gate_frac_mean = float(np.mean(list(gate_frac_per_asset.values())))
 
     return CellResult(
-        cell=cell_name, sharpe=round(sh, 4),
-        ci_lo=round(ci_lo, 4), ci_hi=round(ci_hi, 4),
+        cell=cell_name,
+        sharpe=round(sh, 4),
+        ci_lo=round(ci_lo, 4),
+        ci_hi=round(ci_hi, 4),
         dsr_prob=round(dsr.dsr_prob, 4),
         mc_p_maxdd_gt_threshold=round(mc.p_maxdd_gt_threshold, 4),
         mc_threshold_pct=round(mc.threshold_pct, 4),
         sanctuary_sharpe=round(sanc_sh, 4),
-        sanctuary_percentile=round(div.percentile, 4) if np.isfinite(div.percentile) else float("nan"),
+        sanctuary_percentile=round(div.percentile, 4)
+        if np.isfinite(div.percentile)
+        else float("nan"),
         noise_base=round(noise.base_sharpe, 4),
         noise_passes_mean=noise.passes,
         noise_passes_worst=noise.worst_case_passes,
@@ -302,10 +356,14 @@ def main():
     print("=" * 80)
     closes = load_universe()
     panel = load_panel()
-    print(f"\nUniverse: {len(closes.columns)} symbols, "
-          f"{closes.index[0].date()} -> {closes.index[-1].date()} ({len(closes)} bars)")
-    print(f"Panel: {len(panel.columns)} features, "
-          f"{panel.index[0].date()} -> {panel.index[-1].date()} ({len(panel)} bars)")
+    print(
+        f"\nUniverse: {len(closes.columns)} symbols, "
+        f"{closes.index[0].date()} -> {closes.index[-1].date()} ({len(closes)} bars)"
+    )
+    print(
+        f"Panel: {len(panel.columns)} features, "
+        f"{panel.index[0].date()} -> {panel.index[-1].date()} ({len(panel)} bars)"
+    )
 
     sanc = slice_sanctuary(closes, months=12)
     closes_v = sanc.visible
@@ -321,13 +379,20 @@ def main():
     print("\n[Plateau pre-flight] C1 + 4 neighbours (OOS Sharpes)...")
     plateau_sharpes: dict[str, float] = {}
     _, sh_c1, _ = _stitched_oos(
-        closes_v, panel, EWMAC_CELLS["C1_canonical"],
-        GATE_CELLS["C1_canonical"][1], folds,
+        closes_v,
+        panel,
+        EWMAC_CELLS["C1_canonical"],
+        GATE_CELLS["C1_canonical"][1],
+        folds,
     )
     plateau_sharpes["C1_canonical"] = sh_c1
     for name, (ewmac_name, gate_cfg) in PLATEAU_NEIGHBOURS.items():
         _, sh, _ = _stitched_oos(
-            closes_v, panel, EWMAC_CELLS[ewmac_name], gate_cfg, folds,
+            closes_v,
+            panel,
+            EWMAC_CELLS[ewmac_name],
+            gate_cfg,
+            folds,
         )
         plateau_sharpes[name] = sh
     for n, s in plateau_sharpes.items():
@@ -336,14 +401,20 @@ def main():
     mx, mn = max(vals), min(vals)
     rel_spread = abs(mx - mn) / max(abs(mx), 1e-9)
     plateau_passed = rel_spread <= 0.30
-    print(f"  Relative spread: {rel_spread:.2%}  ({'PASSED' if plateau_passed else 'FAILED'} <=30%)")
+    print(
+        f"  Relative spread: {rel_spread:.2%}  ({'PASSED' if plateau_passed else 'FAILED'} <=30%)"
+    )
 
     # Pass 1: headline OOS Sharpes for DSR variance.
     print("\n[Pass 1/2] Headline OOS Sharpes for DSR sweep variance...")
     sweep_sharpes: list[float] = []
     for name, (ewmac_name, gate_cfg) in GATE_CELLS.items():
         _, sh, _ = _stitched_oos(
-            closes_v, panel, EWMAC_CELLS[ewmac_name], gate_cfg, folds,
+            closes_v,
+            panel,
+            EWMAC_CELLS[ewmac_name],
+            gate_cfg,
+            folds,
         )
         sweep_sharpes.append(sh)
         print(f"  {name}: Sharpe={sh:+.4f}")
@@ -354,16 +425,26 @@ def main():
     for name, (ewmac_name, gate_cfg) in GATE_CELLS.items():
         print(f"\n  > {name}...")
         r = run_cell(
-            name, EWMAC_CELLS[ewmac_name], gate_cfg,
-            closes_v, closes_s, panel, folds,
-            n_trials_sweep=len(GATE_CELLS), sweep_sharpes=sweep_sharpes,
+            name,
+            EWMAC_CELLS[ewmac_name],
+            gate_cfg,
+            closes_v,
+            closes_s,
+            panel,
+            folds,
+            n_trials_sweep=len(GATE_CELLS),
+            sweep_sharpes=sweep_sharpes,
             mc_n_workers=DEFAULT_MC_WORKERS,
         )
         results.append(r)
         print(f"    Sharpe={r.sharpe:+.4f}  CI=[{r.ci_lo:+.3f}, {r.ci_hi:+.3f}]")
-        print(f"    DSR={r.dsr_prob:.4f}  MC P(>{r.mc_threshold_pct*100:.0f}%)={r.mc_p_maxdd_gt_threshold:.4f}")
+        print(
+            f"    DSR={r.dsr_prob:.4f}  MC P(>{r.mc_threshold_pct * 100:.0f}%)={r.mc_p_maxdd_gt_threshold:.4f}"
+        )
         print(f"    Sanc Sharpe={r.sanctuary_sharpe:+.4f}")
-        print(f"    Noise: base={r.noise_base:+.4f} mean={r.noise_passes_mean} worst={r.noise_passes_worst} axis={r.noise_axis}")
+        print(
+            f"    Noise: base={r.noise_base:+.4f} mean={r.noise_passes_mean} worst={r.noise_passes_worst} axis={r.noise_axis}"
+        )
         print(f"    Gate frac (mean across assets): {r.gate_fraction_mean:.3f}")
         print(f"    Verdict (5-axis): {r.verdict}")
 
@@ -374,11 +455,15 @@ def main():
     print("\n[H2 non-degeneracy] C1 gate fractions per asset:")
     for asset, frac in c1.gate_fraction_per_asset.items():
         print(f"  {asset:>5s}: {frac:.3f}")
-    print(f"  {n_assets_in_band}/11 assets with gate fraction in [0.20, 0.95] -- H2 {'PASS' if h2_passed else 'FAIL'}")
+    print(
+        f"  {n_assets_in_band}/11 assets with gate fraction in [0.20, 0.95] -- H2 {'PASS' if h2_passed else 'FAIL'}"
+    )
 
     # H3 vs B2e C1 (+0.49)
     h3_passed = c1.sharpe > 0.49
-    print(f"\n[H3] C1 Sharpe {c1.sharpe:+.4f} vs B2e C1 (+0.4863) -- {'PASS' if h3_passed else 'FAIL'}")
+    print(
+        f"\n[H3] C1 Sharpe {c1.sharpe:+.4f} vs B2e C1 (+0.4863) -- {'PASS' if h3_passed else 'FAIL'}"
+    )
 
     # H5 seed-stability: C3 vs C1
     c3 = next(r for r in results if r.cell == "C3_seed_alt")
@@ -387,8 +472,10 @@ def main():
     print(f"[H5] C3 vs C1 Sharpe gap: {h5_diff:.2%} -- {'PASS' if h5_passed else 'FAIL'} (<=15%)")
 
     # H6 noise gate on C1
-    h6_passed = (c1.noise_axis == "best")
-    print(f"[H6] C1 noise axis: {c1.noise_axis} -- {'PASS' if h6_passed else 'FAIL'} (must be best)")
+    h6_passed = c1.noise_axis == "best"
+    print(
+        f"[H6] C1 noise axis: {c1.noise_axis} -- {'PASS' if h6_passed else 'FAIL'} (must be best)"
+    )
 
     # Write result log.
     report_fp = REPORTS_DIR / "result_log.md"
@@ -396,13 +483,19 @@ def main():
         fh.write("# I1 v2 Audit Result Log\n\n")
         fh.write("**Run date:** 2026-05-17\n")
         fh.write("**Universe:** 11-symbol IBKR cross-asset (B2e universe)\n")
-        fh.write(f"**Visible:** {len(closes_v)}  Sanctuary: {len(closes_s)}  Folds: {len(folds)}\n\n")
+        fh.write(
+            f"**Visible:** {len(closes_v)}  Sanctuary: {len(closes_s)}  Folds: {len(folds)}\n\n"
+        )
         fh.write("## §4.1 Plateau pre-flight\n\n")
-        fh.write(f"Relative spread: {rel_spread:.2%}  {'PASSED' if plateau_passed else 'FAILED'}\n\n")
+        fh.write(
+            f"Relative spread: {rel_spread:.2%}  {'PASSED' if plateau_passed else 'FAILED'}\n\n"
+        )
         for n, s in plateau_sharpes.items():
             fh.write(f"- {n}: Sharpe = {s:+.4f}\n")
         fh.write("\n## §4.2 Per-cell 5-axis matrix\n\n")
-        fh.write("| Cell | Sharpe | CI95 lo | CI95 hi | DSR | MC P | Sanc Sharpe | Noise base | Noise axis | Gate frac | Verdict |\n")
+        fh.write(
+            "| Cell | Sharpe | CI95 lo | CI95 hi | DSR | MC P | Sanc Sharpe | Noise base | Noise axis | Gate frac | Verdict |\n"
+        )
         fh.write("|---|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---|\n")
         for r in results:
             fh.write(
@@ -412,11 +505,21 @@ def main():
                 f"{r.noise_axis} | {r.gate_fraction_mean:.3f} | {r.verdict} |\n"
             )
         fh.write("\n## §4.3 Falsification hypothesis checklist\n\n")
-        fh.write(f"- H1 plateau spread <=30%: **{'PASS' if plateau_passed else 'FAIL'}** ({rel_spread:.2%})\n")
-        fh.write(f"- H2 gate non-degenerate (>=8/11 assets in [0.20, 0.95]): **{'PASS' if h2_passed else 'FAIL'}** ({n_assets_in_band}/11)\n")
-        fh.write(f"- H3 C1 Sharpe > B2e (+0.49): **{'PASS' if h3_passed else 'FAIL'}** ({c1.sharpe:+.4f})\n")
-        fh.write(f"- H5 seed-stable (gap <=15%): **{'PASS' if h5_passed else 'FAIL'}** ({h5_diff:.2%})\n")
-        fh.write(f"- H6 noise axis = best: **{'PASS' if h6_passed else 'FAIL'}** ({c1.noise_axis})\n")
+        fh.write(
+            f"- H1 plateau spread <=30%: **{'PASS' if plateau_passed else 'FAIL'}** ({rel_spread:.2%})\n"
+        )
+        fh.write(
+            f"- H2 gate non-degenerate (>=8/11 assets in [0.20, 0.95]): **{'PASS' if h2_passed else 'FAIL'}** ({n_assets_in_band}/11)\n"
+        )
+        fh.write(
+            f"- H3 C1 Sharpe > B2e (+0.49): **{'PASS' if h3_passed else 'FAIL'}** ({c1.sharpe:+.4f})\n"
+        )
+        fh.write(
+            f"- H5 seed-stable (gap <=15%): **{'PASS' if h5_passed else 'FAIL'}** ({h5_diff:.2%})\n"
+        )
+        fh.write(
+            f"- H6 noise axis = best: **{'PASS' if h6_passed else 'FAIL'}** ({c1.noise_axis})\n"
+        )
         fh.write("\n## §4.4 Per-asset gate fractions (C1)\n\n")
         for a, f in c1.gate_fraction_per_asset.items():
             fh.write(f"- {a}: {f:.3f}\n")

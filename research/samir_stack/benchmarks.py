@@ -31,10 +31,7 @@ def _summarize(rets: pd.Series, name: str) -> dict:
     vol = annualize_vol(float(rets.std()), periods_per_year=_DAILY)
     peak = eq.cummax()
     maxdd = float(((eq - peak) / peak).min())
-    sharpe = (
-        float(rets.mean() / rets.std() * np.sqrt(_DAILY))
-        if rets.std() > 1e-12 else 0.0
-    )
+    sharpe = float(rets.mean() / rets.std() * np.sqrt(_DAILY)) if rets.std() > 1e-12 else 0.0
     sortino = (
         float(rets.mean() / rets[rets < 0].std() * np.sqrt(_DAILY))
         if (rets < 0).sum() >= 5 and rets[rets < 0].std() > 1e-12

@@ -121,9 +121,7 @@ def test_recompute_daily_vol_ignores_capital_addition():
     previous-day capital-weighted per-strategy returns; a brand-new
     strategy must contribute zero to the portfolio return on its debut.
     """
-    prm = PortfolioRiskManager(
-        config={"history_max_days": 500, "portfolio_max_dd_pct": 99.0}
-    )
+    prm = PortfolioRiskManager(config={"history_max_days": 500, "portfolio_max_dd_pct": 99.0})
     prm.register_strategy("incumbent", 30_000.0)
 
     # 30 days of dead-flat equity for the incumbent -> zero portfolio vol.
@@ -161,9 +159,7 @@ def test_allocator_floor_never_violated_with_missing_strategy():
     were at the floor below it. The two-pass fix reserves min_w for missing
     first, then allocates the residual (1 - n_missing*min_w) among mature.
     """
-    prm = PortfolioRiskManager(
-        config={"history_max_days": 500, "portfolio_max_dd_pct": 99.0}
-    )
+    prm = PortfolioRiskManager(config={"history_max_days": 500, "portfolio_max_dd_pct": 99.0})
     # Two mature strategies (60d history) + one immature (5d, < min_history).
     prm.register_strategy("mature_a", 10_000.0)
     prm.register_strategy("mature_b", 10_000.0)
@@ -223,9 +219,7 @@ def test_risk_contributions_expose_unmeasured_bucket():
     `__unmeasured__` key holding the capital fraction of immature
     strategies. `get_summary` surfaces this as `risk_unmeasured_capital_pct`.
     """
-    prm = PortfolioRiskManager(
-        config={"history_max_days": 500, "portfolio_max_dd_pct": 99.0}
-    )
+    prm = PortfolioRiskManager(config={"history_max_days": 500, "portfolio_max_dd_pct": 99.0})
     prm.register_strategy("mature_a", 10_000.0)
     prm.register_strategy("mature_b", 10_000.0)
     prm.register_strategy("immature", 10_000.0)

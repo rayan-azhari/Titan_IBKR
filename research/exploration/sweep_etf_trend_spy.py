@@ -130,8 +130,10 @@ def etf_trend_spy_returns(
 
 def main() -> None:
     closes = load_universe()
-    print(f"[spy-sweep] SPY data: {closes.shape[0]} bars "
-          f"({closes.index[0].date()} -> {closes.index[-1].date()})")
+    print(
+        f"[spy-sweep] SPY data: {closes.shape[0]} bars "
+        f"({closes.index[0].date()} -> {closes.index[-1].date()})"
+    )
 
     cutoff = closes.index[-1] - pd.DateOffset(months=SANCTUARY_MONTHS)
     is_closes = closes.loc[:cutoff]
@@ -198,7 +200,9 @@ def main() -> None:
     )
     if target is not None and np.isfinite(res.sharpes[target]):
         canonical_sr = res.sharpes[target]
-        print(f"\n[spy-sweep] LIVE canonical (slow_ma=150, exit_confirm_days=1): IS Sharpe = {canonical_sr:.3f}")
+        print(
+            f"\n[spy-sweep] LIVE canonical (slow_ma=150, exit_confirm_days=1): IS Sharpe = {canonical_sr:.3f}"
+        )
         finite_mask = np.isfinite(res.sharpes)
         if finite_mask.any():
             best_idx = int(np.argmax(np.where(finite_mask, res.sharpes, -np.inf)))

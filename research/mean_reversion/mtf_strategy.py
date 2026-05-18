@@ -144,9 +144,7 @@ def _align_to_h1(
     return shifted.reindex(h1_index, method="ffill")
 
 
-def mtf_returns(
-    bars_by_tf: dict[str, pd.DataFrame], *, cfg: MtfConfig | None = None
-) -> pd.Series:
+def mtf_returns(bars_by_tf: dict[str, pd.DataFrame], *, cfg: MtfConfig | None = None) -> pd.Series:
     """Per-bar (H1) net return of the mtf confluence strategy.
 
     `bars_by_tf` must contain DataFrames keyed by 'H1', 'H4', 'D', 'W' with
@@ -240,9 +238,7 @@ def mtf_returns(
     return gross.rename("ret")
 
 
-def mtf_assert_causal(
-    bars_by_tf: dict[str, pd.DataFrame], *, cfg: MtfConfig | None = None
-) -> None:
+def mtf_assert_causal(bars_by_tf: dict[str, pd.DataFrame], *, cfg: MtfConfig | None = None) -> None:
     """L04 / L21 smoke test — corrupting future bars in ANY timeframe must not
     change past returns. This is the L21 multi-TF causality test."""
     if cfg is None:

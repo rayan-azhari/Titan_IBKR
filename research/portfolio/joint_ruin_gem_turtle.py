@@ -100,15 +100,19 @@ def main() -> None:
 
     print("\n[load] computing GEM J5 P_hl60_vt05 returns...")
     gem_ret = gem_j5_canonical_returns().dropna()
-    print(f"  GEM J5 daily returns: {len(gem_ret)} bars, "
-          f"{gem_ret.index[0].date()} -> {gem_ret.index[-1].date()}")
+    print(
+        f"  GEM J5 daily returns: {len(gem_ret)} bars, "
+        f"{gem_ret.index[0].date()} -> {gem_ret.index[-1].date()}"
+    )
     print(f"  Mean = {gem_ret.mean():.6f}, std = {gem_ret.std():.6f}")
     print(f"  Annualised vol = {gem_ret.std() * np.sqrt(252):.3%}")
 
     print("\n[load] computing turtle CAT C3_peak (entry=45, exit=20) H1->daily returns...")
     turtle_ret = turtle_cat_c3peak_returns_daily().dropna()
-    print(f"  turtle CAT daily returns: {len(turtle_ret)} bars, "
-          f"{turtle_ret.index[0].date()} -> {turtle_ret.index[-1].date()}")
+    print(
+        f"  turtle CAT daily returns: {len(turtle_ret)} bars, "
+        f"{turtle_ret.index[0].date()} -> {turtle_ret.index[-1].date()}"
+    )
     print(f"  Mean = {turtle_ret.mean():.6f}, std = {turtle_ret.std():.6f}")
     print(f"  Annualised vol = {turtle_ret.std() * np.sqrt(252):.3%}")
 

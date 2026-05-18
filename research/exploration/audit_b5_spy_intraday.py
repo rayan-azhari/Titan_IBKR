@@ -53,9 +53,9 @@ def _load_m5(symbol: str) -> pd.DataFrame:
 def build_b5_trades(df: pd.DataFrame, cost_bps: float = COST_BPS) -> pd.DataFrame:
     """Per-day trade: enter at 15:30 in SIGN of first_30m_ret, exit at 16:00."""
     first_open_t = time(9, 30)
-    first_close_t = time(9, 55)   # M5 bar 09:55-10:00 -> close at 10:00
+    first_close_t = time(9, 55)  # M5 bar 09:55-10:00 -> close at 10:00
     last_open_t = time(15, 30)
-    last_close_t = time(15, 55)   # closes at 16:00
+    last_close_t = time(15, 55)  # closes at 16:00
 
     trades = []
     for date, day in df.groupby("et_date"):
@@ -78,13 +78,15 @@ def build_b5_trades(df: pd.DataFrame, cost_bps: float = COST_BPS) -> pd.DataFram
         cost = 2 * cost_bps / 10_000.0
         net_ret = gross_ret - cost
 
-        trades.append({
-            "date": date,
-            "first_30m_ret": first_30m_ret,
-            "side": side,
-            "gross_ret": gross_ret,
-            "net_ret": net_ret,
-        })
+        trades.append(
+            {
+                "date": date,
+                "first_30m_ret": first_30m_ret,
+                "side": side,
+                "gross_ret": gross_ret,
+                "net_ret": net_ret,
+            }
+        )
     return pd.DataFrame(trades)
 
 
@@ -139,8 +141,10 @@ def main() -> None:
         sr = per_trade_sharpe(trades)
         wr = float((trades["net_ret"] > 0).mean())
         mr = float(trades["net_ret"].mean())
-        print(f"  n_trades={len(trades)}  win_rate={wr:.2%}  "
-              f"per-trade Sharpe={sr:+.4f}  mean_ret={mr:+.4%}")
+        print(
+            f"  n_trades={len(trades)}  win_rate={wr:.2%}  "
+            f"per-trade Sharpe={sr:+.4f}  mean_ret={mr:+.4%}"
+        )
         results[tkr] = (sr, trades)
 
     if not results:
@@ -157,29 +161,42 @@ def main() -> None:
     best_sr, best_trades = results[best_tkr]
     if best_sr > 0 and len(best_trades) >= 30:
         print(f"\n--- L65 ruin assessment (best ticker = {best_tkr}, Sharpe={best_sr:+.4f}) ---")
-        daily_ret = pd.Series(best_trades["net_ret"].values,
-                              index=pd.to_datetime(best_trades["date"]))
+        daily_ret = pd.Series(
+            best_trades["net_ret"].values, index=pd.to_datetime(best_trades["date"])
+        )
         for w in [0.05, 0.10, 0.15]:
             ruin = assess_strategy_ruin(
-                daily_ret, deployment_weight=w,
-                portfolio_kill_threshold=0.15, horizon_bars=252,
-                block_size=21, n_paths=2000, seed=42,
+                daily_ret,
+                deployment_weight=w,
+                portfolio_kill_threshold=0.15,
+                horizon_bars=252,
+                block_size=21,
+                n_paths=2000,
+                seed=42,
             )
-            print(f"  weight={w:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
-                  f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, passes={ruin.passes()}")
+            print(
+                f"  weight={w:.0%}: P_kill={ruin.p_kill_trip:.3%}, "
+                f"95th-pct DD={ruin.p95_maxdd_at_size:.3%}, passes={ruin.passes()}"
+            )
 
     print("\n" + "=" * 88)
     print("VERDICT")
     print("=" * 88)
     if med > 0.5 and pct_pos >= 0.66:
-        print(f"CONDITIONAL_WATCHPOINT candidate: median Sharpe {med:+.4f}, "
-              f"{pct_pos:.0%} positive. L67 portfolio inclusion test needed.")
+        print(
+            f"CONDITIONAL_WATCHPOINT candidate: median Sharpe {med:+.4f}, "
+            f"{pct_pos:.0%} positive. L67 portfolio inclusion test needed."
+        )
     elif med > 0 and pct_pos >= 0.5:
-        print(f"MARGINAL: median {med:+.4f}, {pct_pos:.0%} positive. "
-              f"Could scope to top-1 ticker only.")
+        print(
+            f"MARGINAL: median {med:+.4f}, {pct_pos:.0%} positive. "
+            f"Could scope to top-1 ticker only."
+        )
     else:
-        print(f"RETIRE: median {med:+.4f}, {pct_pos:.0%} positive. "
-              f"Signal too weak post-2014 (matches academic decay).")
+        print(
+            f"RETIRE: median {med:+.4f}, {pct_pos:.0%} positive. "
+            f"Signal too weak post-2014 (matches academic decay)."
+        )
 
 
 if __name__ == "__main__":

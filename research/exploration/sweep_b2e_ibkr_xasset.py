@@ -91,15 +91,13 @@ def load_universe() -> pd.DataFrame:
     first_valid = df.dropna(how="any").index
     if len(first_valid) == 0:
         raise RuntimeError("No common date range across the 11-symbol universe.")
-    df = df.loc[first_valid[0]:]
+    df = df.loc[first_valid[0] :]
     # Forward-fill within-series gaps from exchange-holiday misalignment (cap 5d).
     df = df.ffill(limit=5)
     return df
 
 
-def ewmac_strategy_fn(
-    closes_df: pd.DataFrame, *, fast_hl: int, slow_hl: int
-) -> pd.Series:
+def ewmac_strategy_fn(closes_df: pd.DataFrame, *, fast_hl: int, slow_hl: int) -> pd.Series:
     """Single-speed Carver EWMAC, net of costs, monthly rebal -- per L52."""
     cfg = EwmacConfig(
         speeds=((fast_hl, slow_hl),),
@@ -187,10 +185,7 @@ def main() -> None:
     print("\n[b2e-sweep] IS Sharpe by single-speed (fast_hl -> slow_hl=4*fast):")
     print(f"  {'fast_hl':>8} {'slow_hl':>8} {'Sharpe':>9} {'vol':>9} {'n_obs':>7}")
     for cell, sh, vol, n in zip(grid_cells, sharpes, vols, n_obs):
-        print(
-            f"  {cell['fast_hl']:>8} {cell['slow_hl']:>8} "
-            f"{sh:>+9.4f} {vol:>9.4f} {n:>7}"
-        )
+        print(f"  {cell['fast_hl']:>8} {cell['slow_hl']:>8} {sh:>+9.4f} {vol:>9.4f} {n:>7}")
 
     print("\n[b2e-sweep] plateau detection (spread <= 30%, min_neighbours=2, top_k=5)...")
     candidates = detect_plateau(res, spread_pct_max=0.30, min_neighbours=2, top_k=5)
@@ -224,7 +219,9 @@ def main() -> None:
         )
 
     # Write artefacts.
-    report = format_plateau_report(res, candidates, audit_label="B2e IBKR cross-asset EWMAC L52 SWEEP")
+    report = format_plateau_report(
+        res, candidates, audit_label="B2e IBKR cross-asset EWMAC L52 SWEEP"
+    )
     (REPORTS_DIR / "plateau_report.md").write_text(report, encoding="utf-8")
     # Cells long-form CSV.
     rows = []

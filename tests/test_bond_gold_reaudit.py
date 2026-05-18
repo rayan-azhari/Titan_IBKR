@@ -71,9 +71,7 @@ def test_sweep_audit_parity() -> None:
     closes = _toy_universe(n=1500, seed=11)
     # Use the exact canonical from the pre-reg.
     sweep_ret = bond_gold_strategy_fn(closes, lookback=120, threshold=0.50)
-    audit_ret = bond_gold_returns(
-        closes, cfg=BondGoldConfig(lookback=120, threshold=0.50)
-    )
+    audit_ret = bond_gold_returns(closes, cfg=BondGoldConfig(lookback=120, threshold=0.50))
     common = sweep_ret.dropna().index.intersection(audit_ret.dropna().index)
     assert len(common) > 100, "Parity test could not find common index"
     diff = (sweep_ret.reindex(common) - audit_ret.reindex(common)).abs()

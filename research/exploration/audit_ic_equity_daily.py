@@ -44,8 +44,15 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # 7 live tickers per ic_equity_daily strategy
 TICKERS_LIVE = ["HWM", "CB", "SYK", "NOC", "WMT", "ABNB", "GL"]
-THRESHOLDS = {"HWM": 0.25, "CB": 0.50, "SYK": 0.50, "NOC": 0.50,
-              "WMT": 0.50, "ABNB": 1.00, "GL": 0.25}
+THRESHOLDS = {
+    "HWM": 0.25,
+    "CB": 0.50,
+    "SYK": 0.50,
+    "NOC": 0.50,
+    "WMT": 0.50,
+    "ABNB": 1.00,
+    "GL": 0.25,
+}
 COST_BPS = 1.0
 PERIODS_PER_YEAR = 252
 
@@ -148,7 +155,9 @@ def main() -> None:
             sr_v1 = float(sharpe(ret_v1, periods_per_year=PERIODS_PER_YEAR))
 
             # Strict: IS-only sign + IS-only mu/sigma, report on OOS half
-            ret_strict_full = ic_equity_returns(df, threshold=THRESHOLDS[tkr], is_until_idx=is_split)
+            ret_strict_full = ic_equity_returns(
+                df, threshold=THRESHOLDS[tkr], is_until_idx=is_split
+            )
             ret_strict_oos = ret_strict_full.iloc[is_split:]
             sr_strict = float(sharpe(ret_strict_oos, periods_per_year=PERIODS_PER_YEAR))
 
@@ -156,7 +165,9 @@ def main() -> None:
             v1_style_sharpes[tkr] = sr_v1
             strict_sharpes[tkr] = sr_strict
             strict_returns_by_ticker[tkr] = ret_strict_oos
-            print(f"{tkr:>7s} {THRESHOLDS[tkr]:>5.2f} {sr_v1:>+11.4f} {sr_strict:>+13.4f} {gap:>+7.3f} {len(df):>6d}")
+            print(
+                f"{tkr:>7s} {THRESHOLDS[tkr]:>5.2f} {sr_v1:>+11.4f} {sr_strict:>+13.4f} {gap:>+7.3f} {len(df):>6d}"
+            )
         except FileNotFoundError:
             print(f"{tkr:>7s}: data missing")
 
@@ -182,7 +193,9 @@ def main() -> None:
     print("\n--- L62 Sharpe-gap classification ---")
     v1_claim_sharpes = [4.28, 3.41, 3.24, 3.06, 2.82, 2.78, 2.65]
     if len(v1_claim_sharpes) == len(valid_strict):
-        avg_gap = float(np.mean([c - s for c, s in zip(v1_claim_sharpes, valid_strict, strict=True)]))
+        avg_gap = float(
+            np.mean([c - s for c, s in zip(v1_claim_sharpes, valid_strict, strict=True)])
+        )
         print(f"  Mean gap (V1 claim minus V3.6 strict OOS): {avg_gap:+.2f}")
         if avg_gap > 5.0:
             cls = "Multi-TF/multi-signal L21 amplification OR fabrication boundary"
@@ -199,8 +212,10 @@ def main() -> None:
     print("VERDICT")
     print("=" * 88)
     if panel_med <= 0:
-        print(f"RETIRE: panel median strict OOS SR {panel_med:+.4f} fails baseline (L66). "
-              f"Likely L21 look-ahead bug (same pattern as ic_mtf).")
+        print(
+            f"RETIRE: panel median strict OOS SR {panel_med:+.4f} fails baseline (L66). "
+            f"Likely L21 look-ahead bug (same pattern as ic_mtf)."
+        )
     elif pct_pos >= 0.5 and panel_med > 0:
         print(f"CONDITIONAL_WATCHPOINT candidate: {pct_pos:.0%} positive, median {panel_med:+.4f}.")
     else:
