@@ -44,6 +44,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from nautilus_trader.config import StrategyConfig
+from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
@@ -219,7 +220,7 @@ class EwmacRegimeStrategy(Strategy):
             return
 
         sym = str(bar.bar_type.instrument_id)
-        ts = pd.Timestamp(bar.close_time_as_datetime()).tz_localize(None).normalize()
+        ts = pd.Timestamp(unix_nanos_to_dt(bar.ts_event)).tz_localize(None).normalize()
         close = float(bar.close)
 
         # Mark-to-market against prior close (synthetic PnL bookkeeping).
