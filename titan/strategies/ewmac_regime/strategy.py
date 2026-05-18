@@ -48,6 +48,7 @@ from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
 
+from titan.research.metrics import BARS_PER_YEAR
 from titan.risk.portfolio_risk_manager import portfolio_risk_manager
 from titan.risk.strategy_equity import StrategyEquityTracker, report_equity_and_check
 
@@ -393,7 +394,7 @@ class EwmacRegimeStrategy(Strategy):
         return log_ret.rolling(
             self._cfg.instrument_vol_lookback_days,
             min_periods=self._cfg.instrument_vol_lookback_days,
-        ).std(ddof=1) * np.sqrt(252)
+        ).std(ddof=1) * np.sqrt(BARS_PER_YEAR["D"])
 
     # ------------------------------------------------------------------
     # Shadow / live order interface

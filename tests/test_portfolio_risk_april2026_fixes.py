@@ -109,6 +109,149 @@ def test_vol_gate_fires_once_per_calendar_day():
     assert prm._last_daily_date == day_ts.date()
 
 
+# ── Gemini Finding #1 regression -- adding a strategy mid-life must not ──
+# inject a spurious one-day NAV jump into _ewma_var.
+
+
+def test_recompute_daily_vol_ignores_capital_addition():
+    """Old _recompute_daily_vol summed total equity then took pct_change.
+    Registering a new strategy with seed_equity 1500 onto a 30k portfolio
+    produced a +5% spurious 'return' on the join day, which exploded
+    _ewma_var and collapsed vol_scale to the 0.25 floor. The fix uses
+    previous-day capital-weighted per-strategy returns; a brand-new
+    strategy must contribute zero to the portfolio return on its debut.
+    """
+    prm = PortfolioRiskManager(
+        config={"history_max_days": 500, "portfolio_max_dd_pct": 99.0}
+    )
+    prm.register_strategy("incumbent", 30_000.0)
+
+    # 30 days of dead-flat equity for the incumbent -> zero portfolio vol.
+    for i in range(30):
+        prm.update("incumbent", 30_000.0, ts=_day(i))
+
+    # Capture state just before the new strategy joins.
+    ewma_pre = prm._ewma_var
+
+    # On day 30, register a new strategy at 1500 seed equity. Under the bug,
+    # nav jumps 30000 -> 31500 (+5%) and _ewma_var explodes.
+    prm.register_strategy("newcomer", 1_500.0)
+    prm.update("newcomer", 1_500.0, ts=_day(30))
+    prm.update("incumbent", 30_000.0, ts=_day(30))
+
+    # Also let one more flat day pass so the newcomer's own return is 0.0.
+    prm.update("newcomer", 1_500.0, ts=_day(31))
+    prm.update("incumbent", 30_000.0, ts=_day(31))
+
+    ewma_post = prm._ewma_var
+    # Pre-fix this would be ~25e-4 (5% squared * EWMA decay). With the fix it
+    # stays at machine-zero because no strategy ever produced a real return.
+    assert ewma_post is None or ewma_post < 1e-10, (
+        f"capital addition leaked into EWMA variance: pre={ewma_pre} post={ewma_post}"
+    )
+
+
+# ── Gemini Finding #2 regression -- min_w must never be violated when one ──
+# strategy has insufficient history.
+
+
+def test_allocator_floor_never_violated_with_missing_strategy():
+    """Old _rebalance assigned min_w to the missing strategy then divided
+    every weight by (1 + n_missing*min_w), dragging mature strategies that
+    were at the floor below it. The two-pass fix reserves min_w for missing
+    first, then allocates the residual (1 - n_missing*min_w) among mature.
+    """
+    prm = PortfolioRiskManager(
+        config={"history_max_days": 500, "portfolio_max_dd_pct": 99.0}
+    )
+    # Two mature strategies (60d history) + one immature (5d, < min_history).
+    prm.register_strategy("mature_a", 10_000.0)
+    prm.register_strategy("mature_b", 10_000.0)
+    prm.register_strategy("immature", 5_000.0)
+
+    a = _seed_returns(seed=11, n=60, vol=0.005)
+    b = _seed_returns(seed=12, n=60, vol=0.03)
+    for ts, v in a.items():
+        prm.update("mature_a", float(v), ts=ts)
+    for ts, v in b.items():
+        prm.update("mature_b", float(v), ts=ts)
+    # Immature: only 5 datapoints.
+    for i in range(5):
+        prm.update("immature", 5_000.0 + i, ts=_day(55 + i))
+
+    alloc = PortfolioAllocator(
+        config={
+            "rebalance_interval_days": 1,
+            "min_history_days": 20,
+            "min_weight": 0.10,
+            "max_weight": 0.60,
+        }
+    )
+    import titan.risk.portfolio_risk_manager as prm_module
+
+    original = prm_module.portfolio_risk_manager
+    prm_module.portfolio_risk_manager = prm
+    try:
+        alloc.force_rebalance()
+        alloc.tick(now=date(2026, 3, 31))
+        weights = alloc.get_all_weights()
+    finally:
+        prm_module.portfolio_risk_manager = original
+
+    assert set(weights.keys()) == {"mature_a", "mature_b", "immature"}
+    # All three strategies must be at or above min_w.
+    for sid, w in weights.items():
+        assert w >= 0.10 - 1e-9, f"floor violated: {sid} -> {w:.4f}"
+    # All three must be at or below max_w.
+    for sid, w in weights.items():
+        assert w <= 0.60 + 1e-9, f"cap violated: {sid} -> {w:.4f}"
+    # Must sum to 1.0.
+    assert abs(sum(weights.values()) - 1.0) < 1e-9
+    # Immature gets exactly min_w (the reserve).
+    assert abs(weights["immature"] - 0.10) < 1e-9
+
+
+# ── Gemini Finding #3 regression -- risk_contributions must expose the ──
+# unmeasured-capital bucket so a viewer cannot read 100% accounted-for.
+
+
+def test_risk_contributions_expose_unmeasured_bucket():
+    """When strategies with <20d history are dropped from the covariance,
+    the returned rc values used to sum to 1.0 across the mature subset --
+    falsely signalling that 100% of risk was accounted for. The fix
+    rescales rc to share of TOTAL portfolio risk and adds a
+    `__unmeasured__` key holding the capital fraction of immature
+    strategies. `get_summary` surfaces this as `risk_unmeasured_capital_pct`.
+    """
+    prm = PortfolioRiskManager(
+        config={"history_max_days": 500, "portfolio_max_dd_pct": 99.0}
+    )
+    prm.register_strategy("mature_a", 10_000.0)
+    prm.register_strategy("mature_b", 10_000.0)
+    prm.register_strategy("immature", 10_000.0)
+
+    a = _seed_returns(seed=21, n=60, vol=0.01)
+    b = _seed_returns(seed=22, n=60, vol=0.01)
+    for ts, v in a.items():
+        prm.update("mature_a", float(v), ts=ts)
+    for ts, v in b.items():
+        prm.update("mature_b", float(v), ts=ts)
+    # Immature has only 5 datapoints -> dropped from cov.
+    for i in range(5):
+        prm.update("immature", 10_000.0 + i, ts=_day(55 + i))
+
+    rc = prm._risk_contributions()
+    assert "__unmeasured__" in rc, rc
+    # ~1/3 of capital is in the immature strategy, so unmeasured ~= 0.333.
+    assert 0.30 < rc["__unmeasured__"] < 0.40, rc["__unmeasured__"]
+    # Mature contribs no longer sum to 1.0; they sum to mature_capital_frac.
+    mature_sum = sum(v for k, v in rc.items() if not k.startswith("__"))
+    assert 0.60 < mature_sum < 0.70, mature_sum
+
+    summary = prm.get_summary()
+    assert summary["risk_unmeasured_capital_pct"] > 30.0
+
+
 # ── Bug #5 regression -- allocator rebalances on calendar, not ticks ─────────
 
 

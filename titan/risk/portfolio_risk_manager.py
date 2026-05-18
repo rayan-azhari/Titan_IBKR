@@ -258,6 +258,12 @@ class PortfolioRiskManager:
             "realized_vol_ann_pct": round(ann_vol * 100, 2) if ann_vol else None,
             "vix_level": self._vix_level,
             "strategy_count": len(self._strategies),
+            # Fraction of total portfolio capital held by strategies whose
+            # risk contribution was NOT measured (immature, <20d history).
+            # 0.0 means every strategy contributes to the rc decomposition.
+            "risk_unmeasured_capital_pct": round(
+                risk_contribs.get("__unmeasured__", 0.0) * 100, 2
+            ),
             "strategies": {
                 sid: {
                     "equity": round(s.current_equity, 2),
@@ -312,12 +318,29 @@ class PortfolioRiskManager:
             self._strategies[n].current_equity / total
             for n in names
         ])
+        mature_capital_frac = float(weights.sum())
         portfolio_var = float(weights @ cov @ weights)
         if portfolio_var <= 1e-18:
-            return {n: 1.0 / len(names) for n in names}
-        marginal = cov @ weights
-        rc = weights * marginal / portfolio_var
-        return {names[i]: float(rc[i]) for i in range(len(names))}
+            # Degenerate covariance -- equal-share across mature, no signal
+            # about the unmeasured slice.
+            per = mature_capital_frac / len(names)
+            out: dict[str, float] = {n: per for n in names}
+        else:
+            marginal = cov @ weights
+            # Standard Euler decomposition gives rc summing to 1.0 across the
+            # mature subset. Multiplying by mature_capital_frac rescales so
+            # that the returned values represent each strategy's share of
+            # *total portfolio* risk (under the implicit assumption that the
+            # excluded immature strategies contribute proportional risk).
+            rc = weights * marginal / portfolio_var * mature_capital_frac
+            out = {names[i]: float(rc[i]) for i in range(len(names))}
+
+        # Make the unmeasured slice explicit so a viewer cannot read 100%
+        # accounted-for when immature strategies were dropped.
+        unmeasured = 1.0 - mature_capital_frac
+        if unmeasured > 1e-9:
+            out["__unmeasured__"] = unmeasured
+        return out
 
     def check_correlation_regime(self) -> None:
         """Compute rolling correlation on a shared business-day grid.
@@ -421,37 +444,46 @@ class PortfolioRiskManager:
     # ── Vol-targeting: daily NAV, EWMA variance ──────────────────────────
 
     def _recompute_daily_vol(self) -> None:
-        """Recompute EWMA variance from the daily portfolio NAV series.
+        """Recompute EWMA variance from the daily portfolio return series.
 
-        Called **once per calendar day** via the wall-clock gate in
-        ``_check_portfolio_health``. This decouples annualisation from
-        per-strategy tick cadence -- the variance is always over daily NAV
-        returns, so ``sqrt(var * 252)`` is now correct by construction.
+        Portfolio return is the previous-day capital-weighted average of
+        per-strategy daily returns. A strategy that first reports today
+        contributes 0 to today's portfolio return (its weight is 0 because
+        it had no equity yesterday), so registering a new strategy never
+        injects a spurious one-day return into the NAV series.
         """
         histories = self.get_equity_histories()
         if not histories:
             return
 
         df = pd.DataFrame(histories)
-        if df.empty:
-            return
-        df = df.ffill().fillna(0.0)
-        nav = df.sum(axis=1)
-        if len(nav) < 10:
+        if df.empty or len(df) < 11:
             return
 
-        rets = nav.pct_change().dropna()
-        if len(rets) < 10:
+        # Per-strategy daily returns. NaN on days a strategy had no prior
+        # equity (its debut bar) -- intentionally kept NaN so the strategy
+        # contributes zero, not a spurious 0->seed_equity jump.
+        # fill_method=None is REQUIRED: the deprecated default would pad NaN
+        # before differencing, which is exactly the capital-addition bug.
+        per_strat_rets = df.pct_change(fill_method=None)
+
+        # Previous-day capital weights. Strategies absent yesterday have
+        # weight 0 (NaN treated as 0 via skipna=True in row-sum).
+        eq_prev = df.shift(1)
+        row_total = eq_prev.sum(axis=1, skipna=True)
+        weights = eq_prev.div(row_total.replace(0.0, np.nan), axis=0)
+
+        port_rets = (weights * per_strat_rets).fillna(0.0).sum(axis=1)
+        port_rets = port_rets.iloc[1:]  # drop the leading no-prev-day row
+        if len(port_rets) < 10:
             return
 
         lam = float(self._config["vol_ewma_lambda"])
-        # Rebuild EWMA variance from scratch each day -- cheap, deterministic,
-        # and avoids the stale ``_prev_total_equity`` race from the old code.
-        var = float(rets.iloc[0] ** 2)
-        for r in rets.iloc[1:]:
+        var = float(port_rets.iloc[0] ** 2)
+        for r in port_rets.iloc[1:]:
             var = lam * var + (1.0 - lam) * (r * r)
         self._ewma_var = var
-        self._last_daily_nav = float(nav.iloc[-1])
+        self._last_daily_nav = float(df.iloc[-1].sum(skipna=True))
 
     def _annualized_vol(self) -> float | None:
         if self._ewma_var is None or self._ewma_var <= 0:

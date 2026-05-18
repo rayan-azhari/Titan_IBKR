@@ -161,24 +161,72 @@ class PortfolioAllocator:
                             r,
                         )
 
-        # Constraints + renormalise.
-        constrained = {sid: max(min_w, min(max_w, w)) for sid, w in raw_weights.items()}
-        total_c = sum(constrained.values())
-        if total_c > 0:
-            self._weights = {sid: w / total_c for sid, w in constrained.items()}
-        else:
-            n = len(constrained)
-            self._weights = {sid: 1.0 / n for sid in constrained}
+        # Two-pass allocation: reserve `min_w` for immature strategies first,
+        # then allocate the residual budget among mature strategies subject to
+        # [min_w, max_w]. The old single-pass code added `min_w` to every
+        # missing strategy *after* the mature weights had already been
+        # normalised to 1.0, then divided everyone by the new total -- which
+        # dragged every strategy below `min_w` whenever missing > 0.
+        all_sids = list(histories.keys())
+        mature_sids = list(raw_weights.keys())
+        missing = [sid for sid in all_sids if sid not in raw_weights]
+        n_total = len(all_sids)
 
-        # Strategies with insufficient history get floor + renormalise.
-        all_sids = set(histories.keys())
-        missing = all_sids - set(self._weights.keys())
-        if missing:
-            for sid in missing:
-                self._weights[sid] = min_w
-            total_w = sum(self._weights.values())
-            if total_w > 0:
-                self._weights = {s: w / total_w for s, w in self._weights.items()}
+        # Feasibility: every strategy needs at least min_w.
+        if n_total * min_w >= 1.0 - 1e-9:
+            self._weights = {sid: 1.0 / n_total for sid in all_sids}
+            logger.info(
+                "[Allocator] Floor infeasible (n=%d, min_w=%.3f) -- equal-weighting.",
+                n_total, min_w,
+            )
+            return
+
+        budget_mature = 1.0 - len(missing) * min_w
+        # Project raw inverse-vol weights onto the mature budget.
+        total_raw = sum(max(0.0, w) for w in raw_weights.values())
+        if total_raw <= 0:
+            mature_w = {sid: budget_mature / len(raw_weights) for sid in raw_weights}
+        else:
+            mature_w = {
+                sid: max(0.0, w) * budget_mature / total_raw
+                for sid, w in raw_weights.items()
+            }
+
+        # Water-fill for [min_w, max_w] subject to sum == budget_mature.
+        # Each iteration clamps violators to their bound and redistributes the
+        # residual equally among the unsaturated. Converges in at most O(n)
+        # iterations since each pass saturates at least one new strategy.
+        for _ in range(len(mature_sids) + 2):
+            capped = {sid: min(max_w, max(min_w, w)) for sid, w in mature_w.items()}
+            diff = budget_mature - sum(capped.values())
+            if abs(diff) < 1e-12:
+                mature_w = capped
+                break
+            free = [
+                sid for sid, w in capped.items()
+                if min_w + 1e-12 < w < max_w - 1e-12
+            ]
+            if not free:
+                # Fully saturated -- accept whatever sum we ended at; the
+                # caller has chosen bounds that are not simultaneously
+                # feasible with budget_mature.
+                mature_w = capped
+                logger.warning(
+                    "[Allocator] Bounds [%.3f, %.3f] not feasible with mature "
+                    "budget %.3f -- accepting saturated weights (sum=%.3f).",
+                    min_w, max_w, budget_mature, sum(capped.values()),
+                )
+                break
+            per_free = diff / len(free)
+            mature_w = {
+                sid: (capped[sid] + per_free if sid in free else capped[sid])
+                for sid in capped
+            }
+        else:  # noqa: PLW0120 -- iteration cap exhausted without break
+            mature_w = capped
+
+        self._weights = {sid: min_w for sid in missing}
+        self._weights.update(mature_w)
 
         logger.info(
             "[Allocator] Rebalanced: %s",

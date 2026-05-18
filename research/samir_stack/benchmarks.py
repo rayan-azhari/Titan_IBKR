@@ -15,6 +15,9 @@ import numpy as np
 import pandas as pd
 
 from research.samir_stack.synthetic_3x import synthetic_leveraged_returns
+from titan.research.metrics import BARS_PER_YEAR, annualize_vol
+
+_DAILY = BARS_PER_YEAR["D"]
 
 
 def _summarize(rets: pd.Series, name: str) -> dict:
@@ -23,14 +26,17 @@ def _summarize(rets: pd.Series, name: str) -> dict:
     if len(rets) < 20:
         return {"name": name, "error": "insufficient bars"}
     eq = (1.0 + rets).cumprod()
-    n_years = len(rets) / 252.0
+    n_years = len(rets) / _DAILY
     cagr = float(eq.iloc[-1] ** (1.0 / n_years) - 1.0)
-    vol = float(rets.std() * np.sqrt(252))
+    vol = annualize_vol(float(rets.std()), periods_per_year=_DAILY)
     peak = eq.cummax()
     maxdd = float(((eq - peak) / peak).min())
-    sharpe = float(rets.mean() / rets.std() * np.sqrt(252)) if rets.std() > 1e-12 else 0.0
+    sharpe = (
+        float(rets.mean() / rets.std() * np.sqrt(_DAILY))
+        if rets.std() > 1e-12 else 0.0
+    )
     sortino = (
-        float(rets.mean() / rets[rets < 0].std() * np.sqrt(252))
+        float(rets.mean() / rets[rets < 0].std() * np.sqrt(_DAILY))
         if (rets < 0).sum() >= 5 and rets[rets < 0].std() > 1e-12
         else 0.0
     )

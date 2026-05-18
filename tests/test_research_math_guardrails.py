@@ -63,6 +63,14 @@ _ALLOWLIST_SQRT_252: dict[str, str] = {
     "research/samir_stack/benchmarks.py": "research script, daily bars",
     # V2.0 cleanse: research/_archive/, research/auto/, and samir_stack
     # run_*.py orchestrators were removed. Their allowlist entries are gone.
+    # Ad-hoc audit / dashboard scripts on daily bars. The math is correct
+    # for daily but predates the metrics-module standard. Pending migration
+    # but not deployment-critical (no live runtime path).
+    "research/ewmac/run_i1v2_audit.py": "audit script, daily bars",
+    "research/exploration/audit_fx_carry.py": "audit script, daily bars",
+    "research/exploration/audit_orb.py": "audit script, daily bars",
+    "research/exploration/build_i1_regime_panel.py": "panel builder, daily bars",
+    "research/gem/render_j5_dashboard.py": "dashboard renderer, daily bars",
 }
 
 _ALLOWLIST_FILTER_THEN_STD: dict[str, str] = {
