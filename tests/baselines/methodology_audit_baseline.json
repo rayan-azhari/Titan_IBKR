@@ -1,0 +1,10 @@
+{
+  "_doc": "Frozen baseline of methodology-audit findings. Updated only when the count for a pattern DECREASES. The CI test in test_methodology_audit_baseline.py asserts current_count <= baseline_count per pattern. To lower the baseline after fixing violations, rerun `uv run python scripts/audit_codebase_methodology.py` and update the corresponding entry in this file. Last updated 2026-05-18 post-Gemini-audit fixes.",
+  "counts": {
+    "A1_hardcoded_sqrt_252": 21,
+    "A2_filter_then_annualise": 1,
+    "B4_expanding_close": 1,
+    "B5_ffill_after_reindex": 40,
+    "G1_local_sharpe_no_kwarg": 3
+  }
+}

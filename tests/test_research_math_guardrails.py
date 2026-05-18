@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ast
 import re
+from datetime import date
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -40,50 +41,57 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # Files permitted to contain bare sqrt(252) references (docstring mentions,
 # metric definitions, or legacy research scripts pending migration).
 #
-# Each entry names the file path relative to PROJECT_ROOT and a short reason.
-# Keep this list short and SHRINKING. New files require explicit review.
-_ALLOWLIST_SQRT_252: dict[str, str] = {
-    # The metrics module is THE source of truth — all sqrt(periods_per_year)
-    # calls live here.
-    "titan/research/metrics.py": "source of truth for annualisation",
-    "titan/research/__init__.py": "module docstring references sqrt(252)",
+# Each entry maps path -> (reason, expiry_date). Expiry forces a periodic
+# re-review: a stale allowlist entry whose date is in the past fails the
+# build until the entry is removed (file migrated to metrics module) or
+# the expiry is consciously extended with a fresh justification. The
+# 2026-05-18 Gemini audit caught one live violation that had slipped past
+# this allowlist because nothing forced a review.
+#
+# Use the special expiry "PERMANENT" for entries that are intentionally
+# never going to migrate (e.g. the metrics module itself, which DEFINES
+# the annualisation). Use it sparingly; default to a 6-month expiry.
+_PERMANENT = "PERMANENT"
+_AllowEntry = tuple[str, str]  # (reason, "YYYY-MM-DD" | "PERMANENT")
+
+_ALLOWLIST_SQRT_252: dict[str, _AllowEntry] = {
+    # The metrics module is THE source of truth -- never migrates.
+    "titan/research/metrics.py": ("source of truth for annualisation", _PERMANENT),
+    "titan/research/__init__.py": ("module docstring references sqrt(252)", _PERMANENT),
     # Portfolio risk manager / allocator reference sqrt(252) in their
-    # docstrings / comments only — actual calls route through the metrics
-    # module. Regex would false-positive on those comments.
-    "titan/risk/portfolio_risk_manager.py": "only in docstrings",
-    "titan/risk/portfolio_allocator.py": "only in docstrings",
-    # Samir-Stack research library files — daily-bar backtests; migration to
-    # titan.research.metrics pending. Live runtime in titan/strategies/samir_stack/
-    # is already routed through the metrics module (BARS_PER_YEAR["D"]).
-    "research/samir_stack/indicators.py": "research script, daily bars",
-    "research/samir_stack/wfo.py": "research script, daily bars",
-    "research/samir_stack/wfo_stacked.py": "research script, daily bars",
-    "research/samir_stack/stacked_strategy.py": "research script, daily bars",
-    "research/samir_stack/strategy.py": "research script, daily bars",
-    "research/samir_stack/benchmarks.py": "research script, daily bars",
-    # V2.0 cleanse: research/_archive/, research/auto/, and samir_stack
-    # run_*.py orchestrators were removed. Their allowlist entries are gone.
-    # Ad-hoc audit / dashboard scripts on daily bars. The math is correct
-    # for daily but predates the metrics-module standard. Pending migration
-    # but not deployment-critical (no live runtime path).
-    "research/ewmac/run_i1v2_audit.py": "audit script, daily bars",
-    "research/exploration/audit_fx_carry.py": "audit script, daily bars",
-    "research/exploration/audit_orb.py": "audit script, daily bars",
-    "research/exploration/build_i1_regime_panel.py": "panel builder, daily bars",
-    "research/gem/render_j5_dashboard.py": "dashboard renderer, daily bars",
+    # docstrings / comments only -- regex false-positives on those.
+    "titan/risk/portfolio_risk_manager.py": ("only in docstrings", _PERMANENT),
+    "titan/risk/portfolio_allocator.py": ("only in docstrings", _PERMANENT),
+    # Samir-Stack research library -- daily-bar backtests. Live runtime in
+    # titan/strategies/samir_stack/ is already routed through the metrics
+    # module. Migrate to titan.research.metrics by 2026-11-14 (6 months).
+    "research/samir_stack/indicators.py": ("research script, daily bars", "2026-11-14"),
+    "research/samir_stack/wfo.py": ("research script, daily bars", "2026-11-14"),
+    "research/samir_stack/wfo_stacked.py": ("research script, daily bars", "2026-11-14"),
+    "research/samir_stack/stacked_strategy.py": ("research script, daily bars", "2026-11-14"),
+    "research/samir_stack/strategy.py": ("research script, daily bars", "2026-11-14"),
+    "research/samir_stack/benchmarks.py": ("research script, daily bars", "2026-11-14"),
+    # Ad-hoc audit / dashboard scripts. No live runtime path. Migrate by 2026-11-14.
+    "research/ewmac/run_i1v2_audit.py": ("audit script, daily bars", "2026-11-14"),
+    "research/exploration/audit_fx_carry.py": ("audit script, daily bars", "2026-11-14"),
+    "research/exploration/audit_orb.py": ("audit script, daily bars", "2026-11-14"),
+    "research/exploration/build_i1_regime_panel.py": ("panel builder, daily bars", "2026-11-14"),
+    "research/gem/render_j5_dashboard.py": ("dashboard renderer, daily bars", "2026-11-14"),
 }
 
-_ALLOWLIST_FILTER_THEN_STD: dict[str, str] = {
-    "titan/research/metrics.py": "source of truth",
-    "titan/research/__init__.py": "module docstring",
-    "tests/test_research_metrics.py": "test explicitly exercises the old bias",
+_ALLOWLIST_FILTER_THEN_STD: dict[str, _AllowEntry] = {
+    "titan/research/metrics.py": ("source of truth", _PERMANENT),
+    "titan/research/__init__.py": ("module docstring", _PERMANENT),
+    "tests/test_research_metrics.py": ("test explicitly exercises the old bias", _PERMANENT),
     # Legacy research files pending migration (same set as above).
-    **{k: v for k, v in _ALLOWLIST_SQRT_252.items() if k.startswith("research/")},
+    **{
+        k: v for k, v in _ALLOWLIST_SQRT_252.items()
+        if k.startswith("research/")
+    },
 }
 
-_ALLOWLIST_BALANCES_KEYS0: dict[str, str] = {
-    # Currently empty — all live strategies use get_base_balance(..., "USD").
-    # turtle/strategy.py previously used the anti-pattern; now fixed.
+_ALLOWLIST_BALANCES_KEYS0: dict[str, _AllowEntry] = {
+    # Currently empty -- all live strategies use get_base_balance(..., "USD").
 }
 
 
@@ -279,4 +287,67 @@ def test_balance_total_outside_strategy_equity():
         "titan/risk/strategy_equity.py. Live strategies must use "
         "StrategyEquityTracker.current_equity() for per-strategy equity.\n"
         "Violations:\n" + "\n".join(offenders)
+    )
+
+
+# ── Guard 5: allowlist hygiene -- every dated entry must not be expired ──
+
+
+def _parse_expiry(expiry: str) -> date | None:
+    """Return a ``date`` for ``YYYY-MM-DD``, ``None`` for ``PERMANENT``,
+    and raise for malformed strings (so a typo in the allowlist source
+    cannot silently pass as permanent).
+    """
+    if expiry == _PERMANENT:
+        return None
+    return date.fromisoformat(expiry)
+
+
+def test_no_expired_allowlist_entries():
+    """Every dated allowlist entry must be on-or-before its expiry date.
+
+    Allowlists accumulate over time as a form of technical-debt parking
+    -- each entry is a small concession, collectively they erode the
+    guard. Forcing a periodic re-review (via expiry dates) prevents the
+    'set it and forget it' drift that let the live ``np.sqrt(252)`` in
+    ``titan/strategies/ewmac_regime/strategy.py:396`` slip past for
+    months until the 2026-05-18 Gemini audit.
+
+    To clear a failing expiry: migrate the file (preferred) OR extend
+    the expiry by 90 days with a documented justification in the same
+    edit. Indefinite extensions are forbidden -- use ``PERMANENT`` only
+    when the file structurally cannot migrate.
+    """
+    today = date.today()
+    expired: list[str] = []
+    for name, allowlist in (
+        ("_ALLOWLIST_SQRT_252", _ALLOWLIST_SQRT_252),
+        ("_ALLOWLIST_FILTER_THEN_STD", _ALLOWLIST_FILTER_THEN_STD),
+        ("_ALLOWLIST_BALANCES_KEYS0", _ALLOWLIST_BALANCES_KEYS0),
+    ):
+        for path_rel, entry in allowlist.items():
+            if not (isinstance(entry, tuple) and len(entry) == 2):
+                expired.append(
+                    f"  {name}[{path_rel}]: malformed entry "
+                    f"(expected (reason, expiry); got {entry!r})"
+                )
+                continue
+            reason, expiry_str = entry
+            try:
+                exp = _parse_expiry(expiry_str)
+            except ValueError:
+                expired.append(
+                    f"  {name}[{path_rel}]: malformed expiry "
+                    f"{expiry_str!r} (expected YYYY-MM-DD or PERMANENT)"
+                )
+                continue
+            if exp is not None and exp < today:
+                expired.append(
+                    f"  {name}[{path_rel}]: expired {exp.isoformat()} "
+                    f"-- reason was {reason!r}"
+                )
+    assert not expired, (
+        "Allowlist entries past their expiry. Migrate the file to the "
+        "metrics module (preferred) OR extend the expiry by up to 90 "
+        "days with a documented justification:\n" + "\n".join(expired)
     )

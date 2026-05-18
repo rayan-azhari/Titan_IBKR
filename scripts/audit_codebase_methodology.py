@@ -210,6 +210,34 @@ def scan_file(path: Path) -> list[Finding]:
     return findings
 
 
+def scan_all(paths: list[str] | None = None) -> list[Finding]:
+    """Programmatic entry point -- runs the scanner and returns findings.
+
+    Used by ``tests/test_methodology_audit_baseline.py`` to enforce that
+    finding counts only DECREASE over time. The CLI ``main`` is a thin
+    wrapper around this.
+    """
+    roots = paths if paths is not None else ["research", "titan", "scripts"]
+    all_findings: list[Finding] = []
+    for root in roots:
+        root_path = PROJECT_ROOT / root
+        if not root_path.exists():
+            continue
+        for path in root_path.rglob("*.py"):
+            if not _should_scan(path):
+                continue
+            all_findings.extend(scan_file(path))
+    return all_findings
+
+
+def counts_by_pattern(findings: list[Finding]) -> dict[str, int]:
+    """Aggregate findings into ``{pattern_id: count}``."""
+    out: dict[str, int] = {}
+    for f in findings:
+        out[f.pattern_id] = out.get(f.pattern_id, 0) + 1
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Codebase methodology audit")
     parser.add_argument(
