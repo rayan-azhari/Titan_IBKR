@@ -1071,6 +1071,12 @@ STRATEGY_SETS = {
         # validation period required by L65/L67 (DEPLOY-eligible but
         # risk-reducer; live capital decision deferred to 2026-11-17 re-audit).
         "ewmac_regime_i1v2_c6",
+        # Passive ops strategies -- regression-restored 2026-05-18. Both
+        # were in champion_portfolio but were dropped from v37_live during
+        # the V3.7 cutover. Slack morning + night summaries went silent
+        # from 2026-05-14 onwards because daily_summary stopped scheduling.
+        "daily_summary",
+        "reconciliation",
     ],
 }
 
