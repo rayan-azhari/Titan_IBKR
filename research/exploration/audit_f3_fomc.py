@@ -330,9 +330,7 @@ def _stats(rets: pd.Series, label: str) -> dict:
     }
 
 
-def _per_trade_sharpe(
-    trades_df: pd.DataFrame, *, periods_per_year: int = 8
-) -> float:
+def _per_trade_sharpe(trades_df: pd.DataFrame, *, periods_per_year: int = 8) -> float:
     """Per-trade Sharpe annualised by sqrt(periods_per_year).
 
     Default 8 = FOMC scheduled meetings per year (per L06 + L60: this is
