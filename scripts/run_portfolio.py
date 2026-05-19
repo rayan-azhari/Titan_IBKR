@@ -748,6 +748,84 @@ STRATEGY_REGISTRY = {
             "ticker": "NOC",
         },
     },
+    # ── ic_equity_top3 (HWM + WMT + SYK) live deployment (2026-05-19) ────
+    #
+    # V3.7 HYBRID-validated CONDITIONAL_WATCHPOINT per PR #9 + PR #10:
+    #   * Per-ticker L52 plateau PASS (HWM/SYK strict 30%; WMT H1 50%)
+    #   * Per-ticker DSR p=1.000 (Bailey + Lopez de Prado 2014)
+    #   * Cross-ticker DSR on top-3 basket: z=+7.51, p=1.0000 PASS under N=7
+    #   * L65 single + joint ruin PASS at every weight
+    #   * L67 10-metric: 7/10; portfolio Sharpe lifts 0.93 -> 1.07 at G68/T17/IC15
+    #     (3 strategies at min_weight=5% floor = 15% total IC allocation)
+    #
+    # Each strategy registers independently with PortfolioRiskManager and the
+    # allocator's inverse-vol weighting. With min_weight=0.05 in
+    # config/risk.toml::[allocation], the 3 IC strategies share a 15% floor
+    # in the live allocation; the remainder is split between GEM and Turtle
+    # by inverse-vol (historically ~80/20).
+    #
+    # Thresholds are the per-ticker calibrations from the Wave B audit
+    # (research/exploration/audit_ic_equity_daily.py).
+    "ic_equity_hwm": {
+        "module": "titan.strategies.ic_equity_daily.strategy",
+        "config_cls": "ICEquityDailyConfig",
+        "strategy_cls": "ICEquityDailyStrategy",
+        "contracts": [
+            IBContract(
+                secType="STK",
+                symbol="HWM",
+                exchange="SMART",
+                primaryExchange="NYSE",
+                currency="USD",
+            ),
+        ],
+        "config_kwargs": {
+            "instrument_id": "HWM.NYSE",
+            "bar_type_d": "HWM.NYSE-1-DAY-LAST-EXTERNAL",
+            "ticker": "HWM",
+            "threshold": 0.25,  # Wave B audit calibration
+        },
+    },
+    "ic_equity_wmt": {
+        "module": "titan.strategies.ic_equity_daily.strategy",
+        "config_cls": "ICEquityDailyConfig",
+        "strategy_cls": "ICEquityDailyStrategy",
+        "contracts": [
+            IBContract(
+                secType="STK",
+                symbol="WMT",
+                exchange="SMART",
+                primaryExchange="NYSE",
+                currency="USD",
+            ),
+        ],
+        "config_kwargs": {
+            "instrument_id": "WMT.NYSE",
+            "bar_type_d": "WMT.NYSE-1-DAY-LAST-EXTERNAL",
+            "ticker": "WMT",
+            "threshold": 0.50,
+        },
+    },
+    "ic_equity_syk": {
+        "module": "titan.strategies.ic_equity_daily.strategy",
+        "config_cls": "ICEquityDailyConfig",
+        "strategy_cls": "ICEquityDailyStrategy",
+        "contracts": [
+            IBContract(
+                secType="STK",
+                symbol="SYK",
+                exchange="SMART",
+                primaryExchange="NYSE",
+                currency="USD",
+            ),
+        ],
+        "config_kwargs": {
+            "instrument_id": "SYK.NYSE",
+            "bar_type_d": "SYK.NYSE-1-DAY-LAST-EXTERNAL",
+            "ticker": "SYK",
+            "threshold": 0.50,
+        },
+    },
     # ── Samir-Stack 4-week paper validation deployment (May 2026) ────────
     #
     # Phase 1 v1 config — CSPX margin equity, single IEF bond, NO MES
@@ -1079,6 +1157,14 @@ STRATEGY_SETS = {
         # validation period required by L65/L67 (DEPLOY-eligible but
         # risk-reducer; live capital decision deferred to 2026-11-17 re-audit).
         "ewmac_regime_i1v2_c6",
+        # ic_equity_top3 LIVE deployment 2026-05-19 -- V3.7 hybrid-validated
+        # CONDITIONAL_WATCHPOINT (PR #9 + PR #10). Allocator's min_weight=0.05
+        # floor gives each ~5% (15% total IC); L67 7/10 at portfolio Sharpe
+        # +1.07 (vs +0.93 baseline). First matrix-improving deployment since
+        # GEM J5 promotion.
+        "ic_equity_hwm",
+        "ic_equity_wmt",
+        "ic_equity_syk",
         # Passive ops strategies -- regression-restored 2026-05-18. Both
         # were in champion_portfolio but were dropped from v37_live during
         # the V3.7 cutover. Slack morning + night summaries went silent
