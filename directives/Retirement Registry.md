@@ -2,8 +2,8 @@
 
 **Purpose:** One-line "what we'd test differently next time" for each retired strategy. Institutional-grade post-mortem registry. Recoverable lessons that survive the strategy itself.
 
-**Last updated:** 2026-05-16
-**Total retires:** 18 (as of 2026-05-16 dashboard count)
+**Last updated:** 2026-05-19
+**Total retires:** 19 (as of 2026-05-19 — added F3 FOMC pre-announcement drift)
 
 ## Wave A (P1) — V1-era live strategies
 
@@ -46,6 +46,7 @@
 | `G4_overnight_session` | 2026-05 (V3 era) | +0.83 SR cost drag + L33 (session strategies have asymmetric tail risk under regime-shuffled MC) | **Session-bounded strategies need session-shuffled MC, not full-bar MC, to avoid asymmetric tail-risk artifacts. Real edge confirmed (+0.75 gross) but cost destroys it.** |
 | `A1_residual_momentum` | 2026-05 (V3 era) | L36/L37 (survivorship bias on current-S&P-500 universe) | **Residual momentum NEEDS survivorship-free CRSP/Compustat ($2k/yr WRDS). Don't audit it on current-constituent yfinance samples — the sign flips.** |
 | `I1_hmm_regime` | 2026-04 (V3 era) | L51 (HMM-on-daily-returns degenerates to no-op) | **HMM on single-asset daily returns has no useful structure; the model finds 1 regime or noise. Need multi-feature HMM (VIX + term spread + credit + realised vol) per Statistical Jump Model paper.** |
+| `F3_fomc_drift` | 2026-05-19 (V3.7 hybrid) | Plateau spread 655% across 3x3 cell grid + DSR p=0.0000 + canonical CI_lo -0.866 on SPY 2010-2025 | **Lucca-Moench (2015) pre-FOMC drift documented for 1994-2011 doesn't replicate on retail SPY 2010-2025; consistent with Cieslak-Vissing-Jorgensen (2021) post-2014 decay literature. Single-event-type strategies (~8 trades/yr) face wide bootstrap CIs and need decade+ of representative data PLUS a working regime-conditional gate (e.g., only active during specific Fed phases) to survive the V3.7 hybrid. Don't re-attempt without addressing both data length and the conditional-active design.** |
 
 ## Aggregate patterns
 
