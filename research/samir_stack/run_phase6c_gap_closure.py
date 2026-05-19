@@ -305,9 +305,11 @@ def main() -> None:
         fh.write(f"- E[max SR] (null)    = {dsr.e_max_sr:+.4f}\n")
         fh.write(f"- DSR probability     = {dsr.dsr_prob:.4f}\n\n")
         fh.write("## Overall verdict\n\n")
-        fh.write("samir_stack Phase 5 canonical (equity_weight=0.40, L_max=2.0, ")
-        fh.write("tier_thresholds=(0.30, 0.55), capitulation=ON) is V3.7-COMPLIANT. ")
-        fh.write("Three gaps now closed:\n\n")
+        fh.write(
+            "samir_stack Phase 5 canonical (equity_weight=0.40, L_max=2.0, "
+            "tier_thresholds=(0.30, 0.55), capitulation=ON). Three V3.6/V3.7 "
+            "gaps closed:\n\n"
+        )
         if rel_mc is not None:
             fh.write(f"1. **L17 rel-MC vs 60/40**: {'PASS' if rel_mc_pass else 'FAIL'}\n")
         if noise_res is not None:
@@ -315,8 +317,37 @@ def main() -> None:
                 f"2. **L24 noise robustness**: passes={noise_res.passes}, worst={noise_res.worst_case_passes}\n"
             )
         fh.write(f"3. **L25 DSR**: z={dsr.z:+.4f}, p(SR>0)={dsr.dsr_prob:.4f}\n\n")
-        fh.write("Status: KEEP-LIVE confirmed under V3.7 framework. ")
-        fh.write("No live deployment change needed.\n")
+
+        # Issue the verdict that the L17 gate actually warrants. The pre-reg
+        # plan named this: "If L17 rel-MC fails -> CONDITIONAL_WATCHPOINT --
+        # matches the pattern that flipped GEM J4 -> J5".
+        gates_pass = (
+            (rel_mc is None or rel_mc_pass)
+            and (noise_res is None or noise_res.passes)
+            and dsr.dsr_prob >= 0.95
+        )
+        if gates_pass:
+            fh.write(
+                "Status: **DEPLOY-eligible under V3.7 framework.** All gates "
+                "PASS. Live deployment to `v37_live` may proceed subject to "
+                "operator decision and the L73 cutover-diff checklist.\n"
+            )
+        elif rel_mc is not None and not rel_mc_pass:
+            fh.write(
+                "Status: **CONDITIONAL_WATCHPOINT.** L17 rel-MC FAIL "
+                f"(median dd_reduction = {rel_mc.median_dd_reduction:.3f}, "
+                f"gate <= 0.80) -- strategy does not materially reduce "
+                "drawdown vs 60/40 SPY/IEF. Same L17 pattern that flipped "
+                "GEM J4 -> J5. Strategy stays in paper validation "
+                "(`samir_validation` mode); NO live capital cutover to "
+                "v37_live. Investigate noise-mitigation or alternative "
+                "vol-target to recover the DD-reduction axis.\n"
+            )
+        else:
+            fh.write(
+                "Status: **SUSPECT.** Non-L17 gate failed; investigate noise "
+                "(J3 axis) or DSR before any deployment decision.\n"
+            )
     print(f"  wrote {findings_path}")
     print("\n[done] Phase 6c gap-closure complete")
 

@@ -172,7 +172,7 @@ PYTHONIOENCODING=utf-8 uv run python research/portfolio/joint_evaluation.py
 | A.1 | bond_gold | ✅ CONDITIONAL_WATCHPOINT (PROMOTED params; shadow vs live) |
 | A.2 | etf_trend (7 variants) | ✅ Mixed (SPY RETIRED; TQQQ CONDITIONAL; 5 unleveraged bulk-retired) |
 | A.3 | mr_audjpy | ✅ RETIRED (L58 signal-layer fail) |
-| A.4 | samir_stack | 🟡 Phase 5 validated + 3 V3.6 gaps; ~25min gap-closure pending |
+| A.4 | samir_stack | ✅ Phase 6c COMPLETE 2026-05-19: CONDITIONAL_WATCHPOINT (L17 rel-MC FAIL, dd_red 0.938 > 0.80; L24+L25 PASS); NO live cutover -- stays paper-only |
 | A.5 | mtf | ✅ RETIRED (L21 look-ahead) |
 | A.6 | mr_fx | ✅ RETIRED (V2 verified) |
 | Wave B | gold_macro | ✅ RETIRED (plateau-fail + cell-instability) |
