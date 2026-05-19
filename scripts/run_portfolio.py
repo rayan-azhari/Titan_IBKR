@@ -719,6 +719,14 @@ STRATEGY_REGISTRY = {
             "bar_type": "AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL",
             "stale_order_minutes": int(os.getenv("TITAN_STALE_ORDER_MINUTES", "15")),
             "alert_cooldown_minutes": int(os.getenv("TITAN_RECON_COOLDOWN_MINUTES", "60")),
+            # D5 shadow-decision check (bond_gold class) is OFF by default
+            # for v37_live: none of the bond_equity_* strategies are in the
+            # v37_live registry, so the D5 signal-vs-cache compare produces
+            # false positives (e.g. GEM's CSPX position reported as
+            # bond_equity_ihyu_cspx because D5 matches by symbol not
+            # strategy_id). Re-enable per portfolio if/when a bond_equity
+            # strategy is added back to v37_live. D1-D4 stay live.
+            "shadow_check_enabled": os.getenv("TITAN_RECON_D5_ENABLED", "false").lower() == "true",
         },
     },
     "ic_equity_noc": {
