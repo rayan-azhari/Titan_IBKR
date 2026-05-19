@@ -88,7 +88,7 @@ The framework went through three structural revisions in 2026-05-16, driven by u
 
 ### Lessons catalogue
 
-**74 lessons** as of 2026-05-19. See `V3.6 Lessons Catalogue.md` (will be renamed `V3.7 Lessons Catalogue.md` at next batch).
+**75 lessons** as of 2026-05-19. See `V3.6 Lessons Catalogue.md` (will be renamed `V3.7 Lessons Catalogue.md` at next batch).
 
 Recent additions (V3.7 batch):
 - **L58** (refined) — Signal-layer-first audit pattern: triage Sharpe magnitude is unreliable; direction is robust.
