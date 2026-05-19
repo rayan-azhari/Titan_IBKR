@@ -3,7 +3,7 @@
 **Purpose:** One-line "what we'd test differently next time" for each retired strategy. Institutional-grade post-mortem registry. Recoverable lessons that survive the strategy itself.
 
 **Last updated:** 2026-05-19
-**Total retires:** 19 (as of 2026-05-19 — added F3 FOMC pre-announcement drift)
+**Total retires:** 20 (as of 2026-05-19 — added F3 FOMC drift + D4 HY/IG credit carry, both via V3.7 hybrid early-exit)
 
 ## Wave A (P1) — V1-era live strategies
 
@@ -47,6 +47,7 @@
 | `A1_residual_momentum` | 2026-05 (V3 era) | L36/L37 (survivorship bias on current-S&P-500 universe) | **Residual momentum NEEDS survivorship-free CRSP/Compustat ($2k/yr WRDS). Don't audit it on current-constituent yfinance samples — the sign flips.** |
 | `I1_hmm_regime` | 2026-04 (V3 era) | L51 (HMM-on-daily-returns degenerates to no-op) | **HMM on single-asset daily returns has no useful structure; the model finds 1 regime or noise. Need multi-feature HMM (VIX + term spread + credit + realised vol) per Statistical Jump Model paper.** |
 | `F3_fomc_drift` | 2026-05-19 (V3.7 hybrid) | Plateau spread 655% across 3x3 cell grid + DSR p=0.0000 + canonical CI_lo -0.866 on SPY 2010-2025 | **Lucca-Moench (2015) pre-FOMC drift documented for 1994-2011 doesn't replicate on retail SPY 2010-2025; consistent with Cieslak-Vissing-Jorgensen (2021) post-2014 decay literature. Single-event-type strategies (~8 trades/yr) face wide bootstrap CIs and need decade+ of representative data PLUS a working regime-conditional gate (e.g., only active during specific Fed phases) to survive the V3.7 hybrid. Don't re-attempt without addressing both data length and the conditional-active design.** |
+| `D4_hyig_credit_carry` | 2026-05-19 (V3.7 hybrid) | Plateau spread 210% (SMA-filtered cells NEGATIVE Sharpe, unconditional cells only marginally positive) + DSR p=0.0000 + canonical CI_lo -0.690 on HYG/LQD 2010-2025 | **Israel-Palhares-Richardson (2018) credit carry on 1988-2014 monthly data doesn't replicate on retail HYG/LQD ETFs 2010-2025 daily. The post-2008 ZIRP-era HY-IG spread compression (avg ~3pp vs ~5pp pre-2008) materially reduced the carry premium; combined with the 2020 COVID credit-stress tail event, bootstrap CIs widen below the deploy gate. Counter-intuitive finding: the SMA trend filter on HYG/LQD ratio HURTS Sharpe (cuts carry duration without avoiding stress events). If the credit-carry thesis is to be re-attempted, options are: (1) longer history including pre-2008, (2) actual HY-IG futures or single-name CDS rather than ETFs, (3) regime-conditional design that disengages BEFORE the credit-stress shock, not after.** |
 
 ## Aggregate patterns
 
