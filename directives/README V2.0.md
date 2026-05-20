@@ -61,8 +61,8 @@ The framework went through three structural revisions in 2026-05-16, driven by u
 | **LIVE (trading)** | 5 | gem J5 (~65%) + turtle CAT C3_peak (~17%) + 3× ic_equity (HWM/WMT/SYK @ 5% floor each) |
 | **SHADOW (paper-validation, trading=False)** | 2 | bond_gold (V3.6 PROMOTED params; live runs V1) + ewmac_regime_i1v2_c6 (9 futures, 12mo paper window, re-audit 2027-05-17) |
 | **CONDITIONAL_WATCHPOINT (paper-only, NOT in v37_live)** | 2 | fx_carry AUD/JPY (long-yen scope, PR #8), samir_stack (Phase 6c L17 FAIL → demoted, PR #12) |
-| **RETIRED (cumulative)** | 25 | mr_audjpy, mr_fx, mtf, ic_mtf, gold_macro, gld_confluence, 6 etf_trend variants, B2 family (PARTIALLY REVIVED via I1v2), B5 intraday momentum, ml, B4/D2/E1/G4/A1 from V3 era, **F3 FOMC drift (PR #13)**, **D4 HY/IG credit carry (PR #15)**, **B6 sector momentum + crash overlay (PR #16)** |
-| **Total audits run** | 45 | See `.tmp/dashboard/dashboard.html` |
+| **RETIRED (cumulative)** | 26 | mr_audjpy, mr_fx, mtf, ic_mtf, gold_macro, gld_confluence, 6 etf_trend variants, B2 family (PARTIALLY REVIVED via I1v2), B5 intraday momentum, ml, B4/D2/E1/G4/A1 from V3 era, **F3 FOMC drift (PR #13)**, **D4 HY/IG credit carry (PR #15)**, **B6 sector momentum + crash overlay (PR #16)**, **F2 CFTC CoT positioning extremes (PR #20)** |
+| **Total audits run** | 46 | See `.tmp/dashboard/dashboard.html` |
 
 **Latest milestones (2026-05-19 → 2026-05-20):**
 - **ic_equity top-3 LIVE deployed** (PR #11) — V3.7 hybrid-validated CONDITIONAL: per-ticker plateau + DSR + cross-ticker DSR all PASS. Portfolio Sharpe lift 0.93 → 1.07 at 15% IC allocation. First matrix-improving deployment since GEM J5.
@@ -70,6 +70,8 @@ The framework went through three structural revisions in 2026-05-16, driven by u
 - **ic_equity_daily V3.7 hybrid critical-review** (PR #10) — 5/7 tickers survive plateau + DSR. Top-3 cross-ticker DSR z=+7.51 p=1.0 even under N=7 selection. L75 codified: always run V3.7 hybrid before deployment-eligible verdict.
 - **samir_stack Phase 6c closure** (PR #12) — L17 rel-MC FAIL (dd_red 0.938 > 0.80) DEMOTED Phase-5 DEPLOY → CONDITIONAL_WATCHPOINT. L24+L25 still PASS.
 - **F3 FOMC drift / D4 HY/IG carry / B6 sector momentum** (PR #13, #15, #16) — three backlog audits all RETIRE via V3.7 hybrid early-exit. **L76 synthesizes the 5-strategy cascade**: pre-2014-sample academic edges should be treated as falsification candidates, not replication targets, on retail post-2008 data.
+- **J5 Carver FDM infrastructure** (PR #19, 2026-05-20) — `titan/research/framework/fdm.py` shipped: matrix path `forecast_diversification_multiplier()` + closed form `fdm_from_uniform_correlation()`; Carver default cap 2.5; 18-test suite.
+- **F2 CFTC CoT positioning extremes** (PR #20, 2026-05-20) — Kang-Rouwenhorst-Tang JF 2020 audit on 14-commodity Legacy CoT 2006-2025. RETIRE: plateau spread 35.5% PASS (H1), DSR p=0.9992 PASS, but canonical (z_lb=104w, top_n=3) CI_lo −0.16 binding. **6th L76 instance** — extends the pattern with a "plateau/DSR pass but CI_lo binds" variant.
 - **Reconciliation watchdog hardening** (PR #6, #17) — D5 disabled for v37_live, D1 gated on net-mismatch, D3 default raised 15min → 24h to handle out-of-hours order queuing.
 - **Gemini external audit + post-hardening** (PR #1, #2, #3) — 3 live-trading math bugs in PRM + allocator fixed; live-API Bar attribute scanner + methodology baseline CI gate + allowlist expiry enforcement added.
 
@@ -262,11 +264,11 @@ Same as V3.6 plus:
 Wave B re-audit is **effectively complete** as of 2026-05-19. Remaining items:
 
 - `gap_fade` (Wave C, low priority)
-- New backlog strategies still un-audited (per L76 priority, prefer post-2018 publications):
-  - `F2` CFTC CoT positioning (Kang-Rouwenhorst-Tang JF 2020) — 3d
-  - `F4` ETF-flow contrarian (Brown-Davies-Ringgenberg RoF 2021) — 3d
-  - `J5` Carver FDM infrastructure — 1d (no decay risk; it's infra)
-- `B6` was the LAST pre-2014-sample backlog item; the remaining ones are post-2018-documented and less likely to hit the L76 decay pattern.
+- New backlog strategies still un-audited:
+  - `F4` ETF-flow contrarian (Brown-Davies-Ringgenberg RoF 2021) — 3d; **DEFERRED 2026-05-20**: SSGA flow data not free; needs alternative ETF-flow feed before audit can run
+- ✅ `F2` CFTC CoT positioning (Kang-Rouwenhorst-Tang JF 2020) — RETIRED 2026-05-20 (PR #20). KRT 2020 sample 1995-2010 -- so the L76 priority WAS triggered; canonical (z_lb=104w, top_n=3) failed CI_lo gate at −0.16. Lower-z_lb cells satisfy CI_lo but selecting them post-hoc is L72 cross-selection deflation.
+- ✅ `J5` Carver FDM infrastructure — SHIPPED 2026-05-20 (PR #19). Pure framework primitive; no decay risk.
+- `B6` was the LAST pre-2014-sample strategy-backlog item that hadn't been audited as of 2026-05-19; F2 (KRT 2020 sample is 1995-2010, so still pre-2014) extended the L76 cascade to 6 instances on 2026-05-20. Remaining items (F4 etc.) are post-2018-documented and less likely to hit the L76 decay pattern -- assuming the data acquisition gap is resolved.
 
 ### Deferred (need data infrastructure)
 
