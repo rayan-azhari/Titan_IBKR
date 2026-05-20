@@ -83,7 +83,19 @@ class ReconciliationConfig(StrategyConfig):
     # ignored as floating-point noise.
     qty_epsilon: float = 1e-6
     # Open orders older than this are flagged as stale.
-    stale_order_minutes: int = 15
+    #
+    # Rationale for the 1440-min (24h) default: D3 should catch orders
+    # GENUINELY stuck (broker rejected silently, partial fill not
+    # finalised, exchange disconnect during the open). It MUST NOT catch
+    # orders correctly queued outside venue hours. LSEETF and NYSE
+    # routinely accept orders 16+ hours before next session open, and
+    # IBKR confirms with a venue-hours warning code 399 -- that is the
+    # expected workflow, not a stale-order condition. 24h gives every
+    # global venue at least one full session to fill an out-of-hours
+    # submission before D3 promotes it to an alert. Operator can lower
+    # the threshold via env var TITAN_STALE_ORDER_MINUTES if intraday
+    # liquidity is a known concern.
+    stale_order_minutes: int = 1440
     # Minimum minutes between identical alerts (suppress repeat spam if
     # a drift persists across several bars).
     alert_cooldown_minutes: int = 60
@@ -292,18 +304,17 @@ class ReconciliationStrategy(Strategy):
         for p in open_positions:
             by_instrument[p.instrument_id].append(p)
 
-        # D1. Multiple open positions per instrument
-        for instrument_id, positions in by_instrument.items():
-            if len(positions) > 1:
-                pos_summary = ", ".join(
-                    f"{str(p.strategy_id)}={float(p.signed_qty):+.0f}" for p in positions
-                )
-                findings.append(
-                    f"[D1 multi-position] {instrument_id} has {len(positions)} open "
-                    f"positions: {pos_summary}. Likely orphan + strategy double-up."
-                )
-
-        # D2. Cache sum vs portfolio.net_position
+        # D1 + D2 combined. The original D1 (multiple positions per
+        # instrument) was noisy whenever a strategy traded an
+        # EXTERNAL-tagged REHYDRATED position: NautilusTrader opens a
+        # NEW position record for the strategy's order rather than
+        # reducing the existing EXTERNAL record. This is by design
+        # (REHYDRATED positions are read-only from the strategy's POV),
+        # and the net broker position remains correct -- D2's sum-drift
+        # check is what actually verifies capital. So: only fire D1 if
+        # the net-qty does NOT match portfolio.net_position. When the
+        # net agrees, multi-position records are an internal cache
+        # quirk, not a drift problem.
         for instrument_id, positions in by_instrument.items():
             cache_sum = sum(float(p.signed_qty) for p in positions)
             try:
@@ -314,11 +325,25 @@ class ReconciliationStrategy(Strategy):
                     f"Reconciliation: portfolio.net_position({instrument_id}) failed: {e}"
                 )
                 continue
-            if abs(cache_sum - portfolio_net) > self.config.qty_epsilon:
-                findings.append(
-                    f"[D2 sum-drift] {instrument_id}: cache_sum={cache_sum:+.4f} "
-                    f"vs portfolio.net_position={portfolio_net:+.4f}"
+            net_mismatch = abs(cache_sum - portfolio_net) > self.config.qty_epsilon
+            if net_mismatch:
+                pos_summary = ", ".join(
+                    f"{str(p.strategy_id)}={float(p.signed_qty):+.0f}" for p in positions
                 )
+                if len(positions) > 1:
+                    findings.append(
+                        f"[D1 multi-position + sum-drift] {instrument_id} has "
+                        f"{len(positions)} positions ({pos_summary}); cache_sum="
+                        f"{cache_sum:+.4f} vs portfolio.net_position={portfolio_net:+.4f}. "
+                        f"Real drift -- orphan + strategy mismatch on capital."
+                    )
+                else:
+                    findings.append(
+                        f"[D2 sum-drift] {instrument_id}: cache_sum={cache_sum:+.4f} "
+                        f"vs portfolio.net_position={portfolio_net:+.4f}"
+                    )
+            # If net agrees, multi-position is an internal cache quirk; no
+            # alert.
 
         # D3. Stale open orders
         try:

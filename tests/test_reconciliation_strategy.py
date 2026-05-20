@@ -95,19 +95,26 @@ def detect_drift(
     for p in open_positions:
         by_instrument[p.instrument_id].append(p)
 
-    # D1
-    for instrument_id, pos_list in by_instrument.items():
-        if len(pos_list) > 1:
-            findings.append(f"[D1] {instrument_id} has {len(pos_list)} open positions")
-
-    # D2
+    # D1 + D2 (combined per 2026-05-20 fix). Multi-position records are
+    # only a drift CONCERN when their net signed_qty disagrees with
+    # portfolio.net_position. NautilusTrader splits REHYDRATED-tagged
+    # positions vs strategy-tagged orders into separate records; this is
+    # design intent and not a capital-at-risk problem when net agrees.
     for instrument_id, pos_list in by_instrument.items():
         cache_sum = sum(float(p.signed_qty) for p in pos_list)
         portfolio = portfolio_net.get(instrument_id, 0.0)
-        if abs(cache_sum - portfolio) > qty_epsilon:
-            findings.append(
-                f"[D2] {instrument_id}: cache_sum={cache_sum:+.4f} vs portfolio={portfolio:+.4f}"
-            )
+        net_mismatch = abs(cache_sum - portfolio) > qty_epsilon
+        if net_mismatch:
+            if len(pos_list) > 1:
+                findings.append(
+                    f"[D1] {instrument_id} has {len(pos_list)} positions; "
+                    f"cache_sum={cache_sum:+.4f} vs portfolio={portfolio:+.4f}"
+                )
+            else:
+                findings.append(
+                    f"[D2] {instrument_id}: cache_sum={cache_sum:+.4f} vs portfolio={portfolio:+.4f}"
+                )
+        # If net agrees, multi-position is internal cache layout; no alert.
 
     # D3
     open_orders = [o for o in orders if o.is_open]
@@ -159,18 +166,41 @@ def test_detect_drift_clean_state_returns_no_findings():
     assert findings == []
 
 
-def test_detect_drift_d1_fires_on_double_position_for_same_instrument():
-    """The May 11 bug class: two open positions for the same instrument
-    (an EXTERNAL orphan + a strategy-tagged double-up)."""
+def test_detect_drift_d1_suppressed_when_multi_position_nets_to_portfolio():
+    """Updated 2026-05-20: D1 no longer fires when multi-position
+    records simply reflect a REHYDRATED-EXTERNAL + strategy-tagged
+    layout whose NET signed_qty agrees with portfolio.net_position.
+    The original D1 (any len>1 -> alert) produced false positives
+    after every container restart where strategies traded REHYDRATED
+    positions, because NautilusTrader by design opens a new
+    strategy-tagged position record rather than reducing the
+    EXTERNAL one. D2's sum-drift gate is what actually verifies
+    capital -- D1 is now gated on the same net-mismatch check.
+    """
     positions = [
         FakePosition("VUSD.LSEETF", "EXTERNAL", 215.0),
         FakePosition("VUSD.LSEETF", "BondGoldStrategy-002", 30.0),
     ]
-    portfolio_net = {"VUSD.LSEETF": 245.0}  # cache_sum matches portfolio
+    portfolio_net = {"VUSD.LSEETF": 245.0}  # cache_sum (215+30) matches
     findings = detect_drift(positions, [], portfolio_net, now_ns=10_000_000_000_000)
-    assert any("[D1]" in f and "VUSD" in f for f in findings)
-    # D2 should NOT fire because cache_sum (215+30=245) matches portfolio
-    assert not any("[D2]" in f for f in findings)
+    # No alert when net agrees.
+    assert not any("[D1]" in f for f in findings), findings
+    assert not any("[D2]" in f for f in findings), findings
+
+
+def test_detect_drift_d1_fires_when_multi_position_net_mismatches_portfolio():
+    """D1 still fires for the genuine drift case: multi-position
+    records AND net signed_qty disagrees with portfolio.net_position.
+    """
+    positions = [
+        FakePosition("VUSD.LSEETF", "EXTERNAL", 215.0),
+        FakePosition("VUSD.LSEETF", "BondGoldStrategy-002", 30.0),
+    ]
+    portfolio_net = {"VUSD.LSEETF": 999.0}  # mismatch (cache_sum=245)
+    findings = detect_drift(positions, [], portfolio_net, now_ns=10_000_000_000_000)
+    assert any("[D1]" in f and "VUSD" in f for f in findings), findings
+    # Single combined finding now -- D1 message captures the mismatch.
+    assert any("999" in f for f in findings), findings
 
 
 def test_detect_drift_d2_fires_on_cache_vs_portfolio_mismatch():
@@ -218,16 +248,21 @@ def test_detect_drift_handles_closed_positions():
 
 
 def test_detect_drift_d1_and_d2_compose_independently():
-    """Two unrelated instruments can both trigger different findings."""
+    """Two unrelated instruments: A has multi-position that nets right
+    (no D1 alert post-fix), B has single-position drift (D2 fires).
+    The composition test now exercises the differentiated D1/D2 logic.
+    """
     positions = [
         FakePosition("A", "EXTERNAL", 100.0),
-        FakePosition("A", "Strategy-A", 50.0),  # D1 trigger for A
-        FakePosition("B", "Strategy-B", 999.0),  # D2 trigger for B (mismatch)
+        FakePosition("A", "Strategy-A", 50.0),  # 150 net, matches A's portfolio_net
+        FakePosition("B", "Strategy-B", 999.0),  # mismatches B's portfolio_net
     ]
     portfolio_net = {"A": 150.0, "B": 1.0}
     findings = detect_drift(positions, [], portfolio_net, now_ns=10_000_000_000_000)
-    assert any("[D1]" in f and " A " in f for f in findings)
-    assert any("[D2]" in f and " B" in f for f in findings)
+    # A: multi-position but net agrees -> no alert.
+    assert not any(" A " in f or " A:" in f for f in findings), findings
+    # B: single-position, net mismatches -> D2 fires.
+    assert any("[D2]" in f and "B" in f for f in findings), findings
 
 
 # ── D4: NLV-drop detection tests ─────────────────────────────────────

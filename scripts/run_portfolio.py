@@ -717,7 +717,13 @@ STRATEGY_REGISTRY = {
         ],
         "config_kwargs": {
             "bar_type": "AUD/JPY.IDEALPRO-1-HOUR-MID-EXTERNAL",
-            "stale_order_minutes": int(os.getenv("TITAN_STALE_ORDER_MINUTES", "15")),
+            # Default raised to 24h on 2026-05-20: orders submitted outside
+            # venue hours are queued by IBKR (warning code 399) and stay
+            # ACCEPTED until next session open; the 15-min default fired
+            # repeatedly on legitimate cross-session orders. See
+            # ReconciliationConfig.stale_order_minutes docstring for the
+            # full rationale.
+            "stale_order_minutes": int(os.getenv("TITAN_STALE_ORDER_MINUTES", "1440")),
             "alert_cooldown_minutes": int(os.getenv("TITAN_RECON_COOLDOWN_MINUTES", "60")),
             # D5 shadow-decision check (bond_gold class) is OFF by default
             # for v37_live: none of the bond_equity_* strategies are in the
