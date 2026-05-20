@@ -1,9 +1,9 @@
 # Titan V2.0 / V3.7 — current state
 
-**Date:** 2026-05-17 (last updated)
-**Repo:** `https://github.com/rayan-azhari/Titan_IBKR.git` (branch: `v2-main`)
+**Date:** 2026-05-20 (last updated)
+**Repo:** `https://github.com/rayan-azhari/titan-V2.0.git` (branch: `main`)
 **Framework version:** V3.7 (portfolio-level evaluation + risk-of-ruin)
-**Live deployment:** V3.7 multi-strategy (GEM J5 + turtle CAT) on paper, since 2026-05-17 23:49 UTC
+**Live deployment:** V3.7 multi-strategy on paper (GEM J5 + turtle CAT + ic_equity top-3 + I1v2 SHADOW). 3-day cumulative roster expansion 2026-05-17 → 2026-05-19.
 
 ---
 
@@ -15,18 +15,28 @@ The framework went through three structural revisions in 2026-05-16, driven by u
 2. **L65 — Risk-of-ruin module** (`titan/research/framework/ruin.py`). Joint MC across LIVE + proposed strategies is the binding survivability gate. Single-strategy ruin gates are necessary but not sufficient. Caught: turtle CAT at 30% FAILS joint gate alongside GEM J5; revised to 20%.
 3. **L66 + L67 — Portfolio-vs-benchmark is the deployment gate** (not individual-strategy-vs-own-instrument). Individual L17 was correct for what it tested but was the wrong test for deployment. V3.7's 10-metric portfolio matrix (`research/portfolio/joint_evaluation.py`) is the new gate.
 
-**Result of the V3.7 reframe:** the current portfolio (GEM J5 70% + turtle CAT 20% + 10% cash) **beats 60/40 SPY/IEF on 7/10 metrics** including 64× lower P(NAV DD > 15%). The mission — "minimise risk while staying profitable vs B&H" — is being achieved at the portfolio level, not the individual-strategy level.
+**Result of the V3.7 reframe:** the current portfolio (GEM J5 + turtle CAT + ic_equity top-3 + I1v2 SHADOW) **beats 60/40 SPY/IEF on 7/10 metrics** including 64× lower P(NAV DD > 15%). The mission — "minimise risk while staying profitable vs B&H" — is being achieved at the portfolio level, not the individual-strategy level. Latest cutover lifted portfolio Sharpe from +0.93 → +1.07 (PR #11, ic_equity top-3 deployed 2026-05-19).
 
 ---
 
 ## Current portfolio state
 
-| Strategy | Status | Weight | Last audit | Verdict |
+| Strategy | Status | Allocator weight | Last audit | Verdict |
 |---|---|---:|---|---|
-| `gem` (J5 P_hl60_vt05) | **LIVE on paper** (Docker, multi-strategy node) | 80% | 2026-05-16 | DEPLOY (5/5 axes + L65 + portfolio matrix 6/10 vs 60/40) |
-| `turtle` (C3_peak on CAT) | **LIVE on paper** (Docker, multi-strategy node, since 2026-05-17 23:49 UTC) | 20% | 2026-05-16 | CAT-scoped; joint L65 PASS; portfolio matrix 7/10 |
+| `gem` (J5 P_hl60_vt05) | **LIVE** (Docker, multi-strategy node) | ~65% | 2026-05-16 | DEPLOY (5/5 axes + L65 + portfolio matrix 6/10 vs 60/40) |
+| `turtle` (C3_peak on CAT) | **LIVE** (Docker, multi-strategy node) | ~17% | 2026-05-16 | CAT-scoped; joint L65 PASS; portfolio matrix 7/10 |
+| `ic_equity_hwm` | **LIVE** (deployed 2026-05-19, PR #11) | 5% (floor) | 2026-05-19 | Hybrid-validated CONDITIONAL; per-ticker plateau strict-30% PASS, DSR p=1.000 |
+| `ic_equity_wmt` | **LIVE** (deployed 2026-05-19, PR #11) | 5% (floor) | 2026-05-19 | Hybrid-validated CONDITIONAL; per-ticker plateau H1-50% PASS, DSR p=1.000 |
+| `ic_equity_syk` | **LIVE** (deployed 2026-05-19, PR #11) | 5% (floor) | 2026-05-19 | Hybrid-validated CONDITIONAL; per-ticker plateau strict-30% PASS, DSR p=1.000 |
+| `ewmac_regime_i1v2_c6` | **SHADOW LIVE** (`trading=False`, paper validation since 2026-05-17 17:23 UTC) | 0% | 2026-05-17 | DEPLOY (B2-family revival, risk reducer); 12mo paper window; re-audit 2027-05-17 |
+| `daily_summary` | **LIVE** (Slack rollup AM+PM via Europe/London clock) | 0% (passive) | n/a | Tier-1 ops |
+| `reconciliation` | **LIVE** (D1+D2+D3 position-drift watchdog) | 0% (passive) | n/a | Tier-1 ops; D5 disabled per PR #6; D1+D3 false-positive logic fixed PR #17 |
 
-**Container**: `titan-portfolio` (Docker) running `scripts/watchdog_portfolio.py --strategies v37_live` since 2026-05-17 23:49 UTC. Both strategies in same NautilusTrader TradingNode sharing IB connection + PortfolioRiskManager + PortfolioAllocator. GEM positions REHYDRATED cleanly (CSPX qty=27 + IDTM qty=45). Account balance preserved (29,846.16 GBP unchanged across cutover). See `directives/V3.7 Phase 2 Cutover Log 2026-05-17.md`.
+**Container**: `titan-portfolio` (Docker) running `scripts/watchdog_portfolio.py --strategies v37_live`. All 8 strategies in the same NautilusTrader TradingNode sharing IB connection + PortfolioRiskManager + PortfolioAllocator. Allocator: inverse-vol with min_weight=5% / max_weight=60% / monthly rebalance / correlation penalty. GEM positions REHYDRATED cleanly across multiple recreates (CSPX, IDTM). See `directives/V3.7 Phase 2 Cutover Log 2026-05-17.md`.
+
+**Other CONDITIONAL_WATCHPOINT** (audited but NOT in `v37_live`, paper-only diversifiers):
+- `fx_carry` AUD/JPY (PR #8, 2026-05-19) — joint L65+L67 closure CONDITIONAL at 5-10%; L66 baseline clears at 3% swap; portfolio Sharpe lift inconclusive
+- `samir_stack` (PR #12, 2026-05-19) — Phase 5 DEPLOY DEMOTED post-Phase-6c: L17 rel-MC FAIL (dd_red 0.938 > 0.80); L24+L25 PASS; stays in `samir_validation` paper registry only
 
 **Portfolio-vs-60/40 SPY/IEF (7.9y overlap):**
 - Sharpe: **+0.95** vs +0.74 ✓
@@ -44,21 +54,24 @@ The framework went through three structural revisions in 2026-05-16, driven by u
 
 ---
 
-## Audit dashboard (2026-05-17)
+## Audit dashboard (2026-05-20)
 
 | Status | Count | Strategies |
 |---|---:|---|
-| **LIVE** | 2 | gem J5 (80%) + turtle CAT C3_peak (20%) — multi-strategy node since 2026-05-17 23:49 UTC |
-| **SHADOW (paper-validation)** | 2 | bond_gold (V3.6 PROMOTED params; live runs V1) + **ewmac_regime_i1v2_c6** (LIVE shadow since 2026-05-17, 9 futures, 12mo paper validation) |
-| **CONDITIONAL_WATCHPOINT** | (incl. above) | turtle CAT scoped, fx_carry long-yen scope, ic_equity_daily top-3 (deferred per L67 expansion) |
-| **RETIRED** | 22 | mr_audjpy, mr_fx, mtf, ic_mtf, gold_macro, gld_confluence, 6 etf_trend variants, B2 family (PARTIALLY REVIVED via I1v2), B5 intraday momentum, **ml (final: L61 grid + top-6 per-asset 5-axis both fail; AUC ≠ Sharpe, L72)**, B4/D2/E1/G4/A1 from V3 era |
-| **Total audits run** | 42 | See `.tmp/dashboard/dashboard.html` |
+| **LIVE (trading)** | 5 | gem J5 (~65%) + turtle CAT C3_peak (~17%) + 3× ic_equity (HWM/WMT/SYK @ 5% floor each) |
+| **SHADOW (paper-validation, trading=False)** | 2 | bond_gold (V3.6 PROMOTED params; live runs V1) + ewmac_regime_i1v2_c6 (9 futures, 12mo paper window, re-audit 2027-05-17) |
+| **CONDITIONAL_WATCHPOINT (paper-only, NOT in v37_live)** | 2 | fx_carry AUD/JPY (long-yen scope, PR #8), samir_stack (Phase 6c L17 FAIL → demoted, PR #12) |
+| **RETIRED (cumulative)** | 25 | mr_audjpy, mr_fx, mtf, ic_mtf, gold_macro, gld_confluence, 6 etf_trend variants, B2 family (PARTIALLY REVIVED via I1v2), B5 intraday momentum, ml, B4/D2/E1/G4/A1 from V3 era, **F3 FOMC drift (PR #13)**, **D4 HY/IG credit carry (PR #15)**, **B6 sector momentum + crash overlay (PR #16)** |
+| **Total audits run** | 45 | See `.tmp/dashboard/dashboard.html` |
 
-**Latest milestones (2026-05-17):**
-- **B5** RETIRE on SPY/QQQ/IWM 2y IBKR M5 (panel median SR −0.87, signal reversed).
-- **B2e** L52 sweep stop + L52-override audit → noise fragility (L69), partial rescue motivated by I1v2.
-- **I1v2 C6_smoothed DEPLOY** verdict (Sharpe +0.52, CI_lo +0.049, noise=best) — first B2-family deployment-eligible cell. L65 single PASS + L65 joint PASS at 5%+ weight + L67 unchanged at PORTFOLIO_CONDITIONAL. **Risk reducer, not return enhancer.**
-- **I1v2 SHADOW LIVE deployed** (2026-05-17 17:23 UTC) on 9-symbol futures basket (ES/NQ/CL/BZ/HG/SI/GC/ZN/ZB). 6E/6J dropped — paper account lacks CME FX futures subscriptions. `shadow_mode=True`, `trading=False`. 12mo paper-validation clock started. Re-audit 2026-11-17.
+**Latest milestones (2026-05-19 → 2026-05-20):**
+- **ic_equity top-3 LIVE deployed** (PR #11) — V3.7 hybrid-validated CONDITIONAL: per-ticker plateau + DSR + cross-ticker DSR all PASS. Portfolio Sharpe lift 0.93 → 1.07 at 15% IC allocation. First matrix-improving deployment since GEM J5.
+- **fx_carry L65+L67 closure** (PR #8) — CONDITIONAL diversifier; pure-price audit Sharpe +0.29 understated; with 3% swap accrual +0.52 (CI_lo +0.01). L74 lesson: carry-to-Sharpe = `yield × time_in_market / vol`, NOT `yield / vol`.
+- **ic_equity_daily V3.7 hybrid critical-review** (PR #10) — 5/7 tickers survive plateau + DSR. Top-3 cross-ticker DSR z=+7.51 p=1.0 even under N=7 selection. L75 codified: always run V3.7 hybrid before deployment-eligible verdict.
+- **samir_stack Phase 6c closure** (PR #12) — L17 rel-MC FAIL (dd_red 0.938 > 0.80) DEMOTED Phase-5 DEPLOY → CONDITIONAL_WATCHPOINT. L24+L25 still PASS.
+- **F3 FOMC drift / D4 HY/IG carry / B6 sector momentum** (PR #13, #15, #16) — three backlog audits all RETIRE via V3.7 hybrid early-exit. **L76 synthesizes the 5-strategy cascade**: pre-2014-sample academic edges should be treated as falsification candidates, not replication targets, on retail post-2008 data.
+- **Reconciliation watchdog hardening** (PR #6, #17) — D5 disabled for v37_live, D1 gated on net-mismatch, D3 default raised 15min → 24h to handle out-of-hours order queuing.
+- **Gemini external audit + post-hardening** (PR #1, #2, #3) — 3 live-trading math bugs in PRM + allocator fixed; live-API Bar attribute scanner + methodology baseline CI gate + allowlist expiry enforcement added.
 
 ---
 
@@ -101,6 +114,15 @@ Recent additions (V3.7 batch):
 - **L65** — Joint risk-of-ruin is the binding survivability gate.
 - **L66** — Baseline must match strategy thesis.
 - **L67** — Portfolio-vs-benchmark 10-metric matrix is the deployment gate.
+- **L68** — Always pass `--env-file .env.docker` for compose ops that recreate containers.
+- **L69** — Noise fragility is distinct from regime artifact; cleaner data can falsify the wrong diagnosis (B2e).
+- **L70** — Multi-feature regime gate is the rescue path for L69 noise fragility (I1v2 revives B2 family).
+- **L71** — A frozen ML artefact is a build artefact of its feature pipeline; treat it like a compiled binary, not immutable data.
+- **L72** — Classification AUC > 0.55 is NOT a deployment signal; always close the loop with strategy-return 5-axis matrix (ml retire).
+- **L73** — Strategy-registry cutovers must diff EVERY per-strategy registry, not just the top-level list (3 V3.7 cutover regressions hit same day).
+- **L74** — Carry-premium-to-Sharpe is `yield × time_in_market / vol`, NOT `yield / vol`; trend-filtered carry is on ~50% of the time (fx_carry closure).
+- **L75** — L65+L67 closure is NOT a hybrid; always run L52 plateau + DSR + cross-selection DSR before issuing a deployment-eligible verdict.
+- **L76** — Pre-2014-sample academic edges should be treated as falsification candidates, not replication targets, on retail post-2008 data (5-strategy cascade: A1 / ic_mtf / F3 / D4 / B6).
 
 ---
 
@@ -179,11 +201,11 @@ PYTHONIOENCODING=utf-8 uv run python research/portfolio/joint_evaluation.py
 | Wave B | turtle | ✅ CONDITIONAL_WATCHPOINT (CAT-scoped @ 20%) |
 | Wave B | ic_mtf | ✅ RETIRED (L21 multi-TF amplified) |
 | Wave B | gld_confluence | ✅ RETIRED (DD gate + fold instability) |
-| Wave B | fx_carry | ⏳ pending (needs L61 G10 panel + L66 baseline) |
-| Wave B | orb | ⏳ pending (sparse-trade harness) |
-| Wave B | pairs | ⏳ pending (cointegration harness) |
-| Wave B | ic_equity_daily | ⏳ pending (7-ticker multi-name) |
-| Wave C | ml | ⏳ L19 same-bar look-ahead bug fix first |
+| Wave B | fx_carry | ✅ CONDITIONAL_WATCHPOINT 2026-05-19 (PR #8): pure-price SR +0.29, with 3% swap +0.52 (CI_lo +0.01); paper-only diversifier, no live cutover. L74 codified the math correction. |
+| Wave B | orb | ✅ TENTATIVE RETIRE 2026-05-16 (data-limited: 5 weeks M5; re-audit when 1y available) |
+| Wave B | pairs | ✅ RETIRED 2026-05-16 (Wave B): L21 smoke FAIL — subtle non-causality in beta refit / z-window |
+| Wave B | ic_equity_daily | ✅ **LIVE 2026-05-19** (PR #9 closure → PR #10 hybrid → PR #11 deploy): top-3 (HWM/WMT/SYK) basket at 15% (3× 5% min_weight floor). Portfolio Sharpe lift 0.93 → 1.07. First matrix-improving CONDITIONAL since GEM. |
+| Wave C | ml | ✅ RETIRED 2026-05-17 (final, 4-stage cascade): single-pair → multi-asset → top-6 5-axis → cross-asset features all fail. L71+L72 codified. |
 | Wave C | gap_fade | ⏳ low priority |
 
 ---
@@ -237,8 +259,14 @@ Same as V3.6 plus:
 
 ### Strategies pending audit
 
-- fx_carry, orb, pairs, ic_equity_daily, ml, gap_fade (priority order)
-- samir_stack Phase 6c gap-closure (~25 min when allocator window opens)
+Wave B re-audit is **effectively complete** as of 2026-05-19. Remaining items:
+
+- `gap_fade` (Wave C, low priority)
+- New backlog strategies still un-audited (per L76 priority, prefer post-2018 publications):
+  - `F2` CFTC CoT positioning (Kang-Rouwenhorst-Tang JF 2020) — 3d
+  - `F4` ETF-flow contrarian (Brown-Davies-Ringgenberg RoF 2021) — 3d
+  - `J5` Carver FDM infrastructure — 1d (no decay risk; it's infra)
+- `B6` was the LAST pre-2014-sample backlog item; the remaining ones are post-2018-documented and less likely to hit the L76 decay pattern.
 
 ### Deferred (need data infrastructure)
 

@@ -33,7 +33,7 @@ A menu of novel strategy ideas not yet implemented in `titan/strategies/`. Every
 | B4 | TSMOM 10-15 futures | DAILY_TREND | Moskowitz-Ooi-Pedersen 2012 | 4d | ✅ DONE (RETIRED on 24-commodity yfinance; sign of L37 confirmed but magnitude +0.16 << MOP's +1.0). Plateau FAIL. See L39, L40 — fixable with multi-asset universe + IBKR per-contract roll-aware data. |
 | B5 | **[NEW] Intraday momentum** (first-30m → last-30m) | INTRADAY_BREAKOUT | Gao, Han, Li & Zhou, *JFE* 2018 | 2d | ✅ DONE 2026-05-17 (RETIRED: SPY/QQQ/IWM panel median Sharpe -0.87, 0% positive on 2y IBKR M5, signal REVERSED — matches academic post-2014 decay) |
 | ml | EUR/USD H1 XGB meta-classifier (single-pair) | ML_CLASSIFIER | TBM (López de Prado) + multi-feature TA | (rebuilt) | ✅ DONE 2026-05-17 (FINAL **RETIRE**, 4-stage cascade). (1) single-pair 24h sanc AUC 0.488; (2) L61 grid 6/16 > 0.55; (3) top-6 5-axis 0/6 deploy-eligible; (4) **cross-asset features (regime panel as columns): +0.015 mean AUC, equities lift most (ES 0.55→0.60), but 0/16 above 0.60 and 5-axis unchanged**. L71 + L72 added. **AUC ≠ Sharpe** confirmed across 4 architectural variations. |
-| B6 | **[NEW] Momentum-crash hedge** (Daniel-Moskowitz dynamic scaling) | META_LABELING | Daniel & Moskowitz, *JFE* 2016 | 2d | Specification-sensitive |
+| B6 | **[NEW] Momentum-crash hedge** (Daniel-Moskowitz dynamic scaling) | META_LABELING | Daniel & Moskowitz, *JFE* 2016 | 2d | ✅ RETIRED 2026-05-19 (V3.7 hybrid via sector-ETF pivot; PR #16). Plateau 601%, DSR p=0.0002, CI_lo −0.426. **5th instance of L76 pattern** (pre-2014-sample academic edges don't replicate on retail post-2008 data). Sector-momentum decay on liquid ETFs + panic_state 0.08% of 2010-2025 bars makes overlay test inconclusive. |
 
 ## C. Mean reversion / pairs
 
@@ -51,7 +51,7 @@ A menu of novel strategy ideas not yet implemented in `titan/strategies/`. Every
 | D1 | G10 FX carry basket with VIX risk-off kill | CARRY | Malik + standard FX | 4d | **DATA**: G10 spot + rates |
 | D2 | **[NEW] Commodity futures carry** | CARRY | Bakshi, Gao & Rossi, *Management Science* 2019 | 5d | **DATA**: 24 commodity futures front + back month for basis |
 | D3 | **[NEW] Equity-index carry** | CARRY | Koijen-Moskowitz-Pedersen-Vrugt, *JFE* 2018 | 6d | **DATA**: dividend futures |
-| D4 | **[NEW] Credit carry — HY/IG spread** | CARRY / PAIRS | Israel-Palhares-Richardson, *JoIM* 2018 (AQR) | 2d | HYG/LQD ETFs — IBKR-implementable |
+| D4 | **[NEW] Credit carry — HY/IG spread** | CARRY / PAIRS | Israel-Palhares-Richardson, *JoIM* 2018 (AQR) | 2d | ✅ RETIRED 2026-05-19 (V3.7 hybrid; PR #15). Plateau 210%, DSR p=0.0000, CI_lo −0.690. Counter-intuitive: SMA trend filter on HYG/LQD ratio HURTS Sharpe. Post-2008 ZIRP HY-IG spread compression hollows out IPR 1988-2014 premium. |
 | D5 | **[NEW] VIX term-structure carry** | CARRY (vol) | Eraker & Wu, *JFE* 2017 | 4d | **DATA**: VX1/VX2 futures or VXX/VXZ ETFs |
 
 ## E. Volatility ecosystem
@@ -69,7 +69,7 @@ A menu of novel strategy ideas not yet implemented in `titan/strategies/`. Every
 |---|---|---|---|---|---|
 | F1 | Risk-off bond bid (VIX + HYG/IEF) | CROSS_ASSET_MOMENTUM | — | 2d | — |
 | F2 | **[NEW] CFTC CoT positioning extremes** | DAILY_MEAN_REVERSION | Kang, Rouwenhorst & Tang, *JF* 2020 | 3d | Free CFTC weekly data |
-| F3 | **[NEW] FOMC pre-announcement drift** | new class CALENDAR_ANOMALY (or DAILY_MEAN_REVERSION + gate) | Lucca & Moench, *JF* 2015 | 1d | Small sleeve, ~8 events/year |
+| F3 | **[NEW] FOMC pre-announcement drift** | new class CALENDAR_ANOMALY (or DAILY_MEAN_REVERSION + gate) | Lucca & Moench, *JF* 2015 | 1d | ✅ RETIRED 2026-05-19 (V3.7 hybrid; PR #13). Plateau 655%, DSR p=0.0000, CI_lo −0.866 on SPY 2010-2025. Lucca-Moench 1994-2011 effect doesn't replicate; matches Cieslak-Vissing-Jørgensen 2021 post-2014 Fed-transparency decay. |
 | F4 | **[NEW] ETF-flow contrarian** | DAILY_MEAN_REVERSION (sector) | Brown, Davies & Ringgenberg, *RoF* 2021 | 3d | Free daily flow data |
 
 ## G. Microstructure / intraday (non-ORB)
@@ -118,7 +118,7 @@ A menu of novel strategy ideas not yet implemented in `titan/strategies/`. Every
 
 10-step plan, ~31 days total for 8 strategies + 3 infrastructure upgrades.
 
-**Status (2026-05-15):** Steps 1–3 complete; J4 redesign added as 3.5 between E1 and D2. Step 4 (D2) is up next.
+**Status (2026-05-20):** Original 10-step plan is essentially closed. The recommended order below reflects May-2026 sequencing; today's status of each item is on the row itself. Recent additions (2026-05-19) -- F3 / D4 / B6 all RETIRED via V3.7 hybrid early-exit; ic_equity_daily deployed LIVE at 15% (PR #11) lifting portfolio Sharpe +0.14. Remaining items not yet attempted: F2 (CFTC CoT), F4 (ETF-flow), J5 (Carver FDM), plus the data-blocked B2/B3/B4 and C series. See `directives/README V2.0.md` for the current live composition.
 
 1. ✅ **B1 — GEM dual momentum** (1d) — DONE. Original C12 verdict DEPLOY (4-axis). Promoted to production 2026-05-14.
 2. ✅ **J3 — Noise-injection robustness gate** (2d) — DONE. 5th decision axis live. C12 demoted DEPLOY → CONDITIONAL_WATCHPOINT. See `Pre-Reg J3 Noise Robustness 5th Axis 2026-05-15.md` + L24 in V3.6 Catalogue.

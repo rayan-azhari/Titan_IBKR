@@ -7,23 +7,21 @@ configured, deployed, and supervised. Research artefacts (pre-reg
 directives, audit logs, dashboards) live elsewhere — see the linked
 sources in each guide.
 
-## Portfolio status (2026-05-17, V3.7 framework)
+## Portfolio status (2026-05-20, V3.7 framework)
 
-| Metric (portfolio GEM 70% + turtle 20%) | Value | 60/40 SPY/IEF | Verdict |
+Current LIVE composition: GEM J5 (~65%) + turtle CAT C3_peak (~17%) + ic_equity top-3 (HWM/WMT/SYK, 15% total = 3× 5% min_weight floor) + I1v2 SHADOW (`trading=False`).
+
+| Metric (portfolio G65/T17/IC15) | Value | 60/40 SPY/IEF | Verdict |
 |---|---:|---:|:---:|
-| Sharpe (annualised) | **+0.95** | +0.74 | ✓ |
-| Sortino | **+1.41** | +0.91 | ✓ |
-| MaxDD | **−13.7%** | −22.3% | ✓ |
-| **P(NAV DD > 15% in 1y)** | **0.30%** | 19.30% | ✓ **64× lower** |
-| CVaR-95 reduction | 48% | — | ✓ |
-| CDaR-95 reduction | 44% | — | ✓ |
-| Worst named-crisis MaxDD (2022) | −11.6% | — | (vs GEM alone −20.4%) |
-| 10-metric matrix verdict | **7/10 PASS** | — | PORTFOLIO_CONDITIONAL |
+| Sharpe (annualised) | **+1.07** (vs G80/T20 pre-IC baseline +0.93) | +0.74 | ✓ |
+| Sortino | **+1.54** (vs G80/T20 +1.37) | +0.91 | ✓ |
+| MaxDD | **−13.2%** | −22.3% | ✓ |
+| **P(NAV DD > 15% in 1y)** | **0.35%** | 19.30% | ✓ **55× lower** |
+| CVaR-95 reduction | 46% | — | ✓ |
+| CDaR-95 reduction | 54% | — | ✓ |
+| 10-metric matrix verdict | **7/10 PASS** (failing: Calmar, IR, Excess-stability — same 3 as G80/T20 baseline; GEM-base properties) | — | PORTFOLIO_CONDITIONAL |
 
-The portfolio HAS LOWER risk-of-ruin than passive 60/40 buy-and-hold
-AND higher Sharpe AND lower MaxDD. See
-[.tmp/reports/joint_evaluation/framework_evolution_v37.md](../../.tmp/reports/joint_evaluation/framework_evolution_v37.md)
-for the V3.6 → V3.7 reframe.
+The portfolio HAS LOWER risk-of-ruin than passive 60/40 buy-and-hold AND higher Sharpe AND lower MaxDD. The ic_equity top-3 deployment on 2026-05-19 lifted portfolio Sharpe by +0.14 (the first matrix-improving deployment since GEM J5; see PR #11 + the closure analysis in `.tmp/reports/ic_equity_l65_l67/result_log.md`). See [.tmp/reports/joint_evaluation/framework_evolution_v37.md](../../.tmp/reports/joint_evaluation/framework_evolution_v37.md) for the V3.6 → V3.7 reframe.
 
 ## Convention
 
@@ -45,11 +43,14 @@ slug, e.g. `gem-dual-momentum.md`. Each guide must contain at least:
 
 | Slug | Status | Class | Production cell | V3.6/V3.7 verdict | Guide |
 |---|---|---|---|---|---|
-| `gem-dual-momentum` | **LIVE on paper** (multi-strategy node since 2026-05-17 23:49 UTC) | CROSS_ASSET_MOMENTUM | **J5 `P_hl60_vt05`** (since 2026-05-16) | DEPLOY (5/5 axes + L65 + portfolio matrix 6/10 vs 60/40) | [gem-dual-momentum.md](gem-dual-momentum.md) |
-| `turtle-donchian` | **LIVE on paper (CAT-scoped)** (multi-strategy node since 2026-05-17 23:49 UTC) | DAILY_TREND | **C3_peak `(entry=45, exit=20)` on CAT** | L64 CONDITIONAL_WATCHPOINT + L65 joint PASS + portfolio matrix 7/10 vs 60/40 | (TODO: write guide) |
-| `ewmac_regime_i1v2_c6` | **SHADOW LIVE on paper** (multi-strategy node since 2026-05-17 17:23 UTC) | DAILY_TREND + regime gate | **C6_smoothed** (2-state HMM panel gate + 5d median smooth + 3-speed EWMAC) on 9 futures (ES/NQ/CL/BZ/HG/SI/GC/ZN/ZB) | DEPLOY (Sharpe +0.52, CI_lo +0.049, noise=best) + L65 single+joint PASS + L67 PORTFOLIO_CONDITIONAL unchanged. **Risk reducer.** 12mo paper-validation; re-audit 2026-11-17. | (TODO) |
+| `gem-dual-momentum` | **LIVE on paper** | CROSS_ASSET_MOMENTUM | **J5 `P_hl60_vt05`** (since 2026-05-16) | DEPLOY (5/5 axes + L65 + portfolio matrix 6/10 vs 60/40) | [gem-dual-momentum.md](gem-dual-momentum.md) |
+| `turtle-donchian` | **LIVE on paper (CAT-scoped)** | DAILY_TREND | **C3_peak `(entry=45, exit=20)` on CAT** | L64 CONDITIONAL_WATCHPOINT + L65 joint PASS + portfolio matrix 7/10 vs 60/40 | (TODO: write guide) |
+| `ic-equity-top3` | **LIVE on paper** (deployed 2026-05-19, PR #11) | DAILY_MEAN_REVERSION (RSI-21 dev + z-threshold) | HWM thr=0.25; WMT thr=0.50; SYK thr=0.50 — 3 separate strategies, allocator floor 5% each (15% total IC) | V3.7 hybrid-validated CONDITIONAL: per-ticker plateau PASS (HWM/SYK strict-30%; WMT H1-50%), DSR p=1.000, cross-ticker DSR on basket z=+7.51 p=1.0 under N=7 selection bias, joint L65 PASS, **L67 lifts portfolio Sharpe 0.93 → 1.07**. PR #9 closure + PR #10 hybrid + PR #11 deploy. | (TODO: write guide) |
+| `ewmac_regime_i1v2_c6` | **SHADOW LIVE on paper** (since 2026-05-17 17:23 UTC) | DAILY_TREND + regime gate | **C6_smoothed** (2-state HMM panel gate + 5d median smooth + 3-speed EWMAC) on 9 futures (ES/NQ/CL/BZ/HG/SI/GC/ZN/ZB) | DEPLOY (Sharpe +0.52, CI_lo +0.049, noise=best) + L65 single+joint PASS + L67 PORTFOLIO_CONDITIONAL unchanged. **Risk reducer.** 12mo paper-validation; re-audit 2027-05-17. | (TODO) |
 | `bond-gold` | LIVE on paper (V1-era config); V3.6 Phase 1 shadow config exists | CROSS_ASSET_MOMENTUM | V3.6 PROMOTED `(lookback=120, threshold=0.50)` — sidecar config ready | CONDITIONAL_WATCHPOINT (4/5 axes) | [bond-gold.md](bond-gold.md) |
 | `etf-trend` | Family of 7 variants with **mixed verdicts** | DAILY_TREND | TQQQ `(150, 5)` PROMOTED CONDITIONAL; SPY RETIRED; 5 unleveraged variants HIGH-conf bulk-retire (DBC/GLD spot-checks confirmed 2026-05-16) | Mixed (see family doc) | [etf-trend.md](etf-trend.md) |
+| `fx_carry` (AUD/JPY) | **CONDITIONAL paper-only** (PR #8, NOT in v37_live) | CARRY | sma=50, vol_target=0.08; long-yen scope-lock | V3.7 hybrid closure: pure-price SR +0.29 understated; with 3% swap accrual +0.52 (CI_lo +0.01); joint L65 PASS but L67 lift inconclusive; diversifier-only verdict. L74 codified the math correction. | (TODO) |
+| `samir_stack` (Phase 5) | **CONDITIONAL paper-only** (PR #12, NOT in v37_live) | CROSS_ASSET_MOMENTUM + overlay | equity_weight=0.40, L_max=2.0, tier_thresholds=(0.30, 0.55), capitulation=ON | Phase 5 DEPLOY DEMOTED post-Phase-6c: L17 rel-MC FAIL (dd_red 0.938 > 0.80 gate); L24 noise + L25 DSR PASS; stays in `samir_validation` paper-mode registry only. | [Samir-Stack Strategy Guide.md](../../directives/Samir-Stack%20Strategy%20Guide.md) |
 
 ## V1-era strategies pending V3.6 re-audit
 
@@ -60,16 +61,16 @@ See [directives/V1-era Re-audit Sweep Roster 2026-05-16.md](../../directives/V1-
 | Strategy | Class | Priority | Audit wave | Status |
 |---|---|---|---|---|
 | `mr_audjpy` | INTRADAY_MICROSTRUCTURE (H1 MR) | P1 | Wave A.3 | **SIGNAL-LAYER FAIL 2026-05-16 (L58)** — V1 +0.53 claim not reproducible at signal layer (IS -0.30); de-allocation recommended |
-| `samir_stack` | CROSS_ASSET_MOMENTUM + overlay | P1 | Wave A.4 | **PHASE 5 VALIDATED + 3 V3.6 GAPS 2026-05-16 (L59)** — keep live; ~25-min Phase 6c gap-closure scheduled |
+| `samir_stack` | CROSS_ASSET_MOMENTUM + overlay | P1 | Wave A.4 | **PHASE 6c COMPLETE 2026-05-19 (PR #12)** — Phase 5 DEPLOY DEMOTED to CONDITIONAL: L17 rel-MC FAIL (dd_red 0.938 > 0.80); L24+L25 PASS. NO live cutover; stays `samir_validation` paper-mode only. |
 | `mtf` | INTRADAY_MICROSTRUCTURE | P1 | Wave A.5 | **RETIRE 2026-05-16 (L21 bug confirmed)** — V1 +1.94 claim is look-ahead-derived; V3.6-correct sweep gives -0.08 |
 | `mr_fx` | INTRADAY_MICROSTRUCTURE (M5 VWAP) | P1 | Wave A.6 | **RETIRE 2026-05-16 (verified)** — every cell negative on 15y M5 EUR/USD even with corrected mechanics; L58 magnitude-vs-direction caveat refined |
 | `gold_macro` | DAILY_TREND | P2 | Wave B | **RETIRED 2026-05-16 (full audit)** — L52 H1 plateau-fail OOS 71% spread + L46 CI_lo bottleneck (every cell CI95_lo < 0). Composite ADDS value over bare-SMA but absolute CI gate fails. Never Docker-deployed; no allocator action |
 | `turtle` | DAILY_TREND | P2 | Wave B | **LIVE on paper since 2026-05-17 23:49 UTC** (multi-strategy node alongside GEM). C3_peak (entry=45, exit=20) on CAT only @ 20% weight. L64 CONDITIONAL_WATCHPOINT + L65 joint PASS + portfolio matrix 7/10 vs 60/40. Re-audit 2026-11-16 |
-| `fx_carry` | CARRY | P2 | Wave B | **CONDITIONAL_WATCHPOINT (long-yen-carry scope) 2026-05-16** — L21 PASS, live AUD/JPY SR +0.29. L61 panel: only AUD/JPY + USD/JPY positive (panel median −0.007); pattern is coherent. Carry-premium adds ~+0.6 SR pure-price audit ignores. Deploy ~10% AUD/JPY only, joint L65 + L67 needed before live |
+| `fx_carry` | CARRY | P2 | Wave B | **CONDITIONAL paper-only 2026-05-19 (PR #8 closure)** — L21 PASS, live AUD/JPY pure-price SR +0.29 (CI_lo −0.23). L74 fix: carry-to-Sharpe = `yield × time_in_market / vol`, NOT `yield / vol`. With 3% swap accrual SR +0.52 (CI_lo +0.01); joint L65 PASS at 5-10%; L67 lift inconclusive (diversifier only). NO live cutover. |
 | `ic_mtf` | INTRADAY_MICROSTRUCTURE | P2-HIGH | Wave B | **RETIRED 2026-05-16 (full audit)** — L21 look-ahead bug CONFIRMED (same pattern as mtf, ~4-5x more severe). V1 +7-8 Sharpe reproducible at V1-style methodology; vanishes under causal higher-TF alignment. New lessons L62 (refined) + L63 added |
 | `gld_confluence` | INTRADAY_MICROSTRUCTURE | P2-low | Wave B | **RETIRED 2026-05-16 (formalises April-2026 deprecation)** — MaxDD ~−35% at every threshold (hard DD gate) + prior 34% positive WFO folds (L43 cell-instability). Sharpe +0.22 too small to override. Already removed from STRATEGY_REGISTRY |
 | `orb` | INTRADAY_BREAKOUT | P2-medium | Wave B | **TENTATIVE RETIRE 2026-05-16 — DATA INSUFFICIENT** (5 weeks M5 = 17-19 trades/ticker; simplified-no-filter panel SR median −2.50, 29% positive). Re-audit when 1+ year M5 available |
-| `ic_equity_daily` | DAILY_MEAN_REVERSION | P2-medium | Wave B | **CONDITIONAL_WATCHPOINT candidate 2026-05-16** — L21 PASS; all 7 tickers strict-OOS SR > 0 (median +0.61, mean +0.62). L62 V1-gap +2.56 = single-LA class. Deploy top-3 (HWM/WMT/SYK) at ~5-10%, joint L65 + L67 needed |
+| `ic_equity_daily` | DAILY_MEAN_REVERSION | P2-medium | Wave B | **LIVE 2026-05-19 (PR #11)** — top-3 (HWM/WMT/SYK) deployed at 15% total (3× 5% min_weight floor) in `v37_live`. V3.7 hybrid: per-ticker plateau + DSR + cross-ticker DSR all PASS. Portfolio Sharpe lifts 0.93 → 1.07. First matrix-improving deployment since GEM J5. |
 | `pairs` | PAIRS | P2-low | Wave B | **RETIRED 2026-05-16** — L21 smoke FAILED (subtle non-causality in beta refit / z-window interaction). Live SR +0.11, CI_lo −0.29, MaxDD −30%. L21 PASS gate non-negotiable |
 | `ml` | ML_CLASSIFIER | P3 | Wave C | **L19 same-bar look-ahead bug** must be fixed before audit |
 | `gap_fade` | INTRADAY_MICROSTRUCTURE | P3 | Wave C | pending V3.6 audit (low priority) |
@@ -78,7 +79,15 @@ These strategies' V1-era pre-reg directives still exist in [directives/](../../d
 
 ## Retired strategies (V3.6/V3.7 RETIRED verdict)
 
-The following strategies were audited and RETIRED. **42 audits / 22 retired / 2 LIVE / 2 SHADOW** as of 2026-05-17. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry and [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md) for one-line "next time" lessons per retired strategy.
+The following strategies were audited and RETIRED. **45 audits / 25 retired / 5 LIVE trading (GEM + Turtle + 3× ic_equity) / 2 SHADOW (bond_gold + I1v2) / 2 CONDITIONAL paper-only (fx_carry + samir_stack)** as of 2026-05-20. See [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) for the full registry and [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md) for one-line "next time" lessons per retired strategy.
+
+Latest retires (2026-05-19, all via V3.7 hybrid early-exit per L75):
+
+- **F3 FOMC pre-announcement drift** (Lucca-Moench 2015, PR #13) — plateau spread 655%, DSR p=0.0000, CI_lo −0.866. Post-2014 Fed transparency decay.
+- **D4 HY/IG credit carry** (Israel-Palhares-Richardson 2018, PR #15) — plateau spread 210%, DSR p=0.0000, CI_lo −0.690. Post-2008 ZIRP HY-IG spread compression; SMA trend filter actively hurts.
+- **B6 sector momentum + crash overlay** (Daniel-Moskowitz 2016, PR #16) — plateau spread 601%, DSR p=0.0002, CI_lo −0.426. Cross-sectional momentum decay on liquid sector ETFs; panic_state only 0.08% of 2010-2025 bars makes overlay test inconclusive.
+
+These three are the cumulative L76 trigger: pre-2014-sample academic edges should be treated as falsification candidates, not replication targets, on retail post-2008 data.
 
 V3-era (data-infrastructure or methodology):
 
@@ -129,13 +138,13 @@ The V3.6 framework was extended to V3.7 on 2026-05-16 with portfolio-level evalu
 
 ## Related reading
 
-- **Project status:** [directives/README V2.0.md](../../directives/README%20V2.0.md) (updated 2026-05-16 with V3.7 state)
+- **Project status:** [directives/README V2.0.md](../../directives/README%20V2.0.md) (updated 2026-05-20 with V3.7 state)
 - **Methodology + decision matrix:** [directives/Methodology Audit & Unified Framework 2026-05-14.md](../../directives/Methodology%20Audit%20%26%20Unified%20Framework%202026-05-14.md)
-- **Lessons catalogue (L01–L69):** [directives/V3.6 Lessons Catalogue.md](../../directives/V3.6%20Lessons%20Catalogue.md)
+- **Lessons catalogue (L01–L76):** [directives/V3.6 Lessons Catalogue.md](../../directives/V3.6%20Lessons%20Catalogue.md)
 - **Retirement Registry** (one-line lessons per retired strategy): [directives/Retirement Registry.md](../../directives/Retirement%20Registry.md)
 - **V1-era re-audit roster:** [directives/V1-era Re-audit Sweep Roster 2026-05-16.md](../../directives/V1-era%20Re-audit%20Sweep%20Roster%202026-05-16.md)
 - **L52 hybrid framework (sweep + plateau + audit):** [memory/reference_hybrid_workflow.md](../../) (auto-loaded into Claude memory)
 - **Strategy backlog (38 candidate ideas):** [directives/Strategy Backlog 2026-05-14.md](../../directives/Strategy%20Backlog%202026-05-14.md)
 - **Docker paper-trading runbook:** [directives/Docker Paper Trading Guide.md](../../directives/Docker%20Paper%20Trading%20Guide.md)
-- **Audit dashboard:** [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) (31 audits, regenerated by [scripts/build_audit_dashboard.py](../../scripts/build_audit_dashboard.py))
+- **Audit dashboard:** [.tmp/dashboard/dashboard.html](../../.tmp/dashboard/dashboard.html) (45 audits, regenerated by [scripts/build_audit_dashboard.py](../../scripts/build_audit_dashboard.py))
 - **V3.7 reframe memo** (answers "is B&H really lower risk?"): [.tmp/reports/joint_evaluation/framework_evolution_v37.md](../../.tmp/reports/joint_evaluation/framework_evolution_v37.md)
