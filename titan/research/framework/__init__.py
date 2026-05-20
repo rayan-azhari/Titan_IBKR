@@ -52,6 +52,12 @@ from titan.research.framework.early_gate import (
     pass1_can_clear_ci_gate,
     pass1_can_clear_from_returns,
 )
+from titan.research.framework.fdm import (
+    DEFAULT_FDM_CAP,
+    FdmResult,
+    fdm_from_uniform_correlation,
+    forecast_diversification_multiplier,
+)
 from titan.research.framework.kelly import KellyFraction, compute_kelly_fraction
 from titan.research.framework.mc import (
     McResult,
@@ -146,6 +152,11 @@ __all__ = [
     "DsrResult",
     "deflated_sharpe",
     "sr_var_from_sweep",
+    # FDM (Carver Forecast Diversification Multiplier; backlog J5)
+    "FdmResult",
+    "forecast_diversification_multiplier",
+    "fdm_from_uniform_correlation",
+    "DEFAULT_FDM_CAP",
     # Early gate (Pass-1-gates-Pass-2 speed-up)
     "Pass1GateResult",
     "pass1_can_clear_ci_gate",
